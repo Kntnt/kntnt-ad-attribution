@@ -33,38 +33,6 @@ final class Plugin {
 	public readonly Updater $updater;
 
 	/**
-	 * Editor component instance.
-	 *
-	 * @var Editor
-	 * @since 1.0.0
-	 */
-	public readonly Editor $editor;
-
-	/**
-	 * CSS sanitizer instance.
-	 *
-	 * @var Sanitizer
-	 * @since 1.0.0
-	 */
-	public readonly Sanitizer $sanitizer;
-
-	/**
-	 * Assets management component instance.
-	 *
-	 * @var Assets
-	 * @since 1.0.0
-	 */
-	public readonly Assets $assets;
-
-	/**
-	 * CSS Class Manager integration component instance.
-	 *
-	 * @var Class_Manager_Integration
-	 * @since 1.0.0
-	 */
-	public readonly Class_Manager_Integration $parser;
-
-	/**
 	 * Cached plugin metadata from header.
 	 *
 	 * @var array|null
@@ -189,7 +157,7 @@ final class Plugin {
 		if ( self::$plugin_data === null ) {
 
 			// get_plugin_data() is only available in admin context by default.
-			// Since this plugin can be instantiated on frontend (for enqueuing styles),
+			// Since this plugin can be instantiated on frontend (for handling ad clicks),
 			// we need to ensure the function exists before calling it.
 			if ( ! function_exists( 'get_plugin_data' ) ) {
 				require_once ABSPATH . 'wp-admin/includes/plugin.php';
@@ -302,61 +270,6 @@ final class Plugin {
 	 */
 	public static function get_plugin_dir(): string {
 		return plugin_dir_path( self::get_plugin_file() );
-	}
-
-	/**
-	 * Gets the directory path where CSS files are stored.
-	 *
-	 * @return string Directory path or empty string if upload dir unavailable.
-	 * @since 1.0.0
-	 */
-	public static function get_css_dir(): string {
-		$basedir = self::wp_upload_dir( 'basedir' );
-		return $basedir ? $basedir . '/' . self::get_slug() : '';
-	}
-
-	/**
-	 * Gets the full file path for the CSS file.
-	 *
-	 * @return string File path or empty string if directory unavailable.
-	 * @since 1.0.0
-	 */
-	public static function get_css_path(): string {
-		$dir = self::get_css_dir();
-		return $dir ? $dir . '/' . self::get_slug() . '.css' : '';
-	}
-
-	/**
-	 * Gets the public URL for the CSS file.
-	 *
-	 * @return string File URL or empty string if upload dir unavailable.
-	 * @since 1.0.0
-	 */
-	public static function get_css_url(): string {
-		$baseurl = self::wp_upload_dir( 'baseurl' );
-		return $baseurl ? $baseurl . '/' . self::get_slug() . '/' . self::get_slug() . '.css' : '';
-	}
-
-	/**
-	 * Helper method to get WordPress upload directory information.
-	 *
-	 * @param string $key The specific upload directory key to retrieve.
-	 *
-	 * @return string|false Directory path/URL or false on error.
-	 * @since 1.0.0
-	 */
-	private static function wp_upload_dir( string $key ): string|false {
-		// Get upload directory information
-		$upload_dir = wp_upload_dir();
-
-		// Check for errors in upload directory configuration
-		if ( $upload_dir['error'] ) {
-			error_log( 'Kntnt Style Editor: Upload directory error: ' . $upload_dir['error'] );
-			return false;
-		}
-
-		// Return requested key
-		return $upload_dir[ $key ];
 	}
 
 	/**
