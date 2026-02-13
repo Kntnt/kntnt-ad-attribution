@@ -1,0 +1,76 @@
+# Security, Validation, Error Handling, and Time Zones
+
+## Validation and Sanitization
+
+### Hash
+
+Regex: `/^[a-f0-9]{64}$/`. Validated at:
+
+- URL matching (click handler)
+- Cookie parsing
+- REST API request
+- Database lookup (must exist as a registered tracking URL)
+
+### UTM/MTM Parameters
+
+| Field | Required | Max length | Sanitization |
+|-------|----------|------------|--------------|
+| `source` | Yes | 255 | `sanitize_text_field()` |
+| `medium` | Yes | 255 | `sanitize_text_field()` |
+| `campaign` | Yes | 255 | `sanitize_text_field()` |
+| `content` | No | 255 | `sanitize_text_field()` |
+| `term` | No | 255 | `sanitize_text_field()` |
+
+Fields exceeding 255 characters are truncated.
+
+### Target URL
+
+Selected via the page selector — always a valid WordPress post ID. No free-text URL. The plugin's own CPT is excluded.
+
+## CSRF / Nonces
+
+- **Admin page forms (create/edit URL):** Custom nonce via `wp_nonce_field` / `wp_verify_nonce`.
+- **CSV export:** Custom nonce `kntnt_ad_attr_export`.
+- **REST endpoint:** WordPress REST nonce via `X-WP-Nonce`.
+
+## Capability
+
+All admin functions require `kntnt_ad_attr`. Assigned to Administrator and Editor on activation.
+
+## Cookie Security
+
+- `HttpOnly` (not accessible via JavaScript), `Secure` (HTTPS only), `SameSite=Lax`.
+- Exception: `_aah_pending` is not HttpOnly (the script must be able to read it) and lives for a maximum of 60 seconds.
+
+## Error Handling
+
+**Principle:** The plugin must never negatively affect the visitor's experience. All errors are handled silently toward the visitor. Diagnostics are logged via `error_log()`.
+
+| Scenario | Visitor impact | Action |
+|----------|---------------|--------|
+| DB error on click/conversion | None | `error_log`, data is lost |
+| Corrupt cookie | None | `error_log`, cookie is ignored |
+| REST network error | None | Retry (max 3), then loss |
+| REST 403 (nonce expired) | None | Clear sessionStorage, loss |
+| Cookies blocked | None | Click is logged, attribution is lost |
+
+No admin notices for individual errors. Systematic errors (e.g., table missing) show up in the server error log and in stats displaying zero data.
+
+## Time Zones
+
+All timestamps are stored in UTC.
+
+| Context | Format | Function |
+|---------|--------|----------|
+| Cookie `_ad_clicks` | Unix timestamp | `time()` |
+| Database table `date` | DATE (UTC) | `gmdate( 'Y-m-d' )` |
+| Attribution weight `d_i` | Difference in days | `time() - $timestamp` |
+| Admin UI date filter | Local time → converted to UTC | `wp_timezone_string()` |
+| CSV filename | Local dates as chosen by the user | No conversion |
+
+## General Security Rules
+
+- All user-facing strings shall be translatable via `__()` / `_e()` / `esc_html__()`.
+- All SQL queries via `$wpdb->prepare()`.
+- All admin URLs via `admin_url()` / `wp_nonce_url()`.
+- No direct access to `$_GET`, `$_POST`, `$_COOKIE` without sanitization.
