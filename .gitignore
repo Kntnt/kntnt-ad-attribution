@@ -1,0 +1,52 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+*~
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# VS Code
+.vscode/
+
+# Zed
+.zed/
+
+# PHPStorm / JetBrains
+.idea/
+
+# Emacs
+\#*\#
+*.elc
+.emacs.desktop
+.emacs.desktop.lock
+auto-save-list/
+
+# Vim
+*.swp
+*.swo
+*.swn
+*.un~
+Session.vim
+.netrwhist
+
+# Node (if used for build tools)
+node_modules/
+
+# Composer
+vendor/
+
+# PHP
+*.phar
