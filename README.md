@@ -2,7 +2,7 @@
 
 [![Requires WordPress: 698+](https://img.shields.io/badge/WordPress-6.9+-blue.svg)](https://wordpress.org)
 [![Requires PHP: 8.3+](https://img.shields.io/badge/PHP-8.3+-blue.svg)](https://php.net)
-[![License: GPL v2+](https://img.shields.io/badge/License-GPLv2+-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![License: GPL v2+](https://img.shields.io/badge/License-GPLv2+-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html)
 
 
 A WordPress plugin that provides internal lead attribution for ad campaigns using first-party cookies and fractional, time-weighted attribution.
