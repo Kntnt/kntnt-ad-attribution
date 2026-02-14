@@ -378,9 +378,12 @@ final class Plugin {
 		// Register conversion attribution handler.
 		$this->conversion_handler->register();
 
-		// Register admin page and REST endpoint.
+		// Register admin page, REST endpoint, and plugin action link.
 		$this->admin_page->register();
 		$this->rest_endpoint->register();
+
+		$plugin_basename = plugin_basename( self::get_plugin_file() );
+		add_filter( "plugin_action_links_{$plugin_basename}", [ $this, 'add_action_link' ] );
 
 		// Enqueue the client-side pending consent script on public pages.
 		add_action( 'wp_enqueue_scripts', [ $this, 'enqueue_public_scripts' ] );
@@ -398,6 +401,21 @@ final class Plugin {
 			false,
 			dirname( plugin_basename( self::get_plugin_file() ) ) . '/languages',
 		);
+	}
+
+	/**
+	 * Adds a quick link to the plugin's admin page on the Plugins screen.
+	 *
+	 * @param string[] $links Existing action links.
+	 *
+	 * @return string[] Modified action links.
+	 * @since 1.0.0
+	 */
+	public function add_action_link( array $links ): array {
+		$url  = admin_url( 'tools.php?page=' . self::get_slug() );
+		$link = '<a href="' . esc_url( $url ) . '">' . esc_html__( 'Ad Attribution', 'kntnt-ad-attr' ) . '</a>';
+		array_unshift( $links, $link );
+		return $links;
 	}
 
 	/**
