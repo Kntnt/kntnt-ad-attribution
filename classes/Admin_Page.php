@@ -83,12 +83,22 @@ final class Admin_Page {
 		// Process form submissions before any output.
 		$this->handle_form_submission();
 
-		// Register per-page Screen Option for the list view.
-		add_screen_option( 'per_page', [
-			'label'   => __( 'URLs per page', 'kntnt-ad-attr' ),
-			'default' => 20,
-			'option'  => Url_List_Table::PER_PAGE_OPTION,
-		] );
+		// Register per-page Screen Option for the active tab.
+		$tab = sanitize_text_field( wp_unslash( $_GET['tab'] ?? 'urls' ) );
+
+		if ( $tab === 'campaigns' ) {
+			add_screen_option( 'per_page', [
+				'label'   => __( 'Campaigns per page', 'kntnt-ad-attr' ),
+				'default' => 20,
+				'option'  => Campaign_List_Table::PER_PAGE_OPTION,
+			] );
+		} else {
+			add_screen_option( 'per_page', [
+				'label'   => __( 'URLs per page', 'kntnt-ad-attr' ),
+				'default' => 20,
+				'option'  => Url_List_Table::PER_PAGE_OPTION,
+			] );
+		}
 	}
 
 	/**
@@ -106,7 +116,7 @@ final class Admin_Page {
 	 * @since 1.0.0
 	 */
 	public function save_screen_option( mixed $status, string $option, mixed $value ): mixed {
-		if ( $option === Url_List_Table::PER_PAGE_OPTION ) {
+		if ( $option === Url_List_Table::PER_PAGE_OPTION || $option === Campaign_List_Table::PER_PAGE_OPTION ) {
 			return (int) $value;
 		}
 		return $status;
@@ -297,13 +307,38 @@ final class Admin_Page {
 	}
 
 	/**
-	 * Renders the Campaigns tab placeholder.
+	 * Renders the Campaigns tab with statistics table, filters, and CSV export.
 	 *
 	 * @return void
 	 * @since 1.0.0
 	 */
 	private function render_campaigns_tab(): void {
-		echo '<p>' . esc_html__( 'Campaign reporting will be available in a future update.', 'kntnt-ad-attr' ) . '</p>';
+		$table = new Campaign_List_Table();
+		$table->prepare_items();
+
+		// Filter form — uses GET so filters are reflected in the URL.
+		echo '<form method="get" class="kntnt-ad-attr-campaigns">';
+		echo '<input type="hidden" name="page" value="' . esc_attr( Plugin::get_slug() ) . '">';
+		echo '<input type="hidden" name="tab" value="campaigns">';
+
+		$table->search_box( __( 'Search', 'kntnt-ad-attr' ), 'kntnt-ad-attr-search' );
+		$table->display();
+		echo '</form>';
+
+		// CSV export button — POST form with nonce.
+		$params = $table->get_filter_params();
+
+		echo '<form method="post" class="kntnt-ad-attr-export">';
+		wp_nonce_field( 'kntnt_ad_attr_export', 'kntnt_ad_attr_export_nonce' );
+		echo '<input type="hidden" name="kntnt_ad_attr_action" value="export_csv">';
+
+		// Pass current filter values so the export matches the displayed data.
+		foreach ( $params as $key => $value ) {
+			echo '<input type="hidden" name="' . esc_attr( $key ) . '" value="' . esc_attr( $value ) . '">';
+		}
+
+		submit_button( __( 'Export CSV', 'kntnt-ad-attr' ), 'secondary', 'export_csv', false );
+		echo '</form>';
 	}
 
 	/**
@@ -454,9 +489,18 @@ final class Admin_Page {
 	 */
 	private function handle_form_submission(): void {
 		// POST: save form.
-		if ( isset( $_POST['kntnt_ad_attr_action'] ) && $_POST['kntnt_ad_attr_action'] === 'save_url' ) {
-			$this->save_url();
-			return;
+		if ( isset( $_POST['kntnt_ad_attr_action'] ) ) {
+			$action = sanitize_text_field( wp_unslash( $_POST['kntnt_ad_attr_action'] ) );
+
+			if ( $action === 'save_url' ) {
+				$this->save_url();
+				return;
+			}
+
+			if ( $action === 'export_csv' ) {
+				$this->export_csv();
+				return;
+			}
 		}
 
 		// GET: trash action.
@@ -582,6 +626,41 @@ final class Admin_Page {
 			Plugin::get_slug(),
 		) ) );
 		exit;
+	}
+
+	/**
+	 * Handles the CSV export action.
+	 *
+	 * Validates nonce and capability, reconstructs the filter state from
+	 * POST data, fetches all matching items, and delegates to Csv_Exporter.
+	 *
+	 * @return never
+	 * @since 1.0.0
+	 */
+	private function export_csv(): never {
+		check_admin_referer( 'kntnt_ad_attr_export', 'kntnt_ad_attr_export_nonce' );
+		Plugin::authorize();
+
+		// Reconstruct filter params from POST into GET so Campaign_List_Table
+		// can read them via its standard get_filter_params() method.
+		$filter_keys = [ 'date_start', 'date_end', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 's' ];
+		foreach ( $filter_keys as $key ) {
+			if ( isset( $_POST[ $key ] ) ) {
+				$_GET[ $key ] = sanitize_text_field( wp_unslash( $_POST[ $key ] ) );
+			}
+		}
+
+		// Map 'search' POST field to 's' GET field used by get_filter_params().
+		if ( isset( $_POST['search'] ) ) {
+			$_GET['s'] = sanitize_text_field( wp_unslash( $_POST['search'] ) );
+		}
+
+		$table  = new Campaign_List_Table();
+		$params = $table->get_filter_params();
+		$items  = $table->fetch_all_items();
+
+		$exporter = new Csv_Exporter();
+		$exporter->export( $items, $params['date_start'], $params['date_end'] );
 	}
 
 	/**

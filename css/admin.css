@@ -83,3 +83,47 @@
 .kntnt-ad-attr-form .form-table input[type="text"] {
 	width: 400px;
 }
+
+/* Campaigns table column widths */
+.kntnt-ad-attr-campaigns .column-tracking_url {
+	width: 22%;
+}
+
+.kntnt-ad-attr-campaigns .column-target_url {
+	width: 16%;
+}
+
+.kntnt-ad-attr-campaigns .column-utm_source,
+.kntnt-ad-attr-campaigns .column-utm_medium,
+.kntnt-ad-attr-campaigns .column-utm_campaign {
+	width: 9%;
+}
+
+.kntnt-ad-attr-campaigns .column-utm_content,
+.kntnt-ad-attr-campaigns .column-utm_term {
+	width: 7%;
+}
+
+.kntnt-ad-attr-campaigns .column-total_clicks {
+	width: 7%;
+}
+
+.kntnt-ad-attr-campaigns .column-total_conversions {
+	width: 9%;
+}
+
+/* Date filter inputs */
+.kntnt-ad-attr-filters input[type="date"] {
+	margin-right: 6px;
+}
+
+/* Totals summary row */
+.kntnt-ad-attr-totals td {
+	font-weight: 600;
+	border-top: 2px solid #c3c4c7;
+}
+
+/* Export button spacing */
+.kntnt-ad-attr-export {
+	margin-top: 12px;
+}
