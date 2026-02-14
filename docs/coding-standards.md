@@ -70,6 +70,22 @@ Organize code into logical blocks and write a comment above each block explainin
 - All code comments (PHPDoc, JSDoc, inline, end-of-line) shall be in **English**.
 - All documentation, including `CLAUDE.md` and all files in `docs/`, shall be in **English**.
 
+## JavaScript (ES6+)
+
+The plugin targets modern browsers (HTTPS, `fetch`, `history.replaceState`) and uses ES6+ syntax following the Airbnb Style Guide where applicable:
+
+- **`const`** as default, **`let`** only when reassignment is needed. Never `var`.
+- **Arrow functions** as default for callbacks and short functions.
+- **Template literals** instead of string concatenation: `` `Hash: ${hash}` ``.
+- **Destructuring** for objects and arrays: `const { restUrl, nonce } = kntntAdAttribution;`.
+- **`async`/`await`** instead of `.then()` chains.
+- **Strict equality** (`===`/`!==`) exclusively.
+- **Trailing commas** in multi-line arrays, objects, and parameter lists.
+- **Single quotes** for strings.
+- **IIFE wrapper** with `'use strict'` for scope isolation.
+- **`fetch`** instead of `jQuery.ajax` where possible.
+- **Global WordPress variables** declared via `/* global */` comments at the top of the file: `/* global kntntAdAttribution */`.
+
 ## General
 
 - All user-facing strings shall be translatable via `__()` / `_e()` / `esc_html__()`.

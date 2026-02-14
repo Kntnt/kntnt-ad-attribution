@@ -37,7 +37,7 @@ All machine-readable names use `kntnt-ad-attr` (hyphens) / `kntnt_ad_attr` (unde
 
 ## Implementation Status
 
-The plugin is being built incrementally per `IMPLEMENTATION-PLAN.md`. Increments 1–4 are complete. Increment 1: skeleton + data model + lifecycle. Increment 2: click handling (Click_Handler, Cookie_Manager, Consent, Bot_Detector). Increment 3: admin UI URLs tab (Admin_Page, Url_List_Table, Rest_Endpoint, select2 form, CSS/JS assets). Increment 4: conversion handling (Conversion_Handler — dedup, cookie parse, hash validation, fractional time-weighted attribution, transactional DB write). Remaining increments add client-side script, campaigns/CSV, and cron/updater/translations.
+The plugin is being built incrementally per `IMPLEMENTATION-PLAN.md`. Increments 1–5 are complete. Increment 1: skeleton + data model + lifecycle. Increment 2: click handling (Click_Handler, Cookie_Manager, Consent, Bot_Detector). Increment 3: admin UI URLs tab (Admin_Page, Url_List_Table, Rest_Endpoint, select2 form, CSS/JS assets). Increment 4: conversion handling (Conversion_Handler — dedup, cookie parse, hash validation, fractional time-weighted attribution, transactional DB write). Increment 5: client-side script + REST set-cookie (pending-consent.js — sessionStorage, consent callback, REST POST; Rest_Endpoint set-cookie route with hash validation and cookie merge; Plugin script enqueue with localized REST URL and nonce). Remaining increments add campaigns/CSV, and cron/updater/translations.
 
 ## Specifications
 

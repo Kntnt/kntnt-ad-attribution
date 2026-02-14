@@ -156,7 +156,7 @@ final class Plugin {
 		$this->click_handler        = new Click_Handler( $this->cookie_manager, $this->consent, $this->bot_detector );
 		$this->conversion_handler   = new Conversion_Handler( $this->cookie_manager );
 		$this->admin_page           = new Admin_Page();
-		$this->rest_endpoint        = new Rest_Endpoint();
+		$this->rest_endpoint        = new Rest_Endpoint( $this->cookie_manager, $this->consent );
 
 		// Register WordPress hooks.
 		$this->register_hooks();
@@ -381,6 +381,9 @@ final class Plugin {
 		// Register admin page and REST endpoint.
 		$this->admin_page->register();
 		$this->rest_endpoint->register();
+
+		// Enqueue the client-side pending consent script on public pages.
+		add_action( 'wp_enqueue_scripts', [ $this, 'enqueue_public_scripts' ] );
 	}
 
 	/**
@@ -395,6 +398,31 @@ final class Plugin {
 			false,
 			dirname( plugin_basename( self::get_plugin_file() ) ) . '/languages',
 		);
+	}
+
+	/**
+	 * Enqueues the client-side script for pending consent handling.
+	 *
+	 * The script picks up hashes from the transport cookie or URL fragment,
+	 * stores them in sessionStorage, and sends them to the REST endpoint
+	 * when consent is granted.
+	 *
+	 * @return void
+	 * @since 1.0.0
+	 */
+	public function enqueue_public_scripts(): void {
+		wp_enqueue_script(
+			'kntnt-ad-attribution',
+			self::get_plugin_url() . 'js/pending-consent.js',
+			[],
+			self::get_version(),
+			true,
+		);
+
+		wp_localize_script( 'kntnt-ad-attribution', 'kntntAdAttribution', [
+			'restUrl' => rest_url( 'kntnt-ad-attribution/v1/set-cookie' ),
+			'nonce'   => wp_create_nonce( 'wp_rest' ),
+		] );
 	}
 
 	/**
