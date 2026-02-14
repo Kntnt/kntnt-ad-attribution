@@ -117,10 +117,10 @@
 	margin-right: 6px;
 }
 
-/* Totals summary row */
+/* Totals summary row (displayed above the main table) */
 .kntnt-ad-attr-totals td {
 	font-weight: 600;
-	border-top: 2px solid #c3c4c7;
+	border-bottom: 2px solid #c3c4c7;
 }
 
 /* Export button spacing */

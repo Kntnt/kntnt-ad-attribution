@@ -95,7 +95,7 @@ final class Csv_Exporter {
 				$item->utm_content ?? '',
 				$item->utm_term ?? '',
 				(int) $item->total_clicks,
-				number_format( (float) $item->total_conversions, 4, $decimal_point, '' ),
+				number_format( (float) $item->total_conversions, 1, $decimal_point, '' ),
 			], $delimiter );
 		}
 

@@ -93,6 +93,8 @@ final class Campaign_List_Table extends WP_List_Table {
 			'utm_source'        => [ 'utm_source', false ],
 			'utm_medium'        => [ 'utm_medium', false ],
 			'utm_campaign'      => [ 'utm_campaign', false ],
+			'utm_content'       => [ 'utm_content', false ],
+			'utm_term'          => [ 'utm_term', false ],
 		];
 	}
 
@@ -148,7 +150,7 @@ final class Campaign_List_Table extends WP_List_Table {
 	}
 
 	/**
-	 * Renders the total conversions column with 4-decimal locale formatting.
+	 * Renders the total conversions column with 1-decimal locale formatting.
 	 *
 	 * @param object $item The current row data.
 	 *
@@ -156,7 +158,7 @@ final class Campaign_List_Table extends WP_List_Table {
 	 * @since 1.0.0
 	 */
 	protected function column_total_conversions( object $item ): string {
-		return esc_html( number_format_i18n( (float) $item->total_conversions, 4 ) );
+		return esc_html( number_format_i18n( (float) $item->total_conversions, 1 ) );
 	}
 
 	/**
@@ -325,6 +327,8 @@ final class Campaign_List_Table extends WP_List_Table {
 			'utm_source'        => 'pm_src.meta_value',
 			'utm_medium'        => 'pm_med.meta_value',
 			'utm_campaign'      => 'pm_camp.meta_value',
+			'utm_content'       => 'pm_cont.meta_value',
+			'utm_term'          => 'pm_term.meta_value',
 		];
 
 		$orderby_param = sanitize_text_field( wp_unslash( $_GET['orderby'] ?? '' ) );
@@ -556,41 +560,38 @@ final class Campaign_List_Table extends WP_List_Table {
 	}
 
 	/**
-	 * Overrides display to append a totals summary row after the table.
+	 * Overrides display to prepend a totals summary row before the table.
 	 *
 	 * @return void
 	 * @since 1.0.0
 	 */
 	public function display(): void {
-		parent::display();
-
 		$totals = $this->get_totals();
-		if ( ! $totals || ( (int) $totals->total_clicks === 0 && (float) $totals->total_conversions === 0.0 ) ) {
-			return;
-		}
+		if ( $totals && ( (int) $totals->total_clicks > 0 || (float) $totals->total_conversions > 0.0 ) ) {
+			$columns = $this->get_columns();
 
-		$columns = $this->get_columns();
-		$col_count = count( $columns );
+			echo '<table class="wp-list-table widefat fixed kntnt-ad-attr-totals">';
+			echo '<tbody><tr>';
 
-		echo '<table class="wp-list-table widefat fixed striped kntnt-ad-attr-totals">';
-		echo '<tfoot><tr>';
-
-		$i = 0;
-		foreach ( $columns as $slug => $label ) {
-			if ( $i === 0 ) {
-				echo '<td><strong>' . esc_html__( 'Total', 'kntnt-ad-attr' ) . '</strong></td>';
-			} elseif ( $slug === 'total_clicks' ) {
-				echo '<td>' . esc_html( number_format_i18n( (int) $totals->total_clicks ) ) . '</td>';
-			} elseif ( $slug === 'total_conversions' ) {
-				echo '<td>' . esc_html( number_format_i18n( (float) $totals->total_conversions, 4 ) ) . '</td>';
-			} else {
-				echo '<td></td>';
+			$i = 0;
+			foreach ( $columns as $slug => $label ) {
+				if ( $i === 0 ) {
+					echo '<td><strong>' . esc_html__( 'Total', 'kntnt-ad-attr' ) . '</strong></td>';
+				} elseif ( $slug === 'total_clicks' ) {
+					echo '<td>' . esc_html( number_format_i18n( (int) $totals->total_clicks ) ) . '</td>';
+				} elseif ( $slug === 'total_conversions' ) {
+					echo '<td>' . esc_html( number_format_i18n( (float) $totals->total_conversions, 1 ) ) . '</td>';
+				} else {
+					echo '<td></td>';
+				}
+				$i++;
 			}
-			$i++;
+
+			echo '</tr></tbody>';
+			echo '</table>';
 		}
 
-		echo '</tr></tfoot>';
-		echo '</table>';
+		parent::display();
 	}
 
 }
