@@ -280,18 +280,30 @@ final class Admin_Page {
 		$table = new Url_List_Table();
 		$table->prepare_items();
 
-		$add_url = admin_url( sprintf(
-			'tools.php?page=%s&tab=urls&action=add',
-			Plugin::get_slug(),
-		) );
+		$is_trash = sanitize_text_field( wp_unslash( $_GET['post_status'] ?? '' ) ) === 'trash';
 
-		echo '<a href="' . esc_url( $add_url ) . '" class="page-title-action">'
-			. esc_html__( 'Add New', 'kntnt-ad-attr' ) . '</a>';
+		// Hide "Add New" in the trash view.
+		if ( ! $is_trash ) {
+			$add_url = admin_url( sprintf(
+				'tools.php?page=%s&tab=urls&action=add',
+				Plugin::get_slug(),
+			) );
+
+			echo '<a href="' . esc_url( $add_url ) . '" class="page-title-action">'
+				. esc_html__( 'Add New', 'kntnt-ad-attr' ) . '</a>';
+		}
+
+		$table->views();
 
 		// Search box inside a form so it submits with GET.
 		echo '<form method="get">';
 		echo '<input type="hidden" name="page" value="' . esc_attr( Plugin::get_slug() ) . '">';
 		echo '<input type="hidden" name="tab" value="urls">';
+
+		// Preserve post_status through search and pagination.
+		if ( $is_trash ) {
+			echo '<input type="hidden" name="post_status" value="trash">';
+		}
 
 		// Preserve active filters through search.
 		foreach ( [ 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term' ] as $filter ) {
@@ -460,9 +472,11 @@ final class Admin_Page {
 		$message = sanitize_text_field( wp_unslash( $_GET['message'] ?? '' ) );
 
 		$notices = [
-			'created' => [ 'success', __( 'Tracking URL created.', 'kntnt-ad-attr' ) ],
-			'updated' => [ 'success', __( 'Tracking URL updated.', 'kntnt-ad-attr' ) ],
-			'trashed' => [ 'success', __( 'Tracking URL moved to Trash.', 'kntnt-ad-attr' ) ],
+			'created'  => [ 'success', __( 'Tracking URL created.', 'kntnt-ad-attr' ) ],
+			'updated'  => [ 'success', __( 'Tracking URL updated.', 'kntnt-ad-attr' ) ],
+			'trashed'  => [ 'success', __( 'Tracking URL moved to Trash.', 'kntnt-ad-attr' ) ],
+			'restored' => [ 'success', __( 'Tracking URL restored.', 'kntnt-ad-attr' ) ],
+			'deleted'  => [ 'success', __( 'Tracking URL permanently deleted.', 'kntnt-ad-attr' ) ],
 		];
 
 		if ( ! isset( $notices[ $message ] ) ) {
@@ -482,7 +496,7 @@ final class Admin_Page {
 	 *
 	 * Called from the `load-` hook before output. POST with
 	 * `kntnt_ad_attr_action=save_url` triggers save_url(). GET with
-	 * `action=trash` triggers trash_url().
+	 * `action=trash|restore|delete` triggers the corresponding handler.
 	 *
 	 * @return void
 	 * @since 1.0.0
@@ -503,11 +517,14 @@ final class Admin_Page {
 			}
 		}
 
-		// GET: trash action.
+		// GET: trash, restore, and delete actions.
 		$action = sanitize_text_field( wp_unslash( $_GET['action'] ?? '' ) );
-		if ( $action === 'trash' ) {
-			$this->trash_url();
-		}
+		match ( $action ) {
+			'trash'   => $this->trash_url(),
+			'restore' => $this->restore_url(),
+			'delete'  => $this->delete_url(),
+			default   => null,
+		};
 	}
 
 	/**
@@ -623,6 +640,58 @@ final class Admin_Page {
 
 		wp_safe_redirect( admin_url( sprintf(
 			'tools.php?page=%s&tab=urls&message=trashed',
+			Plugin::get_slug(),
+		) ) );
+		exit;
+	}
+
+	/**
+	 * Restores a trashed tracking URL back to published status.
+	 *
+	 * @return void
+	 * @since 1.0.0
+	 */
+	private function restore_url(): void {
+		$post_id = (int) ( $_GET['post'] ?? 0 );
+
+		check_admin_referer( 'restore_kntnt_ad_attr_url_' . $post_id );
+		Plugin::authorize();
+
+		wp_untrash_post( $post_id );
+
+		wp_safe_redirect( admin_url( sprintf(
+			'tools.php?page=%s&tab=urls&message=restored',
+			Plugin::get_slug(),
+		) ) );
+		exit;
+	}
+
+	/**
+	 * Permanently deletes a trashed tracking URL.
+	 *
+	 * @return void
+	 * @since 1.0.0
+	 */
+	private function delete_url(): void {
+		global $wpdb;
+
+		$post_id = (int) ( $_GET['post'] ?? 0 );
+
+		check_admin_referer( 'delete_kntnt_ad_attr_url_' . $post_id );
+		Plugin::authorize();
+
+		// Delete associated stats before removing the post (no FK constraint).
+		$hash = get_post_meta( $post_id, '_hash', true );
+		if ( $hash ) {
+			$stats_table = $wpdb->prefix . 'kntnt_ad_attr_stats';
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+			$wpdb->delete( $stats_table, [ 'hash' => $hash ], [ '%s' ] );
+		}
+
+		wp_delete_post( $post_id, true );
+
+		wp_safe_redirect( admin_url( sprintf(
+			'tools.php?page=%s&tab=urls&post_status=trash&message=deleted',
 			Plugin::get_slug(),
 		) ) );
 		exit;

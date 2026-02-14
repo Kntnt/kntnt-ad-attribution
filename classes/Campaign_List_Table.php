@@ -232,7 +232,8 @@ final class Campaign_List_Table extends WP_List_Table {
 				ON pm_cont.post_id = p.ID AND pm_cont.meta_key = '_utm_content'
 			LEFT JOIN {$wpdb->postmeta} pm_term
 				ON pm_term.post_id = p.ID AND pm_term.meta_key = '_utm_term'
-			WHERE s.date BETWEEN %s AND %s";
+			WHERE p.post_status = 'publish'
+			AND s.date BETWEEN %s AND %s";
 
 		$params = $this->get_filter_params();
 
@@ -515,7 +516,8 @@ final class Campaign_List_Table extends WP_List_Table {
 				ON pm_cont.post_id = p.ID AND pm_cont.meta_key = '_utm_content'
 			LEFT JOIN {$wpdb->postmeta} pm_term
 				ON pm_term.post_id = p.ID AND pm_term.meta_key = '_utm_term'
-			WHERE s.date BETWEEN %s AND %s";
+			WHERE p.post_status = 'publish'
+			AND s.date BETWEEN %s AND %s";
 
 		$query_params = [
 			Post_Type::SLUG,
