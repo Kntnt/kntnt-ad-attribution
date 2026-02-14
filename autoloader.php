@@ -15,7 +15,7 @@ if ( ! defined( 'WPINC' ) ) {
  * Automatically loads classes from the classes/ directory when they are first used.
  * Follows PSR-4 naming conventions with the plugin's namespace.
  *
- * @since 2.0.0
+ * @since 1.0.0
  */
 spl_autoload_register( function ( string $class_name ): void {
 
@@ -34,4 +34,5 @@ spl_autoload_register( function ( string $class_name ): void {
 	if ( file_exists( $file_path ) ) {
 		require_once $file_path;
 	}
+
 } );

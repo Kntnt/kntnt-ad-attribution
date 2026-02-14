@@ -1,114 +1,77 @@
-# Kntnt Ad Attribution
+# CLAUDE.md
 
-Version: 1.0.0
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-This file and the documents in `docs/` are all a developer needs to implement the plugin. They are self-contained and do not require reading README.md or existing code.
+## What This Plugin Does
 
-## Overview
+WordPress plugin that measures which ads generate leads. Each ad gets a tracking URL (`/ad/<hash>`). Clicks are logged, a first-party cookie stores the hash, and when a form submission triggers a conversion, all clicked ads receive fractional time-weighted attribution.
 
-Kntnt Ad Attribution is a WordPress plugin that measures which ads generate leads. Each ad gets a unique tracking URL (`/ad/<hash>`). When a visitor clicks the ad, the server logs the click and stores the hash in a first-party cookie. When the visitor later submits a lead form, the server reads the cookie and fractionally attributes the conversion to all clicked ads, weighted by recency.
+## Naming Conventions
 
-The plugin is platform-agnostic and works with any ad platform (Google Ads, Meta Ads, LinkedIn Ads, Microsoft Ads, etc.) that supports custom destination URLs.
-
-The plugin does not integrate with any specific consent or form plugin. Instead, it exposes hooks that are connected to the plugins of choice via the theme's `functions.php`, a mu-plugin, or a code snippet plugin.
-
-## Terminology
-
-The following terms apply throughout the specification and codebase:
-
-| Term | Meaning |
-|------|---------|
-| **tracking URL** | The URL the ad points to: `https://example.com/ad/<hash>` |
-| **target URL** | The page the visitor lands on after redirect |
-| **hash** | 64-character SHA-256 hex string that uniquely identifies a tracking URL |
-| `target_url` | The target URL in code and SQL (resolved dynamically from post ID) |
-| `tracking_url` | The tracking URL in code and SQL |
-
-The term "campaign URL" shall **not** be used — it is ambiguous.
-
-## System Requirements
-
-| Requirement | Minimum |
-|-------------|---------|
-| PHP | 8.3 |
-| WordPress | 6.9 |
-| HTTPS | Required (cookies are set with the `Secure` flag) |
-| MySQL/MariaDB | 5.7 / 10.3 (supports `ON DUPLICATE KEY UPDATE`) |
-
-The plugin shall check the PHP version on activation and abort with a clear error message if the requirement is not met.
-
-## Multisite
-
-The plugin does not support WordPress multisite in version 1.
-
-## Limitations
-
-| Limitation | Description |
-|------------|-------------|
-| **ITP (Safari/iOS)** | Safari may limit cookie lifetime to 7 days from a classified cross-site source. The JS redirect method can improve this in some cases. |
-| **No feedback to ad platforms** | The plugin provides internal statistics. It does not send data back to Google Ads, Meta, etc. |
-| **Cookies can be deleted** | If the visitor clears cookies or uses incognito mode, the attribution link is broken. |
-| **No cross-device tracking** | A click on mobile + conversion on laptop are not attributed. |
-| **Impressions are not measured** | Ad impressions occur on the platform and never reach the server. |
-| **No multisite support** | Version 1 does not support WordPress multisite. |
-
-## Naming Conventions — Quick Reference
+All machine-readable names use `kntnt-ad-attr` (hyphens) / `kntnt_ad_attr` (underscores) as prefix. The PHP namespace remains `Kntnt\Ad_Attribution`. The GitHub URL (`kntnt-ad-attribution`) is the only exception.
 
 | Context | Name |
 |---------|------|
-| Plugin slug / text domain | `kntnt-ad-attribution` |
+| Text domain | `kntnt-ad-attr` |
 | Post type | `kntnt_ad_attr_url` |
 | Custom table | `{prefix}kntnt_ad_attr_stats` |
 | Capability | `kntnt_ad_attr` |
-| DB version in options | `kntnt_ad_attr_version` |
-| All filters/actions | `kntnt_ad_attribution_*` |
+| DB version option | `kntnt_ad_attr_version` |
+| Cron hook | `kntnt_ad_attr_daily_cleanup` |
+| REST base | `kntnt-ad-attr-urls` |
+| All filters/actions | `kntnt_ad_attr_*` |
+| Namespace | `Kntnt\Ad_Attribution` |
 
-## Cookies — Quick Reference
+## Architecture
 
-| Cookie | Attributes | Lifetime |
-|--------|------------|----------|
-| `_ad_clicks` | Path=/, HttpOnly, Secure, SameSite=Lax | 90 days (configurable) |
-| `_ad_last_conv` | Path=/, HttpOnly, Secure, SameSite=Lax | 30 days (capped to cookie_lifetime) |
-| `_aah_pending` | Path=/, **Not** HttpOnly, Secure, SameSite=Lax | 60 seconds |
+**Singleton bootstrap:** `kntnt-ad-attribution.php` loads `autoloader.php` (PSR-4 for `Kntnt\Ad_Attribution\*` → `classes/*.php`), then `Plugin::get_instance()` creates the singleton which instantiates all components and registers hooks.
 
-## Hooks — Quick Reference
+**Lifecycle files (not autoloaded):**
+- `install.php` — activation: grants capability, runs Migrator, registers CPT, flushes rewrite rules, schedules cron.
+- `uninstall.php` — complete data removal. Runs outside the plugin's namespace (no autoloader available), uses raw `$wpdb` queries.
+- `Plugin::deactivate()` — clears cron, transients, and rewrite rules. Preserves data.
 
-### Filters
+**Migrator pattern:** Version-based migrations in `migrations/X.Y.Z.php`. Each file returns `function(\wpdb $wpdb): void`. Migrator compares `kntnt_ad_attr_version` option with the plugin header version on `plugins_loaded` and runs pending files in order.
 
-| Filter | Default | Description |
-|--------|---------|-------------|
-| `kntnt_ad_attribution_has_consent` | fallback → `default_consent` | Three states: `true`, `false`, `null` |
-| `kntnt_ad_attribution_default_consent` | `true` | Fallback when no consent callback is registered |
-| `kntnt_ad_attribution_redirect_method` | `'302'` | `'302'` or `'js'` |
-| `kntnt_ad_attribution_url_prefix` | `'ad'` | URL prefix for tracking URLs |
-| `kntnt_ad_attribution_cookie_lifetime` | `90` | Days. Affects cookie + attribution formula |
-| `kntnt_ad_attribution_dedup_days` | `30` | Days. Capped to max cookie_lifetime |
-| `kntnt_ad_attribution_pending_transport` | `'cookie'` | `'cookie'` or `'fragment'` |
-| `kntnt_ad_attribution_is_bot` | `false` | Bot detection. The plugin registers its own UA callback |
+**Data model:** Tracking URLs are stored as CPT `kntnt_ad_attr_url` (with meta `_hash`, `_target_post_id`, `_utm_*`). Click/conversion statistics are stored in `{prefix}kntnt_ad_attr_stats` with composite PK `(hash, date)` using `ON DUPLICATE KEY UPDATE` for atomic increments.
 
-### Actions
+## Implementation Status
 
-| Action | Description |
-|--------|-------------|
-| `kntnt_ad_attribution_conversion` | Trigger a conversion (connect your form plugin here) |
-| `kntnt_ad_attribution_conversion_recorded` | Fires after a recorded conversion with `array $attributions` |
+The plugin is being built incrementally per `IMPLEMENTATION-PLAN.md`. Increment 1 (skeleton + data model + lifecycle) is complete. Remaining increments add click handling, admin UI, conversions, client-side script, campaigns/CSV, and cron/updater/translations.
 
-## Detailed Documentation
+## Specifications
 
-Each aspect of the plugin is documented in separate files:
+All specs are in `docs/`. Read the relevant doc before implementing a feature:
 
-| Document | Contents |
-|----------|----------|
-| [docs/architecture.md](docs/architecture.md) | Data model (CPT + stats table), hash generation, target URL resolving |
-| [docs/click-handling.md](docs/click-handling.md) | Click flow, URL matching (rewrite rules), bot detection, consent, transport mechanism, redirect |
-| [docs/cookies.md](docs/cookies.md) | All three cookies with format, attributes, size calculation, validation |
-| [docs/conversion-handling.md](docs/conversion-handling.md) | Conversion flow, deduplication, attribution formula, database write in transaction |
-| [docs/rest-api.md](docs/rest-api.md) | REST endpoints (set-cookie, search-posts), nonce/page cache |
-| [docs/client-script.md](docs/client-script.md) | sessionStorage, page load logic, REST calls, error handling, JS consent interface |
-| [docs/admin-ui.md](docs/admin-ui.md) | Tab navigation, URLs tab (WP_List_Table), Campaigns tab (SQL), CSV export |
-| [docs/developer-hooks.md](docs/developer-hooks.md) | All filters and actions with code examples and implementation logic |
-| [docs/lifecycle.md](docs/lifecycle.md) | Activation, deactivation, uninstallation, migration, cron, warnings |
-| [docs/security.md](docs/security.md) | Validation, sanitization, nonces, capabilities, cookie security, error handling, time zones |
-| [docs/coding-standards.md](docs/coding-standards.md) | PHP 8.3, code style (Airbnb-inspired), WordPress deviations, PSR-4, documentation rules |
-| [docs/file-structure.md](docs/file-structure.md) | File structure, GitHub updates, translations |
-| [docs/consent-example.md](docs/consent-example.md) | Complete Real Cookie Banner integration (PHP + JavaScript) |
+| Doc | Covers |
+|-----|--------|
+| `architecture.md` | Data model, CPT args, hash generation, target URL resolving |
+| `click-handling.md` | 12-step click flow, rewrite rules, bot detection, redirect |
+| `cookies.md` | Cookie format, attributes, size limits, validation regex |
+| `conversion-handling.md` | 10-step conversion flow, dedup, attribution formula |
+| `rest-api.md` | REST endpoints (set-cookie, search-posts) |
+| `client-script.md` | sessionStorage, pending consent, JS consent interface |
+| `admin-ui.md` | WP_List_Table tabs, SQL queries, CSV export |
+| `developer-hooks.md` | All filters/actions with implementation logic |
+| `lifecycle.md` | Activation, deactivation, uninstall, migration, cron |
+| `security.md` | Validation, nonces, capabilities, error handling, time zones |
+| `coding-standards.md` | Full coding standards reference |
+
+## Coding Standards
+
+- **PHP 8.3 features required:** typed properties, readonly, match expressions, arrow functions, null-safe operator, named arguments, `str_contains()`/`str_starts_with()`.
+- `declare(strict_types=1)` in every PHP file.
+- `[]` not `array()`. Natural conditions, not Yoda. Trailing commas in multi-line arrays.
+- PSR-4 autoloading: `Kntnt\Ad_Attribution\Click_Handler` → `classes/Click_Handler.php`.
+- PHPDoc on every class, method, property, constant. `@since 1.0.0` for initial release.
+- Inline comments explain **why**, not what. Written for senior developers.
+- All identifiers and comments in **English**.
+- All user-facing strings translatable via `__()` / `esc_html__()` with text domain `kntnt-ad-attr`.
+- All SQL via `$wpdb->prepare()`. All admin URLs via `admin_url()`. All superglobals sanitized.
+- Errors are silent toward visitors, logged via `error_log()`.
+
+## Known Gotchas
+
+- `Plugin::get_plugin_data()` must pass `$translate = false` to WP's `get_plugin_data()` to avoid triggering `_load_textdomain_just_in_time` warnings when called before `init` (e.g. from Migrator on `plugins_loaded`).
+- The CPT label uses a static string (not `__()`) because it has `show_ui => false` and is never displayed.
+- `uninstall.php` runs without the namespace autoloader — use fully qualified function calls and raw `$wpdb`.

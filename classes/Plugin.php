@@ -1,4 +1,13 @@
 <?php
+/**
+ * Main plugin class implementing singleton pattern.
+ *
+ * Manages plugin initialization, configuration, and provides central access
+ * to plugin metadata and options. Coordinates between different plugin components.
+ *
+ * @package Kntnt\Ad_Attribution
+ * @since   1.0.0
+ */
 
 declare( strict_types = 1 );
 
@@ -7,12 +16,12 @@ namespace Kntnt\Ad_Attribution;
 use LogicException;
 
 /**
- * Main plugin class implementing singleton pattern.
+ * Singleton entry point for the plugin.
  *
- * Manages plugin initialization, configuration, and provides central access
- * to plugin metadata and options. Coordinates between different plugin components.
+ * Bootstraps all components, registers WordPress hooks, and exposes
+ * helper methods for plugin metadata and options.
  *
- * @package Kntnt\Ad_Attribution
+ * @since 1.0.0
  */
 final class Plugin {
 
@@ -31,6 +40,54 @@ final class Plugin {
 	 * @since 1.0.0
 	 */
 	public readonly Updater $updater;
+
+	/**
+	 * Migrator component instance.
+	 *
+	 * @var Migrator
+	 * @since 1.0.0
+	 */
+	public readonly Migrator $migrator;
+
+	/**
+	 * Post type component instance.
+	 *
+	 * @var Post_Type
+	 * @since 1.0.0
+	 */
+	public readonly Post_Type $post_type;
+
+	/**
+	 * Cookie manager component instance.
+	 *
+	 * @var Cookie_Manager
+	 * @since 1.0.0
+	 */
+	public readonly Cookie_Manager $cookie_manager;
+
+	/**
+	 * Consent resolver component instance.
+	 *
+	 * @var Consent
+	 * @since 1.0.0
+	 */
+	public readonly Consent $consent;
+
+	/**
+	 * Bot detector component instance.
+	 *
+	 * @var Bot_Detector
+	 * @since 1.0.0
+	 */
+	public readonly Bot_Detector $bot_detector;
+
+	/**
+	 * Click handler component instance.
+	 *
+	 * @var Click_Handler
+	 * @since 1.0.0
+	 */
+	public readonly Click_Handler $click_handler;
 
 	/**
 	 * Cached plugin metadata from header.
@@ -64,10 +121,17 @@ final class Plugin {
 	 * @since 1.0.0
 	 */
 	private function __construct() {
-		// Initialize plugin components
-		$this->updater = new Updater;
 
-		// Register WordPress hooks
+		// Initialize plugin components.
+		$this->updater        = new Updater();
+		$this->migrator       = new Migrator();
+		$this->post_type      = new Post_Type();
+		$this->cookie_manager = new Cookie_Manager();
+		$this->consent        = new Consent();
+		$this->bot_detector   = new Bot_Detector();
+		$this->click_handler  = new Click_Handler( $this->cookie_manager, $this->consent, $this->bot_detector );
+
+		// Register WordPress hooks.
 		$this->register_hooks();
 	}
 
@@ -81,7 +145,7 @@ final class Plugin {
 	 */
 	public static function get_instance(): Plugin {
 		if ( self::$instance === null ) {
-			self::$instance = new self;
+			self::$instance = new self();
 		}
 		return self::$instance;
 	}
@@ -115,7 +179,7 @@ final class Plugin {
 	}
 
 	/**
-	 * Gets url to the plugin directory.
+	 * Gets URL to the plugin directory.
 	 *
 	 * @return string URL to the plugin directory.
 	 * @since 1.0.0
@@ -133,43 +197,37 @@ final class Plugin {
 	 * @return array {
 	 *     Plugin data. Values will be empty if not supplied by the plugin.
 	 *
-	 * @type string $Name            Name of the plugin. Should be unique.
-	 * @type string $PluginURI       Plugin URI.
-	 * @type string $Version         Plugin version.
-	 * @type string $Description     Plugin description.
-	 * @type string $Author          Plugin author's name.
-	 * @type string $AuthorURI       Plugin author's website address (if set).
-	 * @type string $TextDomain      Plugin textdomain.
-	 * @type string $DomainPath      Plugin's relative directory path to .mo files.
-	 * @type bool   $Network         Whether the plugin can only be activated network-wide.
-	 * @type string $RequiresWP      Minimum required version of WordPress.
-	 * @type string $RequiresPHP     Minimum required version of PHP.
-	 * @type string $UpdateURI       ID of the plugin for update purposes, should be a URI.
-	 * @type string $RequiresPlugins Comma separated list of dot org plugin slugs.
-	 * @type string $Title           Title of the plugin and link to the plugin's site (if set).
-	 * @type string $AuthorName      Plugin author's name.
-	 *
-	 * @since 2.1.0
+	 *     @type string $Name            Name of the plugin.
+	 *     @type string $PluginURI       Plugin URI.
+	 *     @type string $Version         Plugin version.
+	 *     @type string $Description     Plugin description.
+	 *     @type string $Author          Plugin author's name.
+	 *     @type string $AuthorURI       Plugin author's website address.
+	 *     @type string $TextDomain      Plugin text domain.
+	 *     @type string $DomainPath      Relative path to .mo files.
+	 *     @type string $RequiresWP      Minimum required WordPress version.
+	 *     @type string $RequiresPHP     Minimum required PHP version.
+	 * }
+	 * @since 1.0.0
 	 */
 	public static function get_plugin_data(): array {
 
-		// Load plugin data if not already cached
+		// Load plugin data if not already cached.
 		if ( self::$plugin_data === null ) {
 
 			// get_plugin_data() is only available in admin context by default.
-			// Since this plugin can be instantiated on frontend (for handling ad clicks),
-			// we need to ensure the function exists before calling it.
+			// The plugin can be instantiated on the frontend (for click handling),
+			// so we ensure the function is available.
 			if ( ! function_exists( 'get_plugin_data' ) ) {
 				require_once ABSPATH . 'wp-admin/includes/plugin.php';
 			}
 
-			// Parse plugin header for metadata
-			self::$plugin_data = get_plugin_data( self::get_plugin_file() );
-
+			// Disable translation to avoid triggering _load_textdomain_just_in_time
+			// when called before `init` (e.g. from Migrator on `plugins_loaded`).
+			self::$plugin_data = get_plugin_data( self::get_plugin_file(), true, false );
 		}
 
 		return self::$plugin_data;
-
 	}
 
 	/**
@@ -190,8 +248,7 @@ final class Plugin {
 	 */
 	public static function get_slug(): string {
 		if ( self::$plugin_slug === null ) {
-			$file = self::get_plugin_file();
-			self::$plugin_slug = basename( $file, '.php' );
+			self::$plugin_slug = basename( self::get_plugin_file(), '.php' );
 		}
 		return self::$plugin_slug;
 	}
@@ -203,11 +260,11 @@ final class Plugin {
 	 * @since 1.0.0
 	 */
 	public static function authorize(): void {
-		if ( ! current_user_can( 'kntnt_ad_attribution' ) ) {
+		if ( ! current_user_can( 'kntnt_ad_attr' ) ) {
 			wp_die(
-				__( 'You do not have permission to access this page.', 'kntnt-ad-attribution' ),
-				__( 'Access Denied', 'kntnt-ad-attribution' ),
-				[ 'response' => 403 ]
+				esc_html__( 'You do not have permission to access this page.', 'kntnt-ad-attr' ),
+				esc_html__( 'Access Denied', 'kntnt-ad-attr' ),
+				[ 'response' => 403 ],
 			);
 		}
 	}
@@ -223,12 +280,10 @@ final class Plugin {
 	 * @return mixed Option value or null if not found.
 	 * @since 1.0.0
 	 */
-	public static function get_option( string $key = null ): mixed {
-		// Generate option name from plugin slug (replace hyphens with underscores)
+	public static function get_option( ?string $key = null ): mixed {
 		$option_name = str_replace( '-', '_', self::get_slug() );
-		$option = get_option( $option_name, [] );
+		$option      = \get_option( $option_name, [] );
 
-		// Return specific key or entire option
 		if ( $key !== null ) {
 			return $option[ $key ] ?? null;
 		}
@@ -247,18 +302,15 @@ final class Plugin {
 	 * @return bool True on success, false on failure.
 	 * @since 1.0.0
 	 */
-	public static function set_option( mixed $value, string $key = null ): bool {
-		// Generate option name from plugin slug
+	public static function set_option( mixed $value, ?string $key = null ): bool {
 		$option_name = str_replace( '-', '_', self::get_slug() );
 
 		if ( $key !== null ) {
-			// Update specific key within option array
-			$option = get_option( $option_name, [] );
+			$option         = \get_option( $option_name, [] );
 			$option[ $key ] = $value;
 			return update_option( $option_name, $option );
 		}
 
-		// Replace entire option
 		return update_option( $option_name, $value );
 	}
 
@@ -275,23 +327,26 @@ final class Plugin {
 	/**
 	 * Registers WordPress hooks for plugin functionality.
 	 *
-	 * Sets up all necessary WordPress actions and filters for the plugin
-	 * to function properly.
-	 *
 	 * @return void
 	 * @since 1.0.0
 	 */
 	private function register_hooks(): void {
 
-		// Load translations
+		// Run pending database migrations before other components initialize.
+		add_action( 'plugins_loaded', [ $this->migrator, 'run' ] );
+
+		// Register custom post type and load translations.
+		add_action( 'init', [ $this->post_type, 'register' ] );
 		add_action( 'init', [ $this, 'load_textdomain' ] );
 
-		// Check for updates from GitHub
+		// Check for updates from GitHub.
 		add_filter( 'pre_set_site_transient_update_plugins', [ $this->updater, 'check_for_updates' ] );
 
-		// Register admin menu page
-		// TODO
+		// Register bot detection filters and robots.txt rule.
+		$this->bot_detector->register();
 
+		// Register rewrite rule, query var, and click handler.
+		$this->click_handler->register();
 	}
 
 	/**
@@ -302,10 +357,36 @@ final class Plugin {
 	 */
 	public function load_textdomain(): void {
 		load_plugin_textdomain(
-			'kntnt-ad-attribution',
+			'kntnt-ad-attr',
 			false,
-			dirname( plugin_basename( self::get_plugin_file() ) ) . '/languages'
+			dirname( plugin_basename( self::get_plugin_file() ) ) . '/languages',
 		);
+	}
+
+	/**
+	 * Handles plugin deactivation cleanup.
+	 *
+	 * Removes transient resources while preserving persistent data
+	 * (table, CPT posts, options) for potential reactivation.
+	 *
+	 * @return void
+	 * @since 1.0.0
+	 */
+	public static function deactivate(): void {
+
+		// Remove scheduled cron job.
+		wp_clear_scheduled_hook( 'kntnt_ad_attr_daily_cleanup' );
+
+		// Remove plugin transients.
+		global $wpdb;
+		$wpdb->query(
+			"DELETE FROM {$wpdb->options}
+			 WHERE option_name LIKE '_transient_kntnt_ad_attr_%'
+			    OR option_name LIKE '_transient_timeout_kntnt_ad_attr_%'",
+		);
+
+		// Flush rewrite rules so the CPT's rules are removed.
+		flush_rewrite_rules();
 	}
 
 	/**
