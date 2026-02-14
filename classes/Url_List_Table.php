@@ -60,6 +60,7 @@ final class Url_List_Table extends WP_List_Table {
 	 */
 	public function get_columns(): array {
 		return [
+			'cb'           => '<input type="checkbox" />',
 			'tracking_url' => __( 'Tracking URL', 'kntnt-ad-attr' ),
 			'target_url'   => __( 'Target URL', 'kntnt-ad-attr' ),
 			'utm_source'   => __( 'Source', 'kntnt-ad-attr' ),
@@ -85,7 +86,99 @@ final class Url_List_Table extends WP_List_Table {
 	}
 
 	/**
+	 * Renders the checkbox column for bulk actions.
+	 *
+	 * @param object $item The current row data.
+	 *
+	 * @return string HTML checkbox input.
+	 * @since 1.0.0
+	 */
+	protected function column_cb( $item ): string {
+		return '<input type="checkbox" name="post[]" value="' . esc_attr( (string) $item->ID ) . '">';
+	}
+
+	/**
+	 * Returns available bulk actions based on the current view.
+	 *
+	 * @return array<string, string> Action slug => display label.
+	 * @since 1.0.0
+	 */
+	protected function get_bulk_actions(): array {
+		$is_trash = sanitize_text_field( wp_unslash( $_GET['post_status'] ?? '' ) ) === 'trash';
+
+		if ( $is_trash ) {
+			return [
+				'restore' => __( 'Restore', 'kntnt-ad-attr' ),
+				'delete'  => __( 'Delete Permanently', 'kntnt-ad-attr' ),
+			];
+		}
+
+		return [
+			'trash' => __( 'Move to Trash', 'kntnt-ad-attr' ),
+		];
+	}
+
+	/**
+	 * Returns the status view links (All / Trash).
+	 *
+	 * The Trash view is only shown when trashed tracking URLs exist.
+	 *
+	 * @return array<string, string> View slug => HTML link.
+	 * @since 1.0.0
+	 */
+	protected function get_views(): array {
+		global $wpdb;
+
+		$current_status = sanitize_text_field( wp_unslash( $_GET['post_status'] ?? '' ) );
+		$base_url       = admin_url( 'tools.php?page=' . Plugin::get_slug() . '&tab=urls' );
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+		$counts = $wpdb->get_results( $wpdb->prepare(
+			"SELECT post_status, COUNT(*) AS cnt
+			 FROM {$wpdb->posts}
+			 WHERE post_type = %s AND post_status IN ('publish', 'trash')
+			 GROUP BY post_status",
+			Post_Type::SLUG,
+		) );
+
+		$status_counts = [];
+		foreach ( $counts as $row ) {
+			$status_counts[ $row->post_status ] = (int) $row->cnt;
+		}
+
+		$publish_count = $status_counts['publish'] ?? 0;
+		$trash_count   = $status_counts['trash'] ?? 0;
+
+		$views = [];
+
+		$all_class  = ( $current_status !== 'trash' ) ? ' class="current"' : '';
+		$views['all'] = sprintf(
+			'<a href="%s"%s>%s <span class="count">(%d)</span></a>',
+			esc_url( $base_url ),
+			$all_class,
+			esc_html__( 'All', 'kntnt-ad-attr' ),
+			$publish_count,
+		);
+
+		if ( $trash_count > 0 ) {
+			$trash_class    = ( $current_status === 'trash' ) ? ' class="current"' : '';
+			$views['trash'] = sprintf(
+				'<a href="%s"%s>%s <span class="count">(%d)</span></a>',
+				esc_url( add_query_arg( 'post_status', 'trash', $base_url ) ),
+				$trash_class,
+				esc_html__( 'Trash', 'kntnt-ad-attr' ),
+				$trash_count,
+			);
+		}
+
+		return $views;
+	}
+
+	/**
 	 * Renders the tracking URL column with click-to-copy and row actions.
+	 *
+	 * Shows Edit/Trash actions for published URLs and Restore/Delete
+	 * Permanently actions for trashed URLs.
 	 *
 	 * @param object $item The current row data.
 	 *
@@ -95,25 +188,56 @@ final class Url_List_Table extends WP_List_Table {
 	protected function column_tracking_url( object $item ): string {
 		$url = '<code class="kntnt-ad-attr-copy" role="button" tabindex="0" data-clipboard-text="' . esc_attr( $item->tracking_url ) . '">' . esc_html( $item->tracking_url ) . '</code>';
 
-		$edit_url = admin_url( sprintf(
-			'tools.php?page=%s&tab=urls&action=edit&post=%d',
-			Plugin::get_slug(),
-			$item->ID,
-		) );
+		$is_trash = sanitize_text_field( wp_unslash( $_GET['post_status'] ?? '' ) ) === 'trash';
 
-		$trash_url = wp_nonce_url(
-			admin_url( sprintf(
-				'tools.php?page=%s&tab=urls&action=trash&post=%d',
+		if ( $is_trash ) {
+
+			$restore_url = wp_nonce_url(
+				admin_url( sprintf(
+					'tools.php?page=%s&tab=urls&action=restore&post=%d',
+					Plugin::get_slug(),
+					$item->ID,
+				) ),
+				'restore_kntnt_ad_attr_url_' . $item->ID,
+			);
+
+			$delete_url = wp_nonce_url(
+				admin_url( sprintf(
+					'tools.php?page=%s&tab=urls&action=delete&post=%d',
+					Plugin::get_slug(),
+					$item->ID,
+				) ),
+				'delete_kntnt_ad_attr_url_' . $item->ID,
+			);
+
+			$actions = [
+				'untrash' => sprintf( '<a href="%s">%s</a>', esc_url( $restore_url ), esc_html__( 'Restore', 'kntnt-ad-attr' ) ),
+				'delete'  => sprintf( '<a href="%s" class="submitdelete">%s</a>', esc_url( $delete_url ), esc_html__( 'Delete Permanently', 'kntnt-ad-attr' ) ),
+			];
+
+		} else {
+
+			$edit_url = admin_url( sprintf(
+				'tools.php?page=%s&tab=urls&action=edit&post=%d',
 				Plugin::get_slug(),
 				$item->ID,
-			) ),
-			'trash_kntnt_ad_attr_url_' . $item->ID,
-		);
+			) );
 
-		$actions = [
-			'edit'  => sprintf( '<a href="%s">%s</a>', esc_url( $edit_url ), esc_html__( 'Edit', 'kntnt-ad-attr' ) ),
-			'trash' => sprintf( '<a href="%s">%s</a>', esc_url( $trash_url ), esc_html__( 'Trash', 'kntnt-ad-attr' ) ),
-		];
+			$trash_url = wp_nonce_url(
+				admin_url( sprintf(
+					'tools.php?page=%s&tab=urls&action=trash&post=%d',
+					Plugin::get_slug(),
+					$item->ID,
+				) ),
+				'trash_kntnt_ad_attr_url_' . $item->ID,
+			);
+
+			$actions = [
+				'edit'  => sprintf( '<a href="%s">%s</a>', esc_url( $edit_url ), esc_html__( 'Edit', 'kntnt-ad-attr' ) ),
+				'trash' => sprintf( '<a href="%s">%s</a>', esc_url( $trash_url ), esc_html__( 'Trash', 'kntnt-ad-attr' ) ),
+			];
+
+		}
 
 		return $url . $this->row_actions( $actions );
 	}
@@ -193,6 +317,10 @@ final class Url_List_Table extends WP_List_Table {
 	private function fetch_items( int $per_page, int $current_page ): int {
 		global $wpdb;
 
+		// Determine which post status to show.
+		$status_param = sanitize_text_field( wp_unslash( $_GET['post_status'] ?? '' ) );
+		$post_status  = $status_param === 'trash' ? 'trash' : 'publish';
+
 		$base_query = "FROM {$wpdb->posts} p
 			INNER JOIN {$wpdb->postmeta} pm_hash   ON pm_hash.post_id = p.ID   AND pm_hash.meta_key = '_hash'
 			INNER JOIN {$wpdb->postmeta} pm_target  ON pm_target.post_id = p.ID AND pm_target.meta_key = '_target_post_id'
@@ -201,9 +329,9 @@ final class Url_List_Table extends WP_List_Table {
 			INNER JOIN {$wpdb->postmeta} pm_camp    ON pm_camp.post_id = p.ID   AND pm_camp.meta_key = '_utm_campaign'
 			LEFT JOIN  {$wpdb->postmeta} pm_cont    ON pm_cont.post_id = p.ID   AND pm_cont.meta_key = '_utm_content'
 			LEFT JOIN  {$wpdb->postmeta} pm_term    ON pm_term.post_id = p.ID   AND pm_term.meta_key = '_utm_term'
-			WHERE p.post_type = %s AND p.post_status = 'publish'";
+			WHERE p.post_type = %s AND p.post_status = %s";
 
-		$params = [ Post_Type::SLUG ];
+		$params = [ Post_Type::SLUG, $post_status ];
 
 		// Dynamic WHERE clauses for UTM filters.
 		$filter_map = [
@@ -290,6 +418,12 @@ final class Url_List_Table extends WP_List_Table {
 	 */
 	protected function extra_tablenav( $which ): void {
 		if ( $which !== 'top' ) {
+			return;
+		}
+
+		// No filters in the trash view.
+		$status_param = sanitize_text_field( wp_unslash( $_GET['post_status'] ?? '' ) );
+		if ( $status_param === 'trash' ) {
 			return;
 		}
 

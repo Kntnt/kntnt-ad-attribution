@@ -117,10 +117,20 @@
 	margin-right: 6px;
 }
 
-/* Totals summary row (displayed above the main table) */
-.kntnt-ad-attr-totals td {
+/* Totals summary row (sticky first row in campaigns table) */
+.kntnt-ad-attr-totals-row td {
+	position: sticky;
+	top: 32px;
 	font-weight: 600;
+	background: #f0f0f1;
 	border-bottom: 2px solid #c3c4c7;
+	z-index: 1;
+}
+
+@media screen and (max-width: 782px) {
+	.kntnt-ad-attr-totals-row td {
+		top: 46px;
+	}
 }
 
 /* Export button spacing */

@@ -562,38 +562,39 @@ final class Campaign_List_Table extends WP_List_Table {
 	}
 
 	/**
-	 * Overrides display to prepend a totals summary row before the table.
+	 * Prepends a totals summary row before the regular data rows.
+	 *
+	 * The row uses a sticky position so it remains visible while scrolling.
+	 * Only displayed when there is at least one click or conversion.
 	 *
 	 * @return void
 	 * @since 1.0.0
 	 */
-	public function display(): void {
+	public function display_rows(): void {
 		$totals = $this->get_totals();
 		if ( $totals && ( (int) $totals->total_clicks > 0 || (float) $totals->total_conversions > 0.0 ) ) {
 			$columns = $this->get_columns();
 
-			echo '<table class="wp-list-table widefat fixed kntnt-ad-attr-totals">';
-			echo '<tbody><tr>';
+			echo '<tr class="kntnt-ad-attr-totals-row">';
 
-			$i = 0;
+			$first = true;
 			foreach ( $columns as $slug => $label ) {
-				if ( $i === 0 ) {
+				if ( $first ) {
 					echo '<td><strong>' . esc_html__( 'Total', 'kntnt-ad-attr' ) . '</strong></td>';
+					$first = false;
 				} elseif ( $slug === 'total_clicks' ) {
-					echo '<td>' . esc_html( number_format_i18n( (int) $totals->total_clicks ) ) . '</td>';
+					echo '<td><strong>' . esc_html( number_format_i18n( (int) $totals->total_clicks ) ) . '</strong></td>';
 				} elseif ( $slug === 'total_conversions' ) {
-					echo '<td>' . esc_html( number_format_i18n( (float) $totals->total_conversions, 1 ) ) . '</td>';
+					echo '<td><strong>' . esc_html( number_format_i18n( (float) $totals->total_conversions, 1 ) ) . '</strong></td>';
 				} else {
 					echo '<td></td>';
 				}
-				$i++;
 			}
 
-			echo '</tr></tbody>';
-			echo '</table>';
+			echo '</tr>';
 		}
 
-		parent::display();
+		parent::display_rows();
 	}
 
 }

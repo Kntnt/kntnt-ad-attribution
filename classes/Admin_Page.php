@@ -479,6 +479,22 @@ final class Admin_Page {
 			'deleted'  => [ 'success', __( 'Tracking URL permanently deleted.', 'kntnt-ad-attr' ) ],
 		];
 
+		// Bulk action notices with plural support.
+		$bulk_notices = [
+			'bulk-trashed'  => __( '%d tracking URL(s) moved to Trash.', 'kntnt-ad-attr' ),
+			'bulk-restored' => __( '%d tracking URL(s) restored.', 'kntnt-ad-attr' ),
+			'bulk-deleted'  => __( '%d tracking URL(s) permanently deleted.', 'kntnt-ad-attr' ),
+		];
+
+		if ( isset( $bulk_notices[ $message ] ) ) {
+			$count = (int) ( $_GET['count'] ?? 0 );
+			printf(
+				'<div class="notice notice-success is-dismissible"><p>%s</p></div>',
+				esc_html( sprintf( $bulk_notices[ $message ], $count ) ),
+			);
+			return;
+		}
+
 		if ( ! isset( $notices[ $message ] ) ) {
 			return;
 		}
@@ -519,6 +535,17 @@ final class Admin_Page {
 
 		// GET: trash, restore, and delete actions.
 		$action = sanitize_text_field( wp_unslash( $_GET['action'] ?? '' ) );
+		if ( $action === '-1' ) {
+			$action = sanitize_text_field( wp_unslash( $_GET['action2'] ?? '' ) );
+		}
+
+		// Bulk action: post[] is an array.
+		if ( in_array( $action, [ 'trash', 'restore', 'delete' ], true ) && is_array( $_GET['post'] ?? null ) ) {
+			$this->handle_bulk_action( $action );
+			return;
+		}
+
+		// Single action.
 		match ( $action ) {
 			'trash'   => $this->trash_url(),
 			'restore' => $this->restore_url(),
@@ -673,14 +700,31 @@ final class Admin_Page {
 	 * @since 1.0.0
 	 */
 	private function delete_url(): void {
-		global $wpdb;
-
 		$post_id = (int) ( $_GET['post'] ?? 0 );
 
 		check_admin_referer( 'delete_kntnt_ad_attr_url_' . $post_id );
 		Plugin::authorize();
 
-		// Delete associated stats before removing the post (no FK constraint).
+		$this->permanently_delete_url( $post_id );
+
+		wp_safe_redirect( admin_url( sprintf(
+			'tools.php?page=%s&tab=urls&post_status=trash&message=deleted',
+			Plugin::get_slug(),
+		) ) );
+		exit;
+	}
+
+	/**
+	 * Deletes a tracking URL's stats and then the post itself.
+	 *
+	 * @param int $post_id The post ID to delete.
+	 *
+	 * @return void
+	 * @since 1.0.0
+	 */
+	private function permanently_delete_url( int $post_id ): void {
+		global $wpdb;
+
 		$hash = get_post_meta( $post_id, '_hash', true );
 		if ( $hash ) {
 			$stats_table = $wpdb->prefix . 'kntnt_ad_attr_stats';
@@ -689,11 +733,57 @@ final class Admin_Page {
 		}
 
 		wp_delete_post( $post_id, true );
+	}
 
-		wp_safe_redirect( admin_url( sprintf(
-			'tools.php?page=%s&tab=urls&post_status=trash&message=deleted',
-			Plugin::get_slug(),
-		) ) );
+	/**
+	 * Processes a bulk action on multiple tracking URLs.
+	 *
+	 * @param string $action The bulk action: 'trash', 'restore', or 'delete'.
+	 *
+	 * @return void
+	 * @since 1.0.0
+	 */
+	private function handle_bulk_action( string $action ): void {
+		check_admin_referer( 'bulk-tracking-urls' );
+		Plugin::authorize();
+
+		$post_ids = array_map( 'intval', (array) $_GET['post'] );
+		$count    = 0;
+
+		foreach ( $post_ids as $post_id ) {
+			$post = get_post( $post_id );
+			if ( ! $post || $post->post_type !== Post_Type::SLUG ) {
+				continue;
+			}
+
+			match ( $action ) {
+				'trash'   => wp_trash_post( $post_id ),
+				'restore' => wp_untrash_post( $post_id ),
+				'delete'  => $this->permanently_delete_url( $post_id ),
+			};
+
+			$count++;
+		}
+
+		$message_key = match ( $action ) {
+			'trash'   => 'bulk-trashed',
+			'restore' => 'bulk-restored',
+			'delete'  => 'bulk-deleted',
+		};
+
+		$redirect_args = [
+			'page'    => Plugin::get_slug(),
+			'tab'     => 'urls',
+			'message' => $message_key,
+			'count'   => $count,
+		];
+
+		// Stay in trash view for restore/delete actions.
+		if ( $action === 'restore' || $action === 'delete' ) {
+			$redirect_args['post_status'] = 'trash';
+		}
+
+		wp_safe_redirect( add_query_arg( $redirect_args, admin_url( 'tools.php' ) ) );
 		exit;
 	}
 
