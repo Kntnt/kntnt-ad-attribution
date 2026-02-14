@@ -138,7 +138,7 @@ The plugin adds **Ad Attribution** under **Tools** in the WordPress admin menu. 
 This is where you create and manage tracking URLs.
 
 - **Create new URL:** Select a target page via a searchable dropdown and fill in UTM/MTM parameters (source, medium, campaign are required; content and term are optional). The plugin generates a SHA-256 hash and produces a tracking URL: `https://yourdomain.com/ad/<hash>`.
-- **URL list:** Shows all created tracking URLs with the hash (truncated), full tracking URL, target URL, and UTM/MTM values. The list can be filtered by UTM dimensions.
+- **URL list:** Shows all created tracking URLs with full tracking URL, target URL, and UTM/MTM values. Click a tracking URL to copy it to the clipboard. The list can be filtered by UTM dimensions.
 - **Row actions:** Edit, Trash.
 
 #### Campaigns Tab

@@ -1,0 +1,85 @@
+/**
+ * Admin page styles for the tracking URL management interface.
+ *
+ * @package Kntnt\Ad_Attribution
+ * @since   1.0.0
+ */
+
+/* Tab spacing */
+.kntnt-ad-attr-tab-content {
+	margin-top: 15px;
+}
+
+/* List table column widths */
+.wp-list-table .column-tracking_url {
+	width: 30%;
+}
+
+.wp-list-table .column-target_url {
+	width: 20%;
+}
+
+.wp-list-table .column-utm_source,
+.wp-list-table .column-utm_medium,
+.wp-list-table .column-utm_campaign {
+	width: 10%;
+}
+
+.wp-list-table .column-utm_content,
+.wp-list-table .column-utm_term {
+	width: 8%;
+}
+
+/* Click-to-copy tracking URL */
+.kntnt-ad-attr-copy {
+	cursor: pointer;
+	position: relative;
+}
+
+.kntnt-ad-attr-copy:hover {
+	background: #e5f5fa;
+}
+
+.kntnt-ad-attr-copy:focus {
+	outline: none;
+}
+
+.kntnt-ad-attr-copy.copied::after {
+	content: "Copied!";
+	position: absolute;
+	left: 0;
+	top: -1.8em;
+	background: #00a32a;
+	color: #fff;
+	padding: 2px 8px;
+	border-radius: 3px;
+	font-size: 12px;
+	white-space: nowrap;
+	pointer-events: none;
+	animation: kntnt-ad-attr-fade 1.5s ease-out forwards;
+}
+
+@keyframes kntnt-ad-attr-fade {
+	0%, 70% { opacity: 1; }
+	100% { opacity: 0; }
+}
+
+/* Select2 container on the form */
+.kntnt-ad-attr-form .select2-container {
+	min-width: 400px;
+}
+
+/* Filter dropdowns in table navigation */
+.kntnt-ad-attr-filters select {
+	margin-right: 6px;
+	max-width: 160px;
+}
+
+/* Form table layout */
+.kntnt-ad-attr-form .form-table th {
+	width: 160px;
+}
+
+.kntnt-ad-attr-form .form-table input[type="text"] {
+	width: 400px;
+}

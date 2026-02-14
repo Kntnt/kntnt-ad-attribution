@@ -90,6 +90,22 @@ final class Plugin {
 	public readonly Click_Handler $click_handler;
 
 	/**
+	 * Admin page component instance.
+	 *
+	 * @var Admin_Page
+	 * @since 1.0.0
+	 */
+	public readonly Admin_Page $admin_page;
+
+	/**
+	 * REST endpoint component instance.
+	 *
+	 * @var Rest_Endpoint
+	 * @since 1.0.0
+	 */
+	public readonly Rest_Endpoint $rest_endpoint;
+
+	/**
 	 * Cached plugin metadata from header.
 	 *
 	 * @var array|null
@@ -130,6 +146,8 @@ final class Plugin {
 		$this->consent        = new Consent();
 		$this->bot_detector   = new Bot_Detector();
 		$this->click_handler  = new Click_Handler( $this->cookie_manager, $this->consent, $this->bot_detector );
+		$this->admin_page     = new Admin_Page();
+		$this->rest_endpoint  = new Rest_Endpoint();
 
 		// Register WordPress hooks.
 		$this->register_hooks();
@@ -347,6 +365,10 @@ final class Plugin {
 
 		// Register rewrite rule, query var, and click handler.
 		$this->click_handler->register();
+
+		// Register admin page and REST endpoint.
+		$this->admin_page->register();
+		$this->rest_endpoint->register();
 	}
 
 	/**
