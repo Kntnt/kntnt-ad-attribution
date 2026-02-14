@@ -106,6 +106,14 @@ final class Plugin {
 	public readonly Rest_Endpoint $rest_endpoint;
 
 	/**
+	 * Conversion handler component instance.
+	 *
+	 * @var Conversion_Handler
+	 * @since 1.0.0
+	 */
+	public readonly Conversion_Handler $conversion_handler;
+
+	/**
 	 * Cached plugin metadata from header.
 	 *
 	 * @var array|null
@@ -139,15 +147,16 @@ final class Plugin {
 	private function __construct() {
 
 		// Initialize plugin components.
-		$this->updater        = new Updater();
-		$this->migrator       = new Migrator();
-		$this->post_type      = new Post_Type();
-		$this->cookie_manager = new Cookie_Manager();
-		$this->consent        = new Consent();
-		$this->bot_detector   = new Bot_Detector();
-		$this->click_handler  = new Click_Handler( $this->cookie_manager, $this->consent, $this->bot_detector );
-		$this->admin_page     = new Admin_Page();
-		$this->rest_endpoint  = new Rest_Endpoint();
+		$this->updater              = new Updater();
+		$this->migrator             = new Migrator();
+		$this->post_type            = new Post_Type();
+		$this->cookie_manager       = new Cookie_Manager();
+		$this->consent              = new Consent();
+		$this->bot_detector         = new Bot_Detector();
+		$this->click_handler        = new Click_Handler( $this->cookie_manager, $this->consent, $this->bot_detector );
+		$this->conversion_handler   = new Conversion_Handler( $this->cookie_manager );
+		$this->admin_page           = new Admin_Page();
+		$this->rest_endpoint        = new Rest_Endpoint();
 
 		// Register WordPress hooks.
 		$this->register_hooks();
@@ -365,6 +374,9 @@ final class Plugin {
 
 		// Register rewrite rule, query var, and click handler.
 		$this->click_handler->register();
+
+		// Register conversion attribution handler.
+		$this->conversion_handler->register();
 
 		// Register admin page and REST endpoint.
 		$this->admin_page->register();
