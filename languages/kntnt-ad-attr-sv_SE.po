@@ -290,23 +290,23 @@ msgstr "Kntnt Ad Attribution kräver PHP %1$s eller senare. Du kör PHP %2$s. Pl
 #: classes/Admin_Page.php:436
 #: classes/Admin_Page.php:449
 msgid "— Select or type —"
-msgstr ""
+msgstr "— Välj eller skriv —"
 
 #: classes/Admin_Page.php:502
 #, php-format
 msgid "%d tracking URL(s) moved to Trash."
-msgstr ""
+msgstr "%d spårnings-URL:er flyttade till papperskorgen."
 
 #: classes/Admin_Page.php:503
 #, php-format
 msgid "%d tracking URL(s) restored."
-msgstr ""
+msgstr "%d spårnings-URL:er återställda."
 
 #: classes/Admin_Page.php:504
 #, php-format
 msgid "%d tracking URL(s) permanently deleted."
-msgstr ""
+msgstr "%d spårnings-URL:er permanent raderade."
 
 #: classes/Url_List_Table.php:117
 msgid "Move to Trash"
-msgstr ""
+msgstr "Flytta till papperskorgen"
