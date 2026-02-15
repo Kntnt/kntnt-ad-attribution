@@ -5,15 +5,17 @@
 [![License: GPL v2+](https://img.shields.io/badge/License-GPLv2+-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html)
 
 
-A WordPress plugin that provides internal lead attribution for ad campaigns using first-party cookies and fractional, time-weighted attribution.
+A privacy-friendly WordPress plugin for lead attribution that keeps all data on your own server — no personal data is sent to Google or any other third party. Works with any ad platform.
 
 ## Description
 
-Kntnt Ad Attribution lets you measure which ads generate leads by tracking ad clicks through unique hash-based URLs and attributing form submissions back to the originating ads.
+Ad platforms like Google Ads offer conversion tracking features — such as Google's Enhanced Conversions — that improve attribution by sending hashed personal data (email addresses, phone numbers, names) from your website to the ad platform's servers. This raises significant privacy concerns: personal data leaves your domain, is transferred to servers that may be located outside the EU, and is used by the ad platform for its own purposes beyond your control. With the EU-US Data Privacy Framework under ongoing legal challenge and the possibility that it may be invalidated (as its predecessors Safe Harbor and Privacy Shield were), relying on such mechanisms creates regulatory risk for EU-based businesses.
 
-Each ad gets a unique tracking URL (e.g. `example.com/ad/a1b2c3…`). When a visitor clicks an ad, the server records the click, stores the ad hash in a first-party cookie, and redirects the visitor to the landing page. When the visitor later submits a lead form, the plugin reads the cookie and distributes the conversion fractionally across all clicked ads, with more recent clicks weighted higher.
+Kntnt Ad Attribution takes a different approach. It gives you the same core benefit — knowing which ads actually generate leads — but keeps all data on your own server. No personal data is sent to Google, Meta, or any other third party.
 
-The plugin is platform-agnostic and works with any ad platform — Google Ads, Meta Ads, LinkedIn Ads, Microsoft Ads, or any other source that can link to a custom URL.
+Each ad gets a unique tracking URL (e.g. `example.com/ad/a1b2c3…`). When a visitor clicks an ad, your server records the click, stores the ad hash in a first-party cookie, and redirects the visitor to the landing page. When the visitor later submits a lead form, the server reads the cookie and distributes the conversion fractionally across all clicked ads, with more recent clicks weighted higher. The entire process happens on your infrastructure.
+
+The plugin is platform-agnostic and works with any ad platform — Google Ads, Meta Ads, LinkedIn Ads, Microsoft Ads, or any other source that can link to a custom URL. This means you get a single, consistent attribution method across all your advertising channels.
 
 The plugin does not hardcode integrations with any specific consent management or form plugin. Instead, it exposes hooks that you connect to your preferred plugins via your theme's `functions.php`, a mu-plugin, or a code snippet plugin.
 
@@ -32,23 +34,36 @@ The plugin does not hardcode integrations with any specific consent management o
 
 ### The Problem
 
-Ad platforms tell you how many clicks an ad received, but not how many of those clicks turned into actual leads on your website. The standard way to close that gap is client-side conversion tracking (a JavaScript tag that fires when a form is submitted), but this approach is increasingly unreliable:
+Ad platforms tell you how many clicks an ad received, but not how many of those clicks turned into actual leads on your website. The standard solution is client-side conversion tracking — a JavaScript tag that fires when a form is submitted — but this approach has two categories of problems.
+
+**It is increasingly unreliable:**
 
 - **Ad blockers** prevent the tracking script from loading at all.
 - **Safari's Intelligent Tracking Prevention (ITP)** limits the lifetime of cookies set in a cross-site context, causing conversions to go unrecorded if the visitor returns after a few days.
 - **Privacy-focused browsers** (Firefox Strict Mode, Brave, etc.) strip or block tracking parameters like `gclid` before they reach your server.
 
-The result is that you have a blind spot: you know how much you spend on each ad and how many clicks it gets, but you don't reliably know which ads actually generate leads.
+**It raises privacy concerns:**
+
+Ad platforms have responded to the decline in client-side tracking with features like Google's Enhanced Conversions and Meta's Advanced Matching, which improve attribution by sending hashed first-party data (email addresses, phone numbers, names) to the ad platform's servers. While the data is hashed before transmission, this approach has significant implications:
+
+- **Hashing is not anonymization.** Regulatory bodies including the US Federal Trade Commission (FTC) have noted that hashed data can still enable identification of individuals. Under GDPR, hashed personal data remains personal data.
+- **Personal data leaves your domain** and is transferred to the ad platform's servers, which may be located outside the EU.
+- **The ad platform uses the data for its own purposes**, including automated bidding optimization and audience modelling, beyond the advertiser's direct control.
+- **The legal basis for EU-US data transfers is uncertain.** The current EU-US Data Privacy Framework (DPF) is under active legal challenge. Its two predecessors — Safe Harbor and Privacy Shield — were both invalidated by the EU Court of Justice. A "Schrems III" ruling or political changes to the underlying US executive order could leave businesses without a valid transfer mechanism.
+
+The result is a dilemma: you need attribution to spend your ad budget wisely, but the available solutions are either unreliable, privacy-invasive, or both.
 
 ### How This Plugin Helps
 
-Kntnt Ad Attribution moves the tracking to the server side, eliminating the dependency on client-side JavaScript for the core attribution logic:
+Kntnt Ad Attribution solves both problems. It moves the tracking to the server side, eliminating the dependency on client-side JavaScript, and it keeps all data on your own server, eliminating the need to share personal data with third parties.
 
 1. Each ad gets a unique server-controlled tracking URL (`/ad/<hash>`).
 2. When a visitor clicks the ad, your server — not a JavaScript tag — records the click and stores the ad hash in a first-party cookie.
 3. When the visitor later submits a lead form, the server reads the cookie and attributes the conversion.
 
-Because the click recording and attribution happen on the server, they are immune to ad blockers and JavaScript-blocking browser features. The cookie is a standard first-party HTTP cookie set by your own domain, which gives it better survival odds than third-party or JavaScript-set cookies.
+Because the click recording and attribution happen on your server, they are immune to ad blockers and JavaScript-blocking browser features. The cookie is a standard first-party HTTP cookie set by your own domain, which makes it more resilient than third-party or JavaScript-set cookies (though Safari's ITP may still limit its lifetime — see [Limitations](#limitations)).
+
+Unlike Enhanced Conversions and similar features, the plugin never sends personal data — hashed or otherwise — to any external server. No email addresses, no phone numbers, no names. The only data stored is a list of opaque hashes in a cookie on the visitor's browser and aggregated click/conversion counts in your WordPress database. This means there is no third-country transfer issue and no dependency on the EU-US Data Privacy Framework or any other international data transfer mechanism.
 
 ### Limitations
 
@@ -60,6 +75,24 @@ Because the click recording and attribution happen on the server, they are immun
 - **No multisite support.** Version 1 does not support WordPress multisite.
 
 Despite these limitations, server-side first-party cookie tracking captures significantly more conversions than pure client-side tracking, and gives you a reliable internal baseline for comparing ad performance.
+
+### Privacy and GDPR
+
+This plugin is designed with data minimization and data locality as core principles. Here is how it relates to common privacy concerns:
+
+**No personal data leaves your server.** Unlike Google's Enhanced Conversions or Meta's Advanced Matching, this plugin never transmits personal data — hashed or otherwise — to any third party. All attribution data stays in your WordPress database on your own infrastructure. This is the plugin's fundamental privacy advantage.
+
+**No third-country transfer problem.** Because no data is sent to external servers, there is no dependency on the EU-US Data Privacy Framework, Standard Contractual Clauses, or any other international data transfer mechanism. If the Data Privacy Framework is invalidated by a future court ruling (as Safe Harbor and Privacy Shield were before it), this plugin is unaffected.
+
+**The cookie constitutes personal data under GDPR.** The `_ad_clicks` cookie links a visitor's ad clicks to their subsequent form submissions, which makes it personal data processing. The plugin therefore requires consent for the cookie, and implements a three-state consent model (yes, no, undefined) that integrates with any cookie consent plugin. See [Cookie Consent Configuration](#cookie-consent-configuration) for details.
+
+**Click counting does not require consent.** The plugin always logs that a click occurred on a tracking URL (incrementing an aggregate counter), regardless of consent status. This is analogous to server access logs and does not constitute personal data processing, since no individual is identified or identifiable from the aggregate count alone.
+
+**Hashing is used for URL generation, not for pseudonymization of personal data.** The SHA-256 hashes in this plugin are derived from the ad's UTM parameters (source, medium, campaign, etc.) and serve as opaque identifiers for tracking URLs. They are not hashes of personal data such as email addresses or phone numbers. This is a fundamental difference from Enhanced Conversions, where personal data is hashed and sent to Google.
+
+**The `_aah_pending` cookie is a borderline case.** This temporary cookie (maximum 60 seconds) contains only an ad hash and serves as a technical transport mechanism for deferred consent scenarios. It contains no personal data in itself. Whether it should be classified as "necessary" or "marketing" is a judgment call that depends on your interpretation; the plugin's consent configuration section presents both options. See [Cookie Consent Configuration](#cookie-consent-configuration).
+
+**Data minimization.** The plugin stores the minimum data needed for attribution: opaque hashes in a cookie and aggregate click/conversion counts in the database. No names, email addresses, IP addresses, or other directly identifying information is stored by the plugin.
 
 ## Installation
 
@@ -123,7 +156,7 @@ Register the following cookies:
 
 Replace `.yourdomain.com` with your actual domain.
 
-*`_aah_pending` can be registered as a necessary cookie — it contains no personal data, lives at most 60 seconds, and serves only as a technical transport mechanism for deferred consent scenarios.
+*`_aah_pending` contains no personal data, lives at most 60 seconds, and serves only as a technical transport mechanism for deferred consent scenarios. Whether to classify it as "Necessary" or "Marketing" is a judgment call — see [Privacy and GDPR](#privacy-and-gdpr) for a discussion.
 
 You also need to connect the consent plugin to this plugin via the `kntnt_ad_attribution_has_consent` filter. See [Connecting a Cookie Consent Plugin](#connecting-a-cookie-consent-plugin) for details and a complete Real Cookie Banner example.
 
@@ -384,6 +417,10 @@ add_action( 'kntnt_ad_attribution_conversion_recorded', function ( array $attrib
 
 ## Frequently Asked Questions
 
+**How does this compare to Google's Enhanced Conversions?**
+
+Both this plugin and Enhanced Conversions aim to improve ad attribution beyond what basic client-side tracking provides. The key difference is where the data goes. Enhanced Conversions sends hashed personal data (email, phone, name) to Google's servers, where it is matched against Google accounts. This plugin keeps all data on your own server and never sends personal data to any third party. The trade-off is that this plugin cannot feed conversion data back to the ad platform's bidding algorithms — it provides internal attribution statistics only. See [Privacy and GDPR](#privacy-and-gdpr) for a detailed comparison.
+
 **What problem does this plugin solve?**
 
 Ad platforms report clicks but not which clicks became leads on your website. Standard client-side tracking (JavaScript tags) is increasingly blocked by ad blockers, Safari's ITP, and privacy-focused browsers. This plugin moves the tracking to the server side, where it is immune to ad blockers and more resilient to browser restrictions. It gives you an internal, independent view of which ads actually generate leads. See [The Problem](#the-problem) and [Limitations](#limitations) for details.
@@ -410,7 +447,7 @@ The plugin uses a deduplication mechanism. If a visitor triggers a conversion wi
 
 **What about cookie consent / GDPR?**
 
-The plugin supports a three-state consent model (yes, no, undefined) and integrates with any cookie consent plugin via the `kntnt_ad_attribution_has_consent` filter. Click counting (aggregated statistics per tracking URL) is always performed regardless of consent, since it does not constitute personal data processing. Only the cookie — which links a click to an individual — requires consent. See [Connecting a Cookie Consent Plugin](#connecting-a-cookie-consent-plugin) for details.
+The plugin is designed to keep all data on your own server — no personal data is sent to any third party. This eliminates the third-country transfer issues that affect solutions like Google's Enhanced Conversions. However, the `_ad_clicks` cookie constitutes personal data processing under GDPR and requires consent. The plugin supports a three-state consent model (yes, no, undefined) and integrates with any cookie consent plugin via the `kntnt_ad_attribution_has_consent` filter. Click counting (aggregated statistics per tracking URL) is always performed regardless of consent, since it does not identify or track individuals. See [Privacy and GDPR](#privacy-and-gdpr) for a full discussion and [Connecting a Cookie Consent Plugin](#connecting-a-cookie-consent-plugin) for implementation details.
 
 **How can I get help or report a bug?**
 
