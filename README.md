@@ -125,6 +125,9 @@ wp i18n make-mo languages/
 > [!NOTE]
 > The repository does not include compiled `.mo` translation files. You must run `wp i18n make-mo languages/` after cloning to generate them from the `.po` source files. This requires [WP-CLI](https://wp-cli.org/) to be installed.
 
+> [!TIP]
+> The repository includes `CLAUDE.md` and a `docs/` directory with detailed technical documentation. These files are primarily written for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (an AI coding assistant), giving it the context it needs to work effectively with this codebase. However, they are equally useful for human developers — covering architecture, data model, click and conversion flows, cookie handling, consent logic, security considerations, coding standards, and more.
+
 ### Permissions
 
 On activation, the plugin registers a custom capability: `kntnt_ad_attr`. This capability is automatically granted to the **Administrator** and **Editor** roles. Only users with this capability can access the Ad Attribution page and manage tracking URLs.
