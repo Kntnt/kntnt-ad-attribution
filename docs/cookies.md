@@ -9,7 +9,7 @@ Stores the visitor's clicked ads with timestamps.
 | Name | `_ad_clicks` |
 | Format | `<hash>:<unix_timestamp>,<hash>:<unix_timestamp>,…` |
 | Attributes | `Path=/`, `HttpOnly`, `Secure`, `SameSite=Lax` |
-| Lifetime | Configurable via `kntnt_ad_attribution_cookie_lifetime` (default 90 days) |
+| Lifetime | Configurable via `kntnt_ad_attr_cookie_lifetime` (default 90 days) |
 | Max hashes | 50 (hardcoded based on 4 KB cookie limit) |
 | Renewal | The cookie expiration date is renewed on each new ad click |
 
@@ -30,7 +30,7 @@ Used for conversion deduplication. The cookie is set **only** when a conversion 
 | Name | `_ad_last_conv` |
 | Format | Unix timestamp |
 | Attributes | `Path=/`, `HttpOnly`, `Secure`, `SameSite=Lax` |
-| Lifetime | Controlled by `kntnt_ad_attribution_dedup_days` (default 30 days), capped to max `cookie_lifetime` |
+| Lifetime | Controlled by `kntnt_ad_attr_dedup_days` (default 30 days), capped to max `cookie_lifetime` |
 
 ## `_aah_pending`
 

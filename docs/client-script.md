@@ -75,4 +75,4 @@ The function is called **once** on page load. The callback is called with:
 
 The developer overrides the function to connect to their consent plugin's JS API. See [consent-example.md](consent-example.md) for a complete example with Real Cookie Banner.
 
-The default implementation (`callback('unknown')`) means that sites without consent integration never get stuck in a wait state — the hash stays in sessionStorage and waits until the PHP-side consent filter (`kntnt_ad_attribution_has_consent`) returns `true`, at which point the server sets the cookie directly on the next ad click.
+The default implementation (`callback('unknown')`) means that sites without consent integration never get stuck in a wait state — the hash stays in sessionStorage and waits until the PHP-side consent filter (`kntnt_ad_attr_has_consent`) returns `true`, at which point the server sets the cookie directly on the next ad click.

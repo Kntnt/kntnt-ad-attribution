@@ -15,7 +15,7 @@ Create a service in Real Cookie Banner with identifier `kntnt-ad-attribution` an
 ## PHP Hook
 
 ```php
-add_filter( 'kntnt_ad_attribution_has_consent', function(): ?bool {
+add_filter( 'kntnt_ad_attr_has_consent', function(): ?bool {
 
     if ( ! function_exists( 'wp_rcb_consent_given' ) ) {
         return null; // Consent plugin not active

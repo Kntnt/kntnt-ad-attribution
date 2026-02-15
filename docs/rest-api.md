@@ -20,7 +20,7 @@ Content-Type: `application/json`. Header: `X-WP-Nonce: <nonce>`.
 
 **Validation:** Each hash is validated against `/^[a-f0-9]{64}$/` and against the database (must exist as a registered tracking URL). Invalid/unknown hashes are silently ignored.
 
-**Consent check:** The endpoint checks `kntnt_ad_attribution_has_consent`. If consent is missing, `200` is returned with `{ "success": false }` without setting a cookie.
+**Consent check:** The endpoint checks `kntnt_ad_attr_has_consent`. If consent is missing, `200` is returned with `{ "success": false }` without setting a cookie.
 
 **Response on successful request:**
 

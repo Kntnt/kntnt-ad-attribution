@@ -1,6 +1,6 @@
 # Conversion Handling
 
-Conversions are triggered via the action hook `kntnt_ad_attribution_conversion` from the form plugin's submission handler.
+Conversions are triggered via the action hook `kntnt_ad_attr_conversion` from the form plugin's submission handler.
 
 ## Flow
 
@@ -14,16 +14,16 @@ Conversions are triggered via the action hook `kntnt_ad_attribution_conversion` 
 7. Calculate attribution weights
 8. Write fractional conversions to the database (in a transaction)
 9. Set/update the _ad_last_conv cookie
-10. Trigger kntnt_ad_attribution_conversion_recorded
+10. Trigger kntnt_ad_attr_conversion_recorded
 ```
 
 ## Deduplication
 
-If `_ad_last_conv` exists and the timestamp is younger than `kntnt_ad_attribution_dedup_days` (default 30 days), the conversion is ignored. The dedup period is automatically capped to the cookie lifetime:
+If `_ad_last_conv` exists and the timestamp is younger than `kntnt_ad_attr_dedup_days` (default 30 days), the conversion is ignored. The dedup period is automatically capped to the cookie lifetime:
 
 ```php
-$lifetime   = apply_filters( 'kntnt_ad_attribution_cookie_lifetime', 90 );
-$dedup_days = apply_filters( 'kntnt_ad_attribution_dedup_days', 30 );
+$lifetime   = apply_filters( 'kntnt_ad_attr_cookie_lifetime', 90 );
+$dedup_days = apply_filters( 'kntnt_ad_attr_dedup_days', 30 );
 $dedup_days = min( $dedup_days, $lifetime );
 ```
 
@@ -32,7 +32,7 @@ $dedup_days = min( $dedup_days, $lifetime );
 Fractional, time-weighted attribution. More recent clicks receive more weight.
 
 ```
-N   = apply_filters( 'kntnt_ad_attribution_cookie_lifetime', 90 )
+N   = apply_filters( 'kntnt_ad_attr_cookie_lifetime', 90 )
 d_i = number of days since the hash's timestamp
 w_i = max( N − d_i, 1 )
 a_i = w_i / Σ w_j

@@ -21,12 +21,12 @@ The click handler is registered on `template_redirect` — the conventional hook
 
 ## URL Matching
 
-The plugin captures requests to `/<prefix>/<hash>` where prefix defaults to `ad` (configurable via `kntnt_ad_attribution_url_prefix`).
+The plugin captures requests to `/<prefix>/<hash>` where prefix defaults to `ad` (configurable via `kntnt_ad_attr_url_prefix`).
 
 **Rewrite rule:**
 
 ```php
-$prefix = apply_filters( 'kntnt_ad_attribution_url_prefix', 'ad' );
+$prefix = apply_filters( 'kntnt_ad_attr_url_prefix', 'ad' );
 
 add_rewrite_rule(
     '^' . preg_quote( $prefix, '/' ) . '/([a-f0-9]{64})/?$',
@@ -58,7 +58,7 @@ Query parameters (including `gclid`) are ignored in the attribution logic — th
 
 Bots are redirected to the target URL, but the click is **not** logged and no cookie is set.
 
-Bot detection is controlled by the filter `kntnt_ad_attribution_is_bot` (default `false`). The plugin registers its own callback with User-Agent matching:
+Bot detection is controlled by the filter `kntnt_ad_attr_is_bot` (default `false`). The plugin registers its own callback with User-Agent matching:
 
 Signatures matched (case-insensitive): `bot`, `crawl`, `spider`, `slurp`, `facebookexternalhit`, `LinkedInBot`, `Mediapartners-Google`, `AdsBot-Google`, `Googlebot`, `Bingbot`, `Yahoo`, `curl`, `wget`, `python-requests`, `HeadlessChrome`, `Lighthouse`, `GTmetrix`. An empty User-Agent is treated as a bot.
 
@@ -66,13 +66,13 @@ The plugin automatically adds `Disallow: /<prefix>/` to WordPress's virtual `rob
 
 ## Consent
 
-Consent is checked via the filter `kntnt_ad_attribution_has_consent`. Three states:
+Consent is checked via the filter `kntnt_ad_attr_has_consent`. Three states:
 
 - **Yes (`true`)** — the visitor has accepted marketing cookies.
 - **No (`false`)** — the visitor has declined.
 - **Undefined (`null`)** — the visitor has not yet made a decision.
 
-If no callback is registered, the plugin falls back to `kntnt_ad_attribution_default_consent` (default `true`), which covers sites without consent requirements.
+If no callback is registered, the plugin falls back to `kntnt_ad_attr_default_consent` (default `true`), which covers sites without consent requirements.
 
 **Consent = yes:** Set the `_ad_clicks` cookie. Redirect to target URL.
 
@@ -84,7 +84,7 @@ The click is logged in the database **always** regardless of consent. Click coun
 
 ## Transport Mechanism for Undefined Consent
 
-When consent is undefined, the hash needs to be transferred to the target URL. The mechanism is controlled by the filter `kntnt_ad_attribution_pending_transport`.
+When consent is undefined, the hash needs to be transferred to the target URL. The mechanism is controlled by the filter `kntnt_ad_attr_pending_transport`.
 
 **`'cookie'`** (default) — the server sets a temporary cookie in the redirect response:
 
@@ -104,7 +104,7 @@ The script reads the fragment, stores the hash in `sessionStorage`, and clears t
 
 ## Redirect Methods
 
-Controlled by the filter `kntnt_ad_attribution_redirect_method`:
+Controlled by the filter `kntnt_ad_attr_redirect_method`:
 
 **`'302'`** (default) — server-side redirect:
 

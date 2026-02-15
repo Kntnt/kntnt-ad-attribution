@@ -2,16 +2,16 @@
 
 ## Naming Conventions
 
-The plugin slug, text domain, and filters/actions use the full `kntnt-ad-attribution` prefix. Internally in WordPress (post type, table, capability, options), the shorter `kntnt_ad_attr` prefix is used to stay within WordPress's 20-character limit for post types.
+All machine-readable names use `kntnt-ad-attr` (hyphens) / `kntnt_ad_attr` (underscores) as prefix. The PHP namespace remains `Kntnt\Ad_Attribution`. The GitHub URL (`kntnt-ad-attribution`) is the only exception.
 
 | Context | Name |
 |---------|------|
-| Plugin slug / text domain | `kntnt-ad-attribution` |
+| Text domain | `kntnt-ad-attr` |
 | Post type | `kntnt_ad_attr_url` |
 | Custom table | `{prefix}kntnt_ad_attr_stats` |
 | Capability | `kntnt_ad_attr` |
 | DB version in options | `kntnt_ad_attr_version` |
-| All filters/actions | `kntnt_ad_attribution_*` |
+| All filters/actions | `kntnt_ad_attr_*` |
 
 ## Data Model
 
@@ -26,13 +26,13 @@ CPT registration — key arguments:
 'show_ui'      => false,
 'show_in_menu' => false,
 'show_in_rest' => true,   // Required for Block Editor-compatible export/import
-'rest_base'    => 'ad-attribution-urls',
+'rest_base'    => 'kntnt-ad-attr-urls',
 'supports'     => [ 'title' ],
 'capability_type' => 'post',
 'map_meta_cap' => true,
 ```
 
-`show_in_rest => true` exposes the CPT via the WordPress REST API (`/wp/v2/ad-attribution-urls`). This is not required by the plugin's core functionality but enables export/import and future third-party integrations. REST access is restricted by standard WordPress capabilities.
+`show_in_rest => true` exposes the CPT via the WordPress REST API (`/wp/v2/kntnt-ad-attr-urls`). This is not required by the plugin's core functionality but enables export/import and future third-party integrations. REST access is restricted by standard WordPress capabilities.
 
 **Post fields:**
 
@@ -47,11 +47,11 @@ CPT registration — key arguments:
 |----------|-------|
 | `_hash` | SHA-256 hash (64 characters). Unique per application logic (see below). |
 | `_target_post_id` | WordPress post ID for the target page |
-| `_utm_source` | UTM/MTM source |
-| `_utm_medium` | UTM/MTM medium |
-| `_utm_campaign` | UTM/MTM campaign |
-| `_utm_content` | UTM/MTM content (optional) |
-| `_utm_term` | UTM/MTM term (optional) |
+| `_utm_source` | UTM source |
+| `_utm_medium` | UTM medium |
+| `_utm_campaign` | UTM campaign |
+| `_utm_content` | UTM content (optional) |
+| `_utm_term` | UTM term (optional) |
 
 The hash is stored as post meta. The hash is not the post slug — slugs have length limitations and normalization that can cause issues with exact 64-character hex strings.
 

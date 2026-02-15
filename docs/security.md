@@ -11,7 +11,7 @@ Regex: `/^[a-f0-9]{64}$/`. Validated at:
 - REST API request
 - Database lookup (must exist as a registered tracking URL)
 
-### UTM/MTM Parameters
+### UTM Parameters
 
 | Field | Required | Max length | Sanitization |
 |-------|----------|------------|--------------|

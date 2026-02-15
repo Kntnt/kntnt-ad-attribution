@@ -56,6 +56,8 @@ All specs are in `docs/`. Read the relevant doc before implementing a feature:
 | `lifecycle.md` | Activation, deactivation, uninstall, migration, cron |
 | `security.md` | Validation, nonces, capabilities, error handling, time zones |
 | `coding-standards.md` | Full coding standards reference |
+| `file-structure.md` | Project file organization |
+| `consent-example.md` | Complete consent integration example (Real Cookie Banner) |
 
 ## Coding Standards
 

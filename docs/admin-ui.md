@@ -30,9 +30,9 @@ Tracking URLs are displayed and managed via a custom `WP_List_Table` subclass (n
 - Target URL (resolved via `get_permalink()`)
 - UTM source, medium, campaign, content, term
 
-**Row actions:** Edit, Trash (standard WordPress row actions).
+**Row actions:** Trash (or Restore / Delete Permanently for trashed URLs).
 
-**Form (Add / Edit):** Displayed on the same page (or as a separate view via GET parameter `action=edit&post=ID`). Fields:
+**Form (Add New):** Displayed on the same page. Fields:
 
 - Target URL: searchable select component (see below) that displays post type and post ID. All public post types are included. The plugin's own CPT is excluded.
 - UTM source (required), medium (required), campaign (required), content (optional), term (optional).
@@ -135,11 +135,11 @@ Button in the Campaigns tab. Same query without LIMIT/OFFSET, streamed as `text/
 |--------|---------|
 | `tracking_url` | Full tracking URL |
 | `target_url` | Target URL |
-| `utm_source` | UTM/MTM source |
-| `utm_medium` | UTM/MTM medium |
-| `utm_campaign` | UTM/MTM campaign |
-| `utm_content` | UTM/MTM content |
-| `utm_term` | UTM/MTM term |
+| `utm_source` | UTM source |
+| `utm_medium` | UTM medium |
+| `utm_campaign` | UTM campaign |
+| `utm_content` | UTM content |
+| `utm_term` | UTM term |
 | `clicks` | Total clicks (integer) |
 | `conversions` | Fractional conversions (4 decimals, locale's decimal character) |
 
