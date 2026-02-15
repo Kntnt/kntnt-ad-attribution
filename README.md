@@ -138,30 +138,34 @@ To grant access to other roles (e.g. Author), use a role management plugin such 
 
 If you use a cookie consent plugin (such as [Real Cookie Banner](https://devowl.io/wordpress-real-cookie-banner/), which is an excellent and recommended choice), you need to register the plugin's cookies as a marketing service. Here is the information you need:
 
-| Field              | Value                        |
-|--------------------|------------------------------|
-| Service name       | Kntnt Ad Attribution         |
-| Service identifier | `kntnt-ad-attribution`       |
-| Provider           | Kntnt (own service)          |
-| Category           | Marketing                    |
-| Purpose            | Stores information about which ads the visitor has clicked in order to measure which ads lead to inquiries via the website's forms. No data is shared with third parties. |
-| Legal basis        | Consent                      |
+| Field | Value |
+|-------|-------|
+| Service name | Ad Attribution |
+| Service identifier | `kntnt-ad-attribution` |
+| Provider | Website owner (first-party service) |
+| Category | Marketing |
+| Purpose | Stores information about which ads the visitor has clicked in order to measure which ads lead to inquiries via the website's forms. No data is shared with third parties. |
+| Legal basis | Consent (opt-in) |
+| Data processing countries | The country (or countries) where the site is hosted, and potentially other countries (consult your legal advisor). |
 
 Register the following cookies:
 
-| Property | Cookie 1       | Cookie 2          | Cookie 3       |
-|----------|----------------|-------------------|----------------|
-| Type     | HTTP Cookie    | HTTP Cookie       | HTTP Cookie    |
-| Name     | `_ad_clicks`   | `_ad_last_conv`   | `_aah_pending` |
-| Host     | `.yourdomain.com` | `.yourdomain.com` | `.yourdomain.com` |
-| Duration | 90 days        | 30 days           | 60 seconds     |
-| Category | Marketing      | Marketing         | Necessary*     |
+| Property | Cookie 1 | Cookie 2 | Cookie 3 |
+|----------|----------|----------|----------|
+| Name | `_ad_clicks` | `_ad_last_conv` | `_aah_pending` |
+| Type | HTTP Cookie | HTTP Cookie | HTTP Cookie |
+| Host | `.yourdomain.com` | `.yourdomain.com` | `.yourdomain.com` |
+| Duration | 90 days* | 30 days** | 60 seconds |
+| Purpose | Stores which ads the visitor has clicked in order to attribute form inquiries to the ads that generated them. | Stores the time of the most recent form inquiry to prevent duplicate counting of the same visitor. | Temporary transport of ad hash to the landing page while the visitor has not yet made a cookie consent decision. Automatically deleted after 60 seconds. |
+| Category | Marketing | Marketing | Necessary or Marketing*** |
 
 Replace `.yourdomain.com` with your actual domain.
 
-*`_aah_pending` contains no personal data, lives at most 60 seconds, and serves only as a technical transport mechanism for deferred consent scenarios. Whether to classify it as "Necessary" or "Marketing" is a judgment call — see [Privacy and GDPR](#privacy-and-gdpr) for a discussion.
+\* Configurable via the `kntnt_ad_attr_cookie_lifetime` filter (default: 90 days).
 
-You also need to connect the consent plugin to this plugin via the `kntnt_ad_attr_has_consent` filter. See [Connecting a Cookie Consent Plugin](#connecting-a-cookie-consent-plugin) for details and a complete Real Cookie Banner example.
+\** Configurable via the `kntnt_ad_attr_dedup_days` filter (default: 30 days).
+
+\*** `_aah_pending` contains no personal data, lives at most 60 seconds, and serves only as a technical transport mechanism for deferred consent scenarios. Whether to classify it as "Necessary" or "Marketing" is a judgment call — see [Privacy and GDPR](#privacy-and-gdpr) for a discussion.
 
 ## Usage
 
