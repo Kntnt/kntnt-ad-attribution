@@ -286,9 +286,17 @@ final class Campaign_List_Table extends WP_List_Table {
 	 * @since 1.0.0
 	 */
 	public function get_filter_params(): array {
+		$date_start = sanitize_text_field( wp_unslash( $_GET['date_start'] ?? '' ) );
+		$date_end   = sanitize_text_field( wp_unslash( $_GET['date_end'] ?? '' ) );
+
+		// Validate ISO-8601 date format; fall back to open-ended defaults.
+		$date_pattern = '/^\d{4}-\d{2}-\d{2}$/';
+		$date_start   = preg_match( $date_pattern, $date_start ) ? $date_start : '1970-01-01';
+		$date_end     = preg_match( $date_pattern, $date_end ) ? $date_end : '9999-12-31';
+
 		return [
-			'date_start'   => sanitize_text_field( wp_unslash( $_GET['date_start'] ?? '1970-01-01' ) ),
-			'date_end'     => sanitize_text_field( wp_unslash( $_GET['date_end'] ?? '9999-12-31' ) ),
+			'date_start'   => $date_start,
+			'date_end'     => $date_end,
 			'utm_source'   => sanitize_text_field( wp_unslash( $_GET['utm_source'] ?? '' ) ),
 			'utm_medium'   => sanitize_text_field( wp_unslash( $_GET['utm_medium'] ?? '' ) ),
 			'utm_campaign' => sanitize_text_field( wp_unslash( $_GET['utm_campaign'] ?? '' ) ),

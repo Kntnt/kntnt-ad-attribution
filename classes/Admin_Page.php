@@ -123,6 +123,44 @@ final class Admin_Page {
 	}
 
 	/**
+	 * Adds Subresource Integrity (SRI) attributes to CDN-loaded Select2 tags.
+	 *
+	 * Ensures that the browser verifies the integrity of CDN-hosted assets
+	 * before executing them, protecting against CDN compromise.
+	 *
+	 * @param string $tag    The generated script or link tag.
+	 * @param string $handle The registered asset handle.
+	 *
+	 * @return string Modified tag with integrity and crossorigin attributes.
+	 * @since 1.0.0
+	 */
+	public function add_sri_attributes( string $tag, string $handle ): string {
+		static $sri_hashes = [
+			'select2'     => 'sha384-JnbsSLBmv2/R0fUmF2XYIcAEMPHEAO51Gitn9IjL4l89uFTIgtLF1+jqIqqd9FSk',
+			'select2-css' => 'sha384-KZO2FRYNmIHerhfYMjCIUaJeGBRXP7CN24SiNSG+wdDzgwvxWbl16wMVtWiJTcMt',
+		];
+
+		// Map style handle 'select2' to its SRI key.
+		$sri_key = str_contains( $tag, '<link' ) ? $handle . '-css' : $handle;
+
+		if ( ! isset( $sri_hashes[ $sri_key ] ) ) {
+			return $tag;
+		}
+
+		$integrity = $sri_hashes[ $sri_key ];
+
+		return str_replace(
+			' src=',
+			" integrity=\"{$integrity}\" crossorigin=\"anonymous\" src=",
+			str_replace(
+				' href=',
+				" integrity=\"{$integrity}\" crossorigin=\"anonymous\" href=",
+				$tag,
+			),
+		);
+	}
+
+	/**
 	 * Enqueues CSS and JavaScript assets on the plugin's admin page.
 	 *
 	 * Always loads admin.css. On the add view, additionally loads select2
@@ -175,6 +213,10 @@ final class Admin_Page {
 			'4.0.13',
 			true,
 		);
+
+		// Add SRI integrity attributes to CDN-loaded Select2 assets.
+		add_filter( 'script_loader_tag', [ $this, 'add_sri_attributes' ], 10, 2 );
+		add_filter( 'style_loader_tag', [ $this, 'add_sri_attributes' ], 10, 2 );
 
 		// Re-register admin JS with select2 dependency for the form view.
 		wp_deregister_script( 'kntnt-ad-attr-admin' );

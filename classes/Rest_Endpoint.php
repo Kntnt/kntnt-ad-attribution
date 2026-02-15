@@ -169,6 +169,17 @@ final class Rest_Endpoint {
 	 */
 	public function set_cookie( WP_REST_Request $request ): WP_REST_Response {
 
+		// Rate limit: allow at most 10 requests per minute per IP address.
+		$ip            = $_SERVER['REMOTE_ADDR'] ?? '';
+		$transient_key = 'kntnt_ad_attr_rl_' . md5( $ip );
+		$request_count = (int) get_transient( $transient_key );
+
+		if ( $request_count >= 10 ) {
+			return new WP_REST_Response( [ 'success' => false ], 429 );
+		}
+
+		set_transient( $transient_key, $request_count + 1, MINUTE_IN_SECONDS );
+
 		// Validate hash format — silently discard malformed entries.
 		$hashes = array_filter(
 			$request->get_param( 'hashes' ),
