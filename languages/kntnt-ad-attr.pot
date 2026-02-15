@@ -9,7 +9,7 @@ msgstr ""
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"POT-Creation-Date: 2026-02-14T17:42:06+01:00\n"
+"POT-Creation-Date: 2026-02-15T10:39:10+01:00\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "X-Generator: WP-CLI 2.12.0\n"
 "X-Domain: kntnt-ad-attr\n"
@@ -41,7 +41,7 @@ msgstr ""
 
 #: classes/Admin_Page.php:60
 #: classes/Admin_Page.php:61
-#: classes/Admin_Page.php:211
+#: classes/Admin_Page.php:254
 #: classes/Plugin.php:428
 msgid "Ad Attribution"
 msgstr ""
@@ -54,153 +54,149 @@ msgstr ""
 msgid "URLs per page"
 msgstr ""
 
-#: classes/Admin_Page.php:237
+#: classes/Admin_Page.php:280
 msgid "URLs"
 msgstr ""
 
-#: classes/Admin_Page.php:238
+#: classes/Admin_Page.php:281
 msgid "Campaigns"
 msgstr ""
 
-#: classes/Admin_Page.php:293
+#: classes/Admin_Page.php:335
 msgid "Add New"
 msgstr ""
 
-#: classes/Admin_Page.php:314
+#: classes/Admin_Page.php:360
 msgid "Search URLs"
 msgstr ""
 
-#: classes/Admin_Page.php:334
+#: classes/Admin_Page.php:380
 msgid "Search"
 msgstr ""
 
-#: classes/Admin_Page.php:350
+#: classes/Admin_Page.php:396
 msgid "Export CSV"
 msgstr ""
 
-#: classes/Admin_Page.php:373
-msgid "Invalid tracking URL."
-msgstr ""
-
-#: classes/Admin_Page.php:387
-msgid "Edit Tracking URL"
-msgstr ""
-
-#: classes/Admin_Page.php:388
+#: classes/Admin_Page.php:412
 msgid "Add New Tracking URL"
 msgstr ""
 
-#: classes/Admin_Page.php:394
-msgid "Hash:"
-msgstr ""
-
-#: classes/Admin_Page.php:396
-msgid "Tracking URL:"
-msgstr ""
-
-#: classes/Admin_Page.php:411
+#: classes/Admin_Page.php:424
 msgid "Target Page"
 msgstr ""
 
-#: classes/Admin_Page.php:430
+#: classes/Admin_Page.php:433
 msgid "UTM Source"
 msgstr ""
 
-#: classes/Admin_Page.php:431
+#: classes/Admin_Page.php:436
+#: classes/Admin_Page.php:449
+msgid "— Select or type —"
+msgstr ""
+
+#: classes/Admin_Page.php:446
 msgid "UTM Medium"
 msgstr ""
 
-#: classes/Admin_Page.php:432
+#: classes/Admin_Page.php:458
 msgid "UTM Campaign"
 msgstr ""
 
-#: classes/Admin_Page.php:433
+#: classes/Admin_Page.php:459
 msgid "UTM Content"
 msgstr ""
 
-#: classes/Admin_Page.php:434
+#: classes/Admin_Page.php:460
 msgid "UTM Term"
 msgstr ""
 
-#: classes/Admin_Page.php:455
-msgid "Update Tracking URL"
-msgstr ""
-
-#: classes/Admin_Page.php:456
+#: classes/Admin_Page.php:479
 msgid "Create Tracking URL"
 msgstr ""
 
-#: classes/Admin_Page.php:473
+#: classes/Admin_Page.php:494
 msgid "Tracking URL created."
 msgstr ""
 
-#: classes/Admin_Page.php:474
-msgid "Tracking URL updated."
-msgstr ""
-
-#: classes/Admin_Page.php:475
+#: classes/Admin_Page.php:495
 msgid "Tracking URL moved to Trash."
 msgstr ""
 
-#: classes/Admin_Page.php:476
+#: classes/Admin_Page.php:496
 msgid "Tracking URL restored."
 msgstr ""
 
-#: classes/Admin_Page.php:477
+#: classes/Admin_Page.php:497
 msgid "Tracking URL permanently deleted."
 msgstr ""
 
-#: classes/Admin_Page.php:558
+#: classes/Admin_Page.php:502
+#, php-format
+msgid "%d tracking URL(s) moved to Trash."
+msgstr ""
+
+#: classes/Admin_Page.php:503
+#, php-format
+msgid "%d tracking URL(s) restored."
+msgstr ""
+
+#: classes/Admin_Page.php:504
+#, php-format
+msgid "%d tracking URL(s) permanently deleted."
+msgstr ""
+
+#: classes/Admin_Page.php:600
 msgid "Please fill in all required fields."
 msgstr ""
 
-#: classes/Admin_Page.php:564
+#: classes/Admin_Page.php:606
 msgid "The selected target page does not exist or is not published."
 msgstr ""
 
-#: classes/Admin_Page.php:599
+#: classes/Admin_Page.php:627
 msgid "Failed to create tracking URL. Please try again."
 msgstr ""
 
 #: classes/Campaign_List_Table.php:71
 #: classes/Csv_Exporter.php:69
-#: classes/Url_List_Table.php:63
+#: classes/Url_List_Table.php:64
 msgid "Tracking URL"
 msgstr ""
 
 #: classes/Campaign_List_Table.php:72
 #: classes/Csv_Exporter.php:70
-#: classes/Url_List_Table.php:64
+#: classes/Url_List_Table.php:65
 msgid "Target URL"
 msgstr ""
 
 #: classes/Campaign_List_Table.php:73
 #: classes/Csv_Exporter.php:71
-#: classes/Url_List_Table.php:65
+#: classes/Url_List_Table.php:66
 msgid "Source"
 msgstr ""
 
 #: classes/Campaign_List_Table.php:74
 #: classes/Csv_Exporter.php:72
-#: classes/Url_List_Table.php:66
+#: classes/Url_List_Table.php:67
 msgid "Medium"
 msgstr ""
 
 #: classes/Campaign_List_Table.php:75
 #: classes/Csv_Exporter.php:73
-#: classes/Url_List_Table.php:67
+#: classes/Url_List_Table.php:68
 msgid "Campaign"
 msgstr ""
 
 #: classes/Campaign_List_Table.php:76
 #: classes/Csv_Exporter.php:74
-#: classes/Url_List_Table.php:68
+#: classes/Url_List_Table.php:69
 msgid "Content"
 msgstr ""
 
 #: classes/Campaign_List_Table.php:77
 #: classes/Csv_Exporter.php:75
-#: classes/Url_List_Table.php:69
+#: classes/Url_List_Table.php:70
 msgid "Term"
 msgstr ""
 
@@ -216,49 +212,49 @@ msgstr ""
 
 #: classes/Campaign_List_Table.php:135
 #: classes/Csv_Exporter.php:91
-#: classes/Url_List_Table.php:225
+#: classes/Url_List_Table.php:252
 msgid "(deleted)"
 msgstr ""
 
-#: classes/Campaign_List_Table.php:415
-#: classes/Url_List_Table.php:397
+#: classes/Campaign_List_Table.php:424
+#: classes/Url_List_Table.php:424
 msgid "All Sources"
 msgstr ""
 
-#: classes/Campaign_List_Table.php:416
-#: classes/Url_List_Table.php:398
+#: classes/Campaign_List_Table.php:425
+#: classes/Url_List_Table.php:425
 msgid "All Mediums"
 msgstr ""
 
-#: classes/Campaign_List_Table.php:417
-#: classes/Url_List_Table.php:399
+#: classes/Campaign_List_Table.php:426
+#: classes/Url_List_Table.php:426
 msgid "All Campaigns"
 msgstr ""
 
-#: classes/Campaign_List_Table.php:418
-#: classes/Url_List_Table.php:400
+#: classes/Campaign_List_Table.php:427
+#: classes/Url_List_Table.php:427
 msgid "All Contents"
 msgstr ""
 
-#: classes/Campaign_List_Table.php:419
-#: classes/Url_List_Table.php:401
+#: classes/Campaign_List_Table.php:428
+#: classes/Url_List_Table.php:428
 msgid "All Terms"
 msgstr ""
 
-#: classes/Campaign_List_Table.php:428
+#: classes/Campaign_List_Table.php:437
 msgid "Start date"
 msgstr ""
 
-#: classes/Campaign_List_Table.php:429
+#: classes/Campaign_List_Table.php:438
 msgid "End date"
 msgstr ""
 
-#: classes/Campaign_List_Table.php:450
-#: classes/Url_List_Table.php:424
+#: classes/Campaign_List_Table.php:459
+#: classes/Url_List_Table.php:451
 msgid "Filter"
 msgstr ""
 
-#: classes/Campaign_List_Table.php:579
+#: classes/Campaign_List_Table.php:591
 msgid "Total"
 msgstr ""
 
@@ -286,25 +282,27 @@ msgstr ""
 msgid "Access Denied"
 msgstr ""
 
-#: classes/Url_List_Table.php:125
-msgid "All"
-msgstr ""
-
-#: classes/Url_List_Table.php:135
-#: classes/Url_List_Table.php:203
-msgid "Trash"
-msgstr ""
-
-#: classes/Url_List_Table.php:180
+#: classes/Url_List_Table.php:111
+#: classes/Url_List_Table.php:214
 msgid "Restore"
 msgstr ""
 
-#: classes/Url_List_Table.php:181
+#: classes/Url_List_Table.php:112
+#: classes/Url_List_Table.php:215
 msgid "Delete Permanently"
 msgstr ""
 
-#: classes/Url_List_Table.php:202
-msgid "Edit"
+#: classes/Url_List_Table.php:117
+msgid "Move to Trash"
+msgstr ""
+
+#: classes/Url_List_Table.php:159
+msgid "All"
+msgstr ""
+
+#: classes/Url_List_Table.php:169
+#: classes/Url_List_Table.php:230
+msgid "Trash"
 msgstr ""
 
 #. translators: 1: Required PHP version, 2: Current PHP version.
