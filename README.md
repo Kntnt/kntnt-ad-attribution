@@ -247,9 +247,15 @@ The plugin uses a three-state consent model:
 - **No (`false`)** — the visitor has declined. No cookie is set. Attribution is lost (accepted trade-off).
 - **Undefined (`null`)** — the visitor hasn't decided yet. The click is logged, the hash is transported to the client via a temporary mechanism, and the client-side script waits for a consent decision.
 
-Consent is checked via the `kntnt_ad_attr_has_consent` filter. If no filter callback is registered, the plugin falls back to `kntnt_ad_attr_default_consent` (default: `true`), which is appropriate for sites without consent requirements.
+Consent integration requires two parts: a **PHP filter** for server-side consent checks (at click time and when setting cookies via REST), and a **JavaScript override** for client-side deferred consent handling (when the visitor hasn't decided yet at the time of the click).
 
-**PHP hook example with Real Cookie Banner:**
+If no filter callback is registered on `kntnt_ad_attr_has_consent`, the plugin falls back to `kntnt_ad_attr_default_consent` (default: `true`), which is appropriate for sites without consent requirements.
+
+#### PHP: Server-side consent filter
+
+The `kntnt_ad_attr_has_consent` filter must return `true`, `false`, or `null`. It is critical to distinguish between "the visitor has not made a decision yet" (`null`) and "the visitor has actively denied consent" (`false`). Returning `false` when the visitor simply hasn't decided yet will prevent the deferred transport mechanism from activating, and the attribution will be silently lost.
+
+**Example with Real Cookie Banner:**
 
 First, create a service in Real Cookie Banner with the unique identifier `kntnt-ad-attribution` and the cookie information from the [Cookie Consent Configuration](#cookie-consent-configuration) section above.
 
@@ -257,53 +263,87 @@ Then add the following snippet to your theme's `functions.php`, a mu-plugin, or 
 
 ```php
 add_filter( 'kntnt_ad_attr_has_consent', function (): ?bool {
-
     if ( ! function_exists( 'wp_rcb_consent_given' ) ) {
-        return null; // Consent plugin not active
+        return null; // RCB not active.
     }
-
     $consent = wp_rcb_consent_given( 'kntnt-ad-attribution' );
-
     if ( empty( $consent['cookie'] ) ) {
-        return null; // Service not configured
+        return null; // Service not configured in RCB.
     }
-
-    return $consent['cookieOptIn'] === true ? true : false;
-
+    if ( ! $consent['consentGiven'] ) {
+        return null; // Visitor has not made a decision yet.
+    }
+    return $consent['cookieOptIn'] === true;
 } );
 ```
 
-**JavaScript consent override:**
+Note the `consentGiven` check: `wp_rcb_consent_given()` returns `cookieOptIn: false` both when the visitor has actively denied consent *and* when they simply haven't interacted with the banner yet. The `consentGiven` field distinguishes between these two cases — it is `true` only after the visitor has made an explicit choice.
 
-For deferred consent scenarios, the plugin defines a global JavaScript function `window.kntntAdAttributionGetConsent` that the client-side script calls to determine consent status. Override this function to connect to your consent plugin's JavaScript API:
+#### PHP: Server-side cookie deletion on opt-out
 
-```javascript
-window.kntntAdAttributionGetConsent = function( callback ) {
+The `_ad_clicks` cookie is set with the `HttpOnly` flag for security, which prevents consent plugins from deleting it via client-side JavaScript. If your consent plugin provides a server-side hook for cookie deletion, use it to expire the cookie when consent is revoked.
 
-    // Check initial state
-    const initialConsent = window.consentApi?.consent?.['kntnt-ad-attribution'];
-    if ( initialConsent === true ) {
-        callback( 'yes' );
-        return;
+**Example with Real Cookie Banner:**
+
+```php
+add_action( 'RCB/OptOut/ByHttpCookie', function ( string $name, string $host ): void {
+    if ( $name === '_ad_clicks' ) {
+        setcookie( '_ad_clicks', '', [
+            'expires'  => 1,
+            'path'     => '/',
+            'secure'   => true,
+            'httponly'  => true,
+            'samesite' => 'Lax',
+        ] );
     }
-    if ( initialConsent === false ) {
-        callback( 'no' );
-        return;
-    }
-
-    // No decision yet — listen for future changes
-    document.addEventListener( 'RCBConsentChange', function( e ) {
-        if ( e.detail?.consent?.['kntnt-ad-attribution'] ) {
-            callback( 'yes' );
-        } else {
-            callback( 'no' );
-        }
-    } );
-
-};
+}, 10, 2 );
 ```
 
-The callback accepts `'yes'`, `'no'`, or `'unknown'`. It may be called asynchronously or multiple times (e.g. on consent change). The script handles all cases via an internal `handled` flag — only the first `'yes'` or `'no'` takes effect.
+This hook fires during the REST request that Real Cookie Banner makes when the visitor revokes consent, allowing the `HttpOnly` cookie to be expired server-side. For other consent plugins, consult their documentation for an equivalent server-side opt-out hook or event.
+
+#### JavaScript: Client-side deferred consent
+
+For deferred consent scenarios, the plugin defines a default `window.kntntAdAttributionGetConsent` function that the client-side script (`pending-consent.js`) calls to determine consent status. The default implementation calls the callback with `'unknown'`, which keeps the hashes in `sessionStorage` indefinitely. Override this function **before `DOMContentLoaded`** to connect to your consent plugin's JavaScript API.
+
+The callback accepts `'yes'`, `'no'`, or `'unknown'`. The script handles multiple invocations via an internal `handled` flag — only the first `'yes'` or `'no'` takes effect.
+
+**Example with Real Cookie Banner:**
+
+```javascript
+( function() {
+    'use strict';
+
+    window.kntntAdAttributionGetConsent = function( callback ) {
+
+        var api = window.consentApi;
+        if ( ! api || typeof api.consent !== 'function' ) {
+            return; // RCB not loaded; fall back to plugin default.
+        }
+
+        var handled = false;
+
+        function respond( answer ) {
+            if ( handled ) {
+                return;
+            }
+            handled = true;
+            callback( answer );
+        }
+
+        // consent() returns a Promise that resolves when consent IS given
+        // and rejects when consent is denied.
+        api.consent( 'kntnt-ad-attribution' ).then( function() {
+            respond( 'yes' );
+        } ).catch( function() {
+            respond( 'no' );
+        } );
+
+    };
+
+} )();
+```
+
+Real Cookie Banner's `consentApi.consent()` method returns a Promise — it is a function, not a property object. The Promise resolves when the visitor grants consent (immediately if already consented) and rejects when the visitor denies consent. If the visitor hasn't decided yet, the Promise stays pending until a decision is made.
 
 ## Developer Hooks
 
@@ -312,6 +352,9 @@ The callback accepts `'yes'`, `'no'`, or `'unknown'`. It may be called asynchron
 **`kntnt_ad_attr_has_consent`**
 
 Controls whether the plugin has consent to set cookies for the current visitor. Return `true` to allow cookies, `false` to block them, or `null` for undefined (triggers deferred consent transport). When no callback is registered, the plugin falls back to the value of `kntnt_ad_attr_default_consent`.
+
+> [!IMPORTANT]
+> Returning `false` when the visitor simply hasn't decided yet will silently prevent the deferred transport mechanism from activating. Make sure your implementation distinguishes "no decision yet" (`null`) from "actively denied" (`false`). See [Connecting a Cookie Consent Plugin](#connecting-a-cookie-consent-plugin) for a detailed example.
 
 ```php
 add_filter( 'kntnt_ad_attr_has_consent', function (): ?bool {
