@@ -1,0 +1,316 @@
+# Swedish translation for Kntnt Ad Attribution.
+# Copyright (C) 2026 Kntnt Sweden AB
+# This file is distributed under the GPL-2.0-or-later.
+msgid ""
+msgstr ""
+"Project-Id-Version: Kntnt Ad Attribution 1.0.0\n"
+"Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/kntnt-ad-attribution\n"
+"Last-Translator: Kntnt Sweden AB <info@kntnt.com>\n"
+"Language-Team: Swedish <info@kntnt.com>\n"
+"Language: sv_SE\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"POT-Creation-Date: 2026-02-14T17:01:50+01:00\n"
+"PO-Revision-Date: 2026-02-14 18:00+0100\n"
+"X-Generator: WP-CLI 2.12.0\n"
+"X-Domain: kntnt-ad-attr\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#. Plugin Name of the plugin
+#: kntnt-ad-attribution.php
+msgid "Kntnt Ad Attribution"
+msgstr "Kntnt Ad Attribution"
+
+#. Plugin URI of the plugin
+#: kntnt-ad-attribution.php
+msgid "https://github.com/Kntnt/kntnt-ad-attribution"
+msgstr "https://github.com/Kntnt/kntnt-ad-attribution"
+
+#. Description of the plugin
+#: kntnt-ad-attribution.php
+msgid "Provides internal lead attribution for ad campaigns using first-party cookies and fractional, time-weighted attribution."
+msgstr "Tillhandahåller intern leadattribuering för annonskampanjer med förstapartscookies och fraktionerad, tidsviktad attribuering."
+
+#. Author of the plugin
+#: kntnt-ad-attribution.php
+msgid "Kntnt Sweden AB"
+msgstr "Kntnt Sweden AB"
+
+#. Author URI of the plugin
+#: kntnt-ad-attribution.php
+msgid "https://www.kntnt.com/"
+msgstr "https://www.kntnt.com/"
+
+#: classes/Admin_Page.php:60
+#: classes/Admin_Page.php:61
+#: classes/Admin_Page.php:211
+#: classes/Plugin.php:428
+msgid "Ad Attribution"
+msgstr "Annonsattribuering"
+
+#: classes/Admin_Page.php:91
+msgid "Campaigns per page"
+msgstr "Kampanjer per sida"
+
+#: classes/Admin_Page.php:97
+msgid "URLs per page"
+msgstr "URL:er per sida"
+
+#: classes/Admin_Page.php:237
+msgid "URLs"
+msgstr "URL:er"
+
+#: classes/Admin_Page.php:238
+msgid "Campaigns"
+msgstr "Kampanjer"
+
+#: classes/Admin_Page.php:289
+msgid "Add New"
+msgstr "Lägg till ny"
+
+#: classes/Admin_Page.php:304
+msgid "Search URLs"
+msgstr "Sök URL:er"
+
+#: classes/Admin_Page.php:324
+msgid "Search"
+msgstr "Sök"
+
+#: classes/Admin_Page.php:340
+msgid "Export CSV"
+msgstr "Exportera CSV"
+
+#: classes/Admin_Page.php:363
+msgid "Invalid tracking URL."
+msgstr "Ogiltig spårnings-URL."
+
+#: classes/Admin_Page.php:377
+msgid "Edit Tracking URL"
+msgstr "Redigera spårnings-URL"
+
+#: classes/Admin_Page.php:378
+msgid "Add New Tracking URL"
+msgstr "Lägg till ny spårnings-URL"
+
+#: classes/Admin_Page.php:384
+msgid "Hash:"
+msgstr "Hash:"
+
+#: classes/Admin_Page.php:386
+msgid "Tracking URL:"
+msgstr "Spårnings-URL:"
+
+#: classes/Admin_Page.php:401
+msgid "Target Page"
+msgstr "Målsida"
+
+#: classes/Admin_Page.php:420
+msgid "UTM Source"
+msgstr "UTM-källa"
+
+#: classes/Admin_Page.php:421
+msgid "UTM Medium"
+msgstr "UTM-medium"
+
+#: classes/Admin_Page.php:422
+msgid "UTM Campaign"
+msgstr "UTM-kampanj"
+
+#: classes/Admin_Page.php:423
+msgid "UTM Content"
+msgstr "UTM-innehåll"
+
+#: classes/Admin_Page.php:424
+msgid "UTM Term"
+msgstr "UTM-term"
+
+#: classes/Admin_Page.php:445
+msgid "Update Tracking URL"
+msgstr "Uppdatera spårnings-URL"
+
+#: classes/Admin_Page.php:446
+msgid "Create Tracking URL"
+msgstr "Skapa spårnings-URL"
+
+#: classes/Admin_Page.php:463
+msgid "Tracking URL created."
+msgstr "Spårnings-URL skapad."
+
+#: classes/Admin_Page.php:464
+msgid "Tracking URL updated."
+msgstr "Spårnings-URL uppdaterad."
+
+#: classes/Admin_Page.php:465
+msgid "Tracking URL moved to Trash."
+msgstr "Spårnings-URL flyttad till papperskorgen."
+
+#: classes/Admin_Page.php:466
+msgid "Tracking URL restored."
+msgstr "Spårnings-URL återställd."
+
+#: classes/Admin_Page.php:467
+msgid "Tracking URL permanently deleted."
+msgstr "Spårnings-URL permanent raderad."
+
+#: classes/Admin_Page.php:543
+msgid "Please fill in all required fields."
+msgstr "Fyll i alla obligatoriska fält."
+
+#: classes/Admin_Page.php:549
+msgid "The selected target page does not exist or is not published."
+msgstr "Den valda målsidan finns inte eller är inte publicerad."
+
+#: classes/Admin_Page.php:584
+msgid "Failed to create tracking URL. Please try again."
+msgstr "Kunde inte skapa spårnings-URL. Försök igen."
+
+#: classes/Campaign_List_Table.php:71
+#: classes/Csv_Exporter.php:69
+#: classes/Url_List_Table.php:63
+msgid "Tracking URL"
+msgstr "Spårnings-URL"
+
+#: classes/Campaign_List_Table.php:72
+#: classes/Csv_Exporter.php:70
+#: classes/Url_List_Table.php:64
+msgid "Target URL"
+msgstr "Mål-URL"
+
+#: classes/Campaign_List_Table.php:73
+#: classes/Csv_Exporter.php:71
+#: classes/Url_List_Table.php:65
+msgid "Source"
+msgstr "Källa"
+
+#: classes/Campaign_List_Table.php:74
+#: classes/Csv_Exporter.php:72
+#: classes/Url_List_Table.php:66
+msgid "Medium"
+msgstr "Medium"
+
+#: classes/Campaign_List_Table.php:75
+#: classes/Csv_Exporter.php:73
+#: classes/Url_List_Table.php:67
+msgid "Campaign"
+msgstr "Kampanj"
+
+#: classes/Campaign_List_Table.php:76
+#: classes/Csv_Exporter.php:74
+#: classes/Url_List_Table.php:68
+msgid "Content"
+msgstr "Innehåll"
+
+#: classes/Campaign_List_Table.php:77
+#: classes/Csv_Exporter.php:75
+#: classes/Url_List_Table.php:69
+msgid "Term"
+msgstr "Term"
+
+#: classes/Campaign_List_Table.php:78
+#: classes/Csv_Exporter.php:76
+msgid "Clicks"
+msgstr "Klick"
+
+#: classes/Campaign_List_Table.php:79
+#: classes/Csv_Exporter.php:77
+msgid "Conversions"
+msgstr "Konverteringar"
+
+#: classes/Campaign_List_Table.php:135
+#: classes/Csv_Exporter.php:91
+#: classes/Url_List_Table.php:135
+msgid "(deleted)"
+msgstr "(borttagen)"
+
+#: classes/Campaign_List_Table.php:415
+#: classes/Url_List_Table.php:297
+msgid "All Sources"
+msgstr "Alla källor"
+
+#: classes/Campaign_List_Table.php:416
+#: classes/Url_List_Table.php:298
+msgid "All Mediums"
+msgstr "Alla medier"
+
+#: classes/Campaign_List_Table.php:417
+#: classes/Url_List_Table.php:299
+msgid "All Campaigns"
+msgstr "Alla kampanjer"
+
+#: classes/Campaign_List_Table.php:418
+#: classes/Url_List_Table.php:300
+msgid "All Contents"
+msgstr "Allt innehåll"
+
+#: classes/Campaign_List_Table.php:419
+#: classes/Url_List_Table.php:301
+msgid "All Terms"
+msgstr "Alla termer"
+
+#: classes/Campaign_List_Table.php:428
+msgid "Start date"
+msgstr "Startdatum"
+
+#: classes/Campaign_List_Table.php:429
+msgid "End date"
+msgstr "Slutdatum"
+
+#: classes/Campaign_List_Table.php:450
+#: classes/Url_List_Table.php:324
+msgid "Filter"
+msgstr "Filtrera"
+
+#: classes/Campaign_List_Table.php:579
+msgid "Total"
+msgstr "Totalt"
+
+#. translators: %d: Number of tracking URLs deactivated.
+#: classes/Cron.php:183
+#, php-format
+msgid "%d tracking URL deactivated because the target page no longer exists."
+msgid_plural "%d tracking URL(s) deactivated because target page(s) no longer exist."
+msgstr[0] "%d spårnings-URL inaktiverad eftersom målsidan inte längre finns."
+msgstr[1] "%d spårnings-URL:er inaktiverade eftersom målsidorna inte längre finns."
+
+#. translators: %d: Number of tracking URLs affected.
+#: classes/Cron.php:211
+#, php-format
+msgid "Warning: %d tracking URL points to a page you just trashed."
+msgid_plural "Warning: %d tracking URL(s) point to a page you just trashed."
+msgstr[0] "Varning: %d spårnings-URL pekar på en sida du just slängde i papperskorgen."
+msgstr[1] "Varning: %d spårnings-URL:er pekar på sidor du just slängde i papperskorgen."
+
+#: classes/Plugin.php:301
+msgid "You do not have permission to access this page."
+msgstr "Du har inte behörighet att komma åt den här sidan."
+
+#: classes/Plugin.php:302
+msgid "Access Denied"
+msgstr "Åtkomst nekad"
+
+#: classes/Url_List_Table.php
+msgid "All"
+msgstr "Alla"
+
+#: classes/Url_List_Table.php
+msgid "Edit"
+msgstr "Redigera"
+
+#: classes/Url_List_Table.php
+msgid "Trash"
+msgstr "Papperskorg"
+
+#: classes/Url_List_Table.php
+msgid "Restore"
+msgstr "Återställ"
+
+#: classes/Url_List_Table.php
+msgid "Delete Permanently"
+msgstr "Radera permanent"
+
+#. translators: 1: Required PHP version, 2: Current PHP version.
+#: kntnt-ad-attribution.php:37
+#, php-format
+msgid "Kntnt Ad Attribution requires PHP %1$s or later. You are running PHP %2$s. The plugin has been deactivated."
+msgstr "Kntnt Ad Attribution kräver PHP %1$s eller senare. Du kör PHP %2$s. Pluginet har inaktiverats."

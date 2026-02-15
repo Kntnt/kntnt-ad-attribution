@@ -177,8 +177,8 @@ final class Url_List_Table extends WP_List_Table {
 	/**
 	 * Renders the tracking URL column with click-to-copy and row actions.
 	 *
-	 * Shows Edit/Trash actions for published URLs and Restore/Delete
-	 * Permanently actions for trashed URLs.
+	 * Shows Trash action for published URLs and Restore/Delete Permanently
+	 * actions for trashed URLs.
 	 *
 	 * @param object $item The current row data.
 	 *
@@ -217,12 +217,6 @@ final class Url_List_Table extends WP_List_Table {
 
 		} else {
 
-			$edit_url = admin_url( sprintf(
-				'tools.php?page=%s&tab=urls&action=edit&post=%d',
-				Plugin::get_slug(),
-				$item->ID,
-			) );
-
 			$trash_url = wp_nonce_url(
 				admin_url( sprintf(
 					'tools.php?page=%s&tab=urls&action=trash&post=%d',
@@ -233,7 +227,6 @@ final class Url_List_Table extends WP_List_Table {
 			);
 
 			$actions = [
-				'edit'  => sprintf( '<a href="%s">%s</a>', esc_url( $edit_url ), esc_html__( 'Edit', 'kntnt-ad-attr' ) ),
 				'trash' => sprintf( '<a href="%s">%s</a>', esc_url( $trash_url ), esc_html__( 'Trash', 'kntnt-ad-attr' ) ),
 			];
 

@@ -114,6 +114,14 @@ final class Plugin {
 	public readonly Conversion_Handler $conversion_handler;
 
 	/**
+	 * Cron component instance.
+	 *
+	 * @var Cron
+	 * @since 1.0.0
+	 */
+	public readonly Cron $cron;
+
+	/**
 	 * Cached plugin metadata from header.
 	 *
 	 * @var array|null
@@ -155,6 +163,7 @@ final class Plugin {
 		$this->bot_detector         = new Bot_Detector();
 		$this->click_handler        = new Click_Handler( $this->cookie_manager, $this->consent, $this->bot_detector );
 		$this->conversion_handler   = new Conversion_Handler( $this->cookie_manager );
+		$this->cron                 = new Cron();
 		$this->admin_page           = new Admin_Page();
 		$this->rest_endpoint        = new Rest_Endpoint( $this->cookie_manager, $this->consent );
 
@@ -369,6 +378,9 @@ final class Plugin {
 		// Check for updates from GitHub.
 		add_filter( 'pre_set_site_transient_update_plugins', [ $this->updater, 'check_for_updates' ] );
 
+		// Register cron callbacks and target-trash warning.
+		$this->cron->register();
+
 		// Register bot detection filters and robots.txt rule.
 		$this->bot_detector->register();
 
@@ -460,9 +472,13 @@ final class Plugin {
 		// Remove plugin transients.
 		global $wpdb;
 		$wpdb->query(
-			"DELETE FROM {$wpdb->options}
-			 WHERE option_name LIKE '_transient_kntnt_ad_attr_%'
-			    OR option_name LIKE '_transient_timeout_kntnt_ad_attr_%'",
+			$wpdb->prepare(
+				"DELETE FROM {$wpdb->options}
+				 WHERE option_name LIKE %s
+				    OR option_name LIKE %s",
+				'_transient_kntnt_ad_attr_%',
+				'_transient_timeout_kntnt_ad_attr_%',
+			),
 		);
 
 		// Flush rewrite rules so the CPT's rules are removed.

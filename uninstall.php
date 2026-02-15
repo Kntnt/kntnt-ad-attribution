@@ -43,9 +43,13 @@ delete_option( 'kntnt_ad_attr_version' );
 
 // Remove plugin transients.
 $wpdb->query(
-	"DELETE FROM {$wpdb->options}
-	 WHERE option_name LIKE '_transient_kntnt_ad_attr_%'
-	    OR option_name LIKE '_transient_timeout_kntnt_ad_attr_%'",
+	$wpdb->prepare(
+		"DELETE FROM {$wpdb->options}
+		 WHERE option_name LIKE %s
+		    OR option_name LIKE %s",
+		'_transient_kntnt_ad_attr_%',
+		'_transient_timeout_kntnt_ad_attr_%',
+	),
 );
 
 // Remove scheduled cron job.

@@ -3,7 +3,7 @@
  * Admin page for tracking URL management.
  *
  * Registers a page under Tools, renders tab navigation (URLs / Campaigns),
- * handles form submission for creating, editing, and trashing tracking URLs,
+ * handles form submission for creating and trashing tracking URLs,
  * and enqueues page-specific assets.
  *
  * @package Kntnt\Ad_Attribution
@@ -125,7 +125,7 @@ final class Admin_Page {
 	/**
 	 * Enqueues CSS and JavaScript assets on the plugin's admin page.
 	 *
-	 * Always loads admin.css. On add/edit views, additionally loads select2
+	 * Always loads admin.css. On the add view, additionally loads select2
 	 * from cdnjs and the plugin's admin.js with localized REST configuration.
 	 *
 	 * @param string $hook_suffix The current admin page hook suffix.
@@ -155,9 +155,9 @@ final class Admin_Page {
 			true,
 		);
 
-		// Select2 — only needed on add/edit views.
+		// Select2 — only needed on the add view.
 		$action = sanitize_text_field( wp_unslash( $_GET['action'] ?? '' ) );
-		if ( $action !== 'add' && $action !== 'edit' ) {
+		if ( $action !== 'add' ) {
 			return;
 		}
 
@@ -187,8 +187,9 @@ final class Admin_Page {
 		);
 
 		wp_localize_script( 'kntnt-ad-attr-admin', 'kntntAdAttrAdmin', [
-			'searchUrl' => rest_url( 'kntnt-ad-attribution/v1/search-posts' ),
-			'nonce'     => wp_create_nonce( 'wp_rest' ),
+			'searchUrl'  => rest_url( 'kntnt-ad-attribution/v1/search-posts' ),
+			'nonce'      => wp_create_nonce( 'wp_rest' ),
+			'utmSources' => Utm_Options::get_options()['sources'],
 		] );
 	}
 
@@ -257,7 +258,7 @@ final class Admin_Page {
 	/**
 	 * Routes the URLs tab to the appropriate view.
 	 *
-	 * @param string $action The current action: 'add', 'edit', or empty for list.
+	 * @param string $action The current action: 'add' or empty for list.
 	 *
 	 * @return void
 	 * @since 1.0.0
@@ -265,7 +266,6 @@ final class Admin_Page {
 	private function render_urls_tab( string $action ): void {
 		match ( $action ) {
 			'add'   => $this->render_form(),
-			'edit'  => $this->render_form( (int) ( $_GET['post'] ?? 0 ) ),
 			default => $this->render_list_view(),
 		};
 	}
@@ -282,7 +282,7 @@ final class Admin_Page {
 
 		$is_trash = sanitize_text_field( wp_unslash( $_GET['post_status'] ?? '' ) ) === 'trash';
 
-		// Hide "Add New" in the trash view.
+		// "Add New" button on its own line, mirroring WordPress core list tables.
 		if ( ! $is_trash ) {
 			$add_url = admin_url( sprintf(
 				'tools.php?page=%s&tab=urls&action=add',
@@ -292,6 +292,8 @@ final class Admin_Page {
 			echo '<a href="' . esc_url( $add_url ) . '" class="page-title-action">'
 				. esc_html__( 'Add New', 'kntnt-ad-attr' ) . '</a>';
 		}
+
+		echo '<hr class="wp-header-end">';
 
 		$table->views();
 
@@ -354,56 +356,23 @@ final class Admin_Page {
 	}
 
 	/**
-	 * Renders the add/edit form for a tracking URL.
+	 * Renders the add form for a tracking URL.
 	 *
-	 * In edit mode, existing values are loaded from post meta and the hash
-	 * is displayed as read-only. The select2 target selector is pre-populated
-	 * with the current target post.
-	 *
-	 * @param int $post_id Post ID for edit mode, 0 for add mode.
+	 * UTM source and medium are rendered as Select2 tag dropdowns with
+	 * predefined options. Campaign, content, and term remain text inputs.
 	 *
 	 * @return void
 	 * @since 1.0.0
 	 */
-	private function render_form( int $post_id = 0 ): void {
-		$is_edit = $post_id > 0;
-		$meta    = [];
+	private function render_form(): void {
+		$options = Utm_Options::get_options();
 
-		if ( $is_edit ) {
-			$post = get_post( $post_id );
-			if ( ! $post || $post->post_type !== Post_Type::SLUG ) {
-				wp_die( esc_html__( 'Invalid tracking URL.', 'kntnt-ad-attr' ) );
-			}
-			$meta = [
-				'hash'           => get_post_meta( $post_id, '_hash', true ),
-				'target_post_id' => get_post_meta( $post_id, '_target_post_id', true ),
-				'utm_source'     => get_post_meta( $post_id, '_utm_source', true ),
-				'utm_medium'     => get_post_meta( $post_id, '_utm_medium', true ),
-				'utm_campaign'   => get_post_meta( $post_id, '_utm_campaign', true ),
-				'utm_content'    => get_post_meta( $post_id, '_utm_content', true ),
-				'utm_term'       => get_post_meta( $post_id, '_utm_term', true ),
-			];
-		}
-
-		$heading = $is_edit
-			? __( 'Edit Tracking URL', 'kntnt-ad-attr' )
-			: __( 'Add New Tracking URL', 'kntnt-ad-attr' );
-
-		echo '<h2>' . esc_html( $heading ) . '</h2>';
-
-		// Show the hash read-only in edit mode.
-		if ( $is_edit && ! empty( $meta['hash'] ) ) {
-			echo '<p><strong>' . esc_html__( 'Hash:', 'kntnt-ad-attr' ) . '</strong> ';
-			echo '<code>' . esc_html( $meta['hash'] ) . '</code></p>';
-			echo '<p><strong>' . esc_html__( 'Tracking URL:', 'kntnt-ad-attr' ) . '</strong> ';
-			echo '<code>' . esc_html( $post->post_title ) . '</code></p>';
-		}
+		echo '<h2>' . esc_html__( 'Add New Tracking URL', 'kntnt-ad-attr' ) . '</h2>';
 
 		echo '<form method="post" class="kntnt-ad-attr-form">';
 
 		wp_nonce_field( 'kntnt_ad_attr_save_url', 'kntnt_ad_attr_nonce' );
 		echo '<input type="hidden" name="kntnt_ad_attr_action" value="save_url">';
-		echo '<input type="hidden" name="kntnt_ad_attr_post_id" value="' . esc_attr( (string) $post_id ) . '">';
 
 		echo '<table class="form-table">';
 
@@ -413,31 +382,43 @@ final class Admin_Page {
 			. esc_html__( 'Target Page', 'kntnt-ad-attr' ) . ' <span class="required">*</span></label></th>';
 		echo '<td>';
 		echo '<select id="kntnt-ad-attr-target-post" name="kntnt_ad_attr_target_post_id" style="min-width:400px">';
-
-		// Pre-populate select2 in edit mode.
-		if ( $is_edit && ! empty( $meta['target_post_id'] ) ) {
-			$target_post = get_post( (int) $meta['target_post_id'] );
-			if ( $target_post ) {
-				$option_text = $target_post->post_title . ' (' . $target_post->post_type . ' #' . $target_post->ID . ')';
-				echo '<option value="' . esc_attr( (string) $target_post->ID ) . '" selected>'
-					. esc_html( $option_text ) . '</option>';
-			}
-		}
-
 		echo '</select>';
 		echo '</td></tr>';
 
-		// UTM fields.
-		$utm_fields = [
-			'utm_source'   => [ __( 'UTM Source', 'kntnt-ad-attr' ), true ],
-			'utm_medium'   => [ __( 'UTM Medium', 'kntnt-ad-attr' ), true ],
+		// UTM Source — select with predefined options.
+		echo '<tr>';
+		echo '<th scope="row"><label for="kntnt-ad-attr-utm_source">'
+			. esc_html__( 'UTM Source', 'kntnt-ad-attr' ) . ' <span class="required">*</span></label></th>';
+		echo '<td>';
+		echo '<select id="kntnt-ad-attr-utm_source" name="kntnt_ad_attr_utm_source" class="kntnt-ad-attr-select2-tags" required>';
+		echo '<option value="">' . esc_html__( '— Select or type —', 'kntnt-ad-attr' ) . '</option>';
+		foreach ( array_keys( $options['sources'] ) as $source ) {
+			echo '<option value="' . esc_attr( $source ) . '">' . esc_html( $source ) . '</option>';
+		}
+		echo '</select>';
+		echo '</td></tr>';
+
+		// UTM Medium — select with predefined options.
+		echo '<tr>';
+		echo '<th scope="row"><label for="kntnt-ad-attr-utm_medium">'
+			. esc_html__( 'UTM Medium', 'kntnt-ad-attr' ) . ' <span class="required">*</span></label></th>';
+		echo '<td>';
+		echo '<select id="kntnt-ad-attr-utm_medium" name="kntnt_ad_attr_utm_medium" class="kntnt-ad-attr-select2-tags" required>';
+		echo '<option value="">' . esc_html__( '— Select or type —', 'kntnt-ad-attr' ) . '</option>';
+		foreach ( $options['mediums'] as $medium ) {
+			echo '<option value="' . esc_attr( $medium ) . '">' . esc_html( $medium ) . '</option>';
+		}
+		echo '</select>';
+		echo '</td></tr>';
+
+		// Remaining UTM fields — plain text inputs.
+		$text_fields = [
 			'utm_campaign' => [ __( 'UTM Campaign', 'kntnt-ad-attr' ), true ],
 			'utm_content'  => [ __( 'UTM Content', 'kntnt-ad-attr' ), false ],
 			'utm_term'     => [ __( 'UTM Term', 'kntnt-ad-attr' ), false ],
 		];
 
-		foreach ( $utm_fields as $field_name => [ $label, $required ] ) {
-			$value    = esc_attr( $meta[ $field_name ] ?? '' );
+		foreach ( $text_fields as $field_name => [ $label, $required ] ) {
 			$req_mark = $required ? ' <span class="required">*</span>' : '';
 			$req_attr = $required ? ' required' : '';
 
@@ -446,18 +427,14 @@ final class Admin_Page {
 				. esc_html( $label ) . $req_mark . '</label></th>';
 			echo '<td><input type="text" id="kntnt-ad-attr-' . esc_attr( $field_name ) . '"'
 				. ' name="kntnt_ad_attr_' . esc_attr( $field_name ) . '"'
-				. ' value="' . $value . '"'
+				. ' value=""'
 				. ' class="regular-text"' . $req_attr . '></td>';
 			echo '</tr>';
 		}
 
 		echo '</table>';
 
-		$button_text = $is_edit
-			? __( 'Update Tracking URL', 'kntnt-ad-attr' )
-			: __( 'Create Tracking URL', 'kntnt-ad-attr' );
-
-		submit_button( $button_text );
+		submit_button( __( 'Create Tracking URL', 'kntnt-ad-attr' ) );
 
 		echo '</form>';
 	}
@@ -473,7 +450,6 @@ final class Admin_Page {
 
 		$notices = [
 			'created'  => [ 'success', __( 'Tracking URL created.', 'kntnt-ad-attr' ) ],
-			'updated'  => [ 'success', __( 'Tracking URL updated.', 'kntnt-ad-attr' ) ],
 			'trashed'  => [ 'success', __( 'Tracking URL moved to Trash.', 'kntnt-ad-attr' ) ],
 			'restored' => [ 'success', __( 'Tracking URL restored.', 'kntnt-ad-attr' ) ],
 			'deleted'  => [ 'success', __( 'Tracking URL permanently deleted.', 'kntnt-ad-attr' ) ],
@@ -555,12 +531,10 @@ final class Admin_Page {
 	}
 
 	/**
-	 * Processes the save form submission (create or update).
+	 * Processes the save form submission (create only).
 	 *
-	 * On create: generates a unique hash via do-while loop, builds the
-	 * tracking URL from home_url(), creates the CPT post with meta.
-	 * On edit: updates only the target and UTM meta fields (hash and
-	 * tracking URL are immutable).
+	 * Generates a unique hash via do-while loop, builds the tracking URL
+	 * from home_url(), creates the CPT post with meta, and redirects.
 	 *
 	 * @return void
 	 * @since 1.0.0
@@ -570,9 +544,6 @@ final class Admin_Page {
 		// Verify nonce and capability.
 		check_admin_referer( 'kntnt_ad_attr_save_url', 'kntnt_ad_attr_nonce' );
 		Plugin::authorize();
-
-		$post_id = (int) ( $_POST['kntnt_ad_attr_post_id'] ?? 0 );
-		$is_edit = $post_id > 0;
 
 		// Sanitize and truncate input.
 		$target_post_id = (int) ( $_POST['kntnt_ad_attr_target_post_id'] ?? 0 );
@@ -593,58 +564,40 @@ final class Admin_Page {
 			wp_die( esc_html__( 'The selected target page does not exist or is not published.', 'kntnt-ad-attr' ) );
 		}
 
-		if ( $is_edit ) {
+		// Generate a unique hash.
+		do {
+			$hash = hash( 'sha256', random_bytes( 32 ) );
+		} while ( $this->hash_exists( $hash ) );
 
-			// Update meta fields — hash and tracking URL remain unchanged.
-			update_post_meta( $post_id, '_target_post_id', (string) $target_post_id );
-			update_post_meta( $post_id, '_utm_source', $utm_source );
-			update_post_meta( $post_id, '_utm_medium', $utm_medium );
-			update_post_meta( $post_id, '_utm_campaign', $utm_campaign );
-			update_post_meta( $post_id, '_utm_content', $utm_content );
-			update_post_meta( $post_id, '_utm_term', $utm_term );
+		// Build the tracking URL.
+		/** @var string $prefix The URL path prefix for tracking URLs. */
+		$prefix       = apply_filters( 'kntnt_ad_attr_url_prefix', 'ad' );
+		$tracking_url = home_url( $prefix . '/' . $hash );
 
-			$message = 'updated';
+		// Create the CPT post.
+		$post_id = wp_insert_post( [
+			'post_type'   => Post_Type::SLUG,
+			'post_title'  => $tracking_url,
+			'post_status' => 'publish',
+		] );
 
-		} else {
-
-			// Generate a unique hash.
-			do {
-				$hash = hash( 'sha256', random_bytes( 32 ) );
-			} while ( $this->hash_exists( $hash ) );
-
-			// Build the tracking URL.
-			/** @var string $prefix The URL path prefix for tracking URLs. */
-			$prefix       = apply_filters( 'kntnt_ad_attr_url_prefix', 'ad' );
-			$tracking_url = home_url( $prefix . '/' . $hash );
-
-			// Create the CPT post.
-			$post_id = wp_insert_post( [
-				'post_type'   => Post_Type::SLUG,
-				'post_title'  => $tracking_url,
-				'post_status' => 'publish',
-			] );
-
-			if ( is_wp_error( $post_id ) ) {
-				wp_die( esc_html__( 'Failed to create tracking URL. Please try again.', 'kntnt-ad-attr' ) );
-			}
-
-			// Store meta fields.
-			add_post_meta( $post_id, '_hash', $hash, true );
-			add_post_meta( $post_id, '_target_post_id', (string) $target_post_id, true );
-			add_post_meta( $post_id, '_utm_source', $utm_source, true );
-			add_post_meta( $post_id, '_utm_medium', $utm_medium, true );
-			add_post_meta( $post_id, '_utm_campaign', $utm_campaign, true );
-			add_post_meta( $post_id, '_utm_content', $utm_content, true );
-			add_post_meta( $post_id, '_utm_term', $utm_term, true );
-
-			$message = 'created';
+		if ( is_wp_error( $post_id ) ) {
+			wp_die( esc_html__( 'Failed to create tracking URL. Please try again.', 'kntnt-ad-attr' ) );
 		}
+
+		// Store meta fields.
+		add_post_meta( $post_id, '_hash', $hash, true );
+		add_post_meta( $post_id, '_target_post_id', (string) $target_post_id, true );
+		add_post_meta( $post_id, '_utm_source', $utm_source, true );
+		add_post_meta( $post_id, '_utm_medium', $utm_medium, true );
+		add_post_meta( $post_id, '_utm_campaign', $utm_campaign, true );
+		add_post_meta( $post_id, '_utm_content', $utm_content, true );
+		add_post_meta( $post_id, '_utm_term', $utm_term, true );
 
 		// Redirect to the list view with a success message.
 		wp_safe_redirect( admin_url( sprintf(
-			'tools.php?page=%s&tab=urls&message=%s',
+			'tools.php?page=%s&tab=urls&message=created',
 			Plugin::get_slug(),
-			$message,
 		) ) );
 		exit;
 	}

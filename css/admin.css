@@ -69,6 +69,11 @@
 	min-width: 400px;
 }
 
+/* UTM Select2 tag dropdowns — match text input width */
+.kntnt-ad-attr-form .kntnt-ad-attr-select2-tags + .select2-container {
+	width: 400px !important;
+}
+
 /* Filter dropdowns in table navigation */
 .kntnt-ad-attr-filters select {
 	margin-right: 6px;

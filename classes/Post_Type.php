@@ -50,6 +50,27 @@ final class Post_Type {
 			'capability_type' => 'post',
 			'map_meta_cap'    => true,
 		] );
+
+		// Ensure tracking URLs restore to 'publish' when untrashed.
+		// Other plugins (e.g. ACF) may override the default restored
+		// status for all post types via this same filter.
+		add_filter( 'wp_untrash_post_status', [ $this, 'untrash_status' ], 20, 2 );
+	}
+
+	/**
+	 * Forces the untrash status to 'publish' for tracking URLs.
+	 *
+	 * @param string $new_status The status the post will be assigned.
+	 * @param int    $post_id    The post being untrashed.
+	 *
+	 * @return string Corrected status.
+	 * @since 1.0.0
+	 */
+	public function untrash_status( string $new_status, int $post_id ): string {
+		if ( get_post_type( $post_id ) === self::SLUG ) {
+			return 'publish';
+		}
+		return $new_status;
 	}
 
 }

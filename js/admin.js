@@ -42,7 +42,7 @@
      * Select2 initialization for the target post selector.
      *
      * Only runs when jQuery, select2, and the localized config are available
-     * (i.e. on the add/edit form view).
+     * (i.e. on the add form view).
      */
     function initSelect2() {
         if (typeof jQuery === 'undefined' || typeof jQuery.fn.select2 === 'undefined') return;
@@ -81,15 +81,53 @@
         });
     }
 
+    /**
+     * Select2 tags initialization for UTM source and medium dropdowns.
+     *
+     * Enables free-text entry alongside predefined options. When a source
+     * is selected and the medium field is empty, auto-fills the medium
+     * with the source's default value from kntntAdAttrAdmin.utmSources.
+     */
+    function initUtmFields() {
+        if (typeof jQuery === 'undefined' || typeof jQuery.fn.select2 === 'undefined') return;
+        if (typeof kntntAdAttrAdmin === 'undefined') return;
+
+        var $ = jQuery;
+        var $tags = $('.kntnt-ad-attr-select2-tags');
+        if (!$tags.length) return;
+
+        $tags.select2({
+            tags: true,
+            allowClear: true,
+            placeholder: '— Select or type —'
+        });
+
+        // Auto-fill medium when a predefined source is selected.
+        $('#kntnt-ad-attr-utm_source').on('change', function() {
+            var $medium = $('#kntnt-ad-attr-utm_medium');
+            if ($medium.val()) return;
+
+            var sourceVal = $(this).val();
+            var sources = kntntAdAttrAdmin.utmSources || {};
+            var defaultMedium = sources[sourceVal];
+
+            if (defaultMedium && $medium.find('option[value="' + defaultMedium + '"]').length) {
+                $medium.val(defaultMedium).trigger('change');
+            }
+        });
+    }
+
     // Initialize when DOM is ready.
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', function() {
             initClipboard();
             initSelect2();
+            initUtmFields();
         });
     } else {
         initClipboard();
         initSelect2();
+        initUtmFields();
     }
 
 })();

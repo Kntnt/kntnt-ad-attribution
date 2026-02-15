@@ -1,4 +1,13 @@
 <?php
+/**
+ * GitHub-based plugin update checker.
+ *
+ * Hooks into the WordPress update transient to check for new releases
+ * on the plugin's GitHub repository and present them in the admin UI.
+ *
+ * @package Kntnt\Ad_Attribution
+ * @since   1.0.0
+ */
 
 declare( strict_types = 1 );
 
