@@ -33,7 +33,7 @@ All machine-readable names use `kntnt-ad-attr` (hyphens) / `kntnt_ad_attr` (unde
 
 **Migrator pattern:** Version-based migrations in `migrations/X.Y.Z.php`. Each file returns `function(\wpdb $wpdb): void`. Migrator compares `kntnt_ad_attr_version` option with the plugin header version on `plugins_loaded` and runs pending files in order.
 
-**Data model:** Tracking URLs are stored as CPT `kntnt_ad_attr_url` (with meta `_hash`, `_target_post_id`, `_utm_*`). Click/conversion statistics are stored in `{prefix}kntnt_ad_attr_stats` with composite PK `(hash, date)` using `ON DUPLICATE KEY UPDATE` for atomic increments. Platform-specific click IDs are stored in `{prefix}kntnt_ad_attr_click_ids` with composite PK `(hash, platform)`. Async report jobs are stored in `{prefix}kntnt_ad_attr_queue` with auto-increment PK and status-based processing.
+**Data model:** Tracking URLs are stored as CPT `kntnt_ad_attr_url` (with meta `_hash`, `_target_post_id`, `_utm_source`, `_utm_medium`, `_utm_campaign`, `_utm_content`, `_utm_term`, `_utm_id`, `_utm_source_platform`). Click/conversion statistics are stored in `{prefix}kntnt_ad_attr_stats` with composite PK `(hash, date)` using `ON DUPLICATE KEY UPDATE` for atomic increments. Platform-specific click IDs are stored in `{prefix}kntnt_ad_attr_click_ids` with composite PK `(hash, platform)`. Async report jobs are stored in `{prefix}kntnt_ad_attr_queue` with auto-increment PK and status-based processing.
 
 **Adapter infrastructure (v1.2.0):** Click_ID_Store, Queue, and Queue_Processor are instantiated in Plugin constructor and injected into Click_Handler (Click_ID_Store), Conversion_Handler (Click_ID_Store, Queue, Queue_Processor), Cron (Click_ID_Store, Queue), and Admin_Page (Queue). Two new filters: `kntnt_ad_attr_click_id_capturers` and `kntnt_ad_attr_conversion_reporters`. Queue processing via `kntnt_ad_attr_process_queue` cron hook.
 
@@ -42,6 +42,8 @@ All machine-readable names use `kntnt-ad-attr` (hyphens) / `kntnt_ad_attr` (unde
 **Query parameter forwarding (v1.3.0):** Click_Handler merges incoming query parameters (e.g. `gclid`, `fbclid`) into the redirect target URL. Target URL parameters take precedence on collision. The merged set is filterable via `kntnt_ad_attr_redirect_query_params`.
 
 **Optional UTM fields (v1.3.0):** Source, medium, and campaign are no longer required when creating tracking URLs. UTM meta fields are stored only when non-empty. Campaign_List_Table uses LEFT JOIN for all UTM fields (source, medium, campaign, content, term).
+
+**MTM parameter support and new fields (v1.4.0):** Click_Handler populates empty postmeta fields at click time from incoming UTM or MTM (Matomo Tag Manager) query parameters. Priority: stored value > UTM param > MTM param. Two new fields added: Id (`_utm_id`, from `utm_id`/`mtm_cid`) and Group (`_utm_source_platform`, from `utm_source_platform`/`mtm_group`). Admin UI labels use generic names (Source, Medium, etc.) without "UTM" prefix. Internal meta keys retain their `_utm_*` naming for backwards compatibility.
 
 ## Specifications
 

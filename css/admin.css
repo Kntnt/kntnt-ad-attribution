@@ -12,22 +12,24 @@
 
 /* List table column widths */
 .wp-list-table .column-tracking_url {
-	width: 30%;
+	width: 22%;
 }
 
 .wp-list-table .column-target_url {
-	width: 20%;
+	width: 16%;
 }
 
 .wp-list-table .column-utm_source,
 .wp-list-table .column-utm_medium,
 .wp-list-table .column-utm_campaign {
-	width: 10%;
+	width: 9%;
 }
 
 .wp-list-table .column-utm_content,
-.wp-list-table .column-utm_term {
-	width: 8%;
+.wp-list-table .column-utm_term,
+.wp-list-table .column-utm_id,
+.wp-list-table .column-utm_source_platform {
+	width: 7%;
 }
 
 /* Click-to-copy tracking URL */
@@ -91,30 +93,32 @@
 
 /* Campaigns table column widths */
 .kntnt-ad-attr-campaigns .column-tracking_url {
-	width: 22%;
+	width: 18%;
 }
 
 .kntnt-ad-attr-campaigns .column-target_url {
-	width: 16%;
+	width: 14%;
 }
 
 .kntnt-ad-attr-campaigns .column-utm_source,
 .kntnt-ad-attr-campaigns .column-utm_medium,
 .kntnt-ad-attr-campaigns .column-utm_campaign {
-	width: 9%;
+	width: 7%;
 }
 
 .kntnt-ad-attr-campaigns .column-utm_content,
-.kntnt-ad-attr-campaigns .column-utm_term {
-	width: 7%;
+.kntnt-ad-attr-campaigns .column-utm_term,
+.kntnt-ad-attr-campaigns .column-utm_id,
+.kntnt-ad-attr-campaigns .column-utm_source_platform {
+	width: 6%;
 }
 
 .kntnt-ad-attr-campaigns .column-total_clicks {
-	width: 7%;
+	width: 6%;
 }
 
 .kntnt-ad-attr-campaigns .column-total_conversions {
-	width: 9%;
+	width: 8%;
 }
 
 /* Date filter inputs */

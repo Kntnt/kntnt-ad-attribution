@@ -31,7 +31,8 @@ kntnt-ad-attribution/
 ├── migrations/
 │   ├── 1.0.0.php                 ← Initial table creation
 │   ├── 1.1.0.php                 ← No schema changes (companion hooks)
-│   └── 1.2.0.php                 ← Click ID and queue tables
+│   ├── 1.2.0.php                 ← Click ID and queue tables
+│   └── 1.4.0.php                 ← No schema changes (MTM support, new meta keys)
 ├── js/
 │   ├── pending-consent.js        ← Client-side consent/cookie script
 │   └── admin.js                  ← Admin: select2 initialization, page selector

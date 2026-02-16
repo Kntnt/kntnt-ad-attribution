@@ -55,6 +55,8 @@ CPT registration — key arguments:
 | `_utm_campaign` | UTM campaign |
 | `_utm_content` | UTM content (optional) |
 | `_utm_term` | UTM term (optional) |
+| `_utm_id` | Campaign ID (optional) |
+| `_utm_source_platform` | Source platform / group (optional) |
 
 The hash is stored as post meta. The hash is not the post slug — slugs have length limitations and normalization that can cause issues with exact 64-character hex strings.
 

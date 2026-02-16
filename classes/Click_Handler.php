@@ -237,16 +237,50 @@ final class Click_Handler {
 			}
 		}
 
+		// Populate empty postmeta fields from incoming UTM/MTM query parameters.
+		// Priority: stored value (admin) > UTM param > MTM param.
+		$param_map = [
+			'_utm_source'          => [ 'utm_source', 'mtm_source' ],
+			'_utm_medium'          => [ 'utm_medium', 'mtm_medium' ],
+			'_utm_campaign'        => [ 'utm_campaign', 'mtm_campaign' ],
+			'_utm_term'            => [ 'utm_term', 'mtm_keyword' ],
+			'_utm_content'         => [ 'utm_content', 'mtm_content' ],
+			'_utm_source_platform' => [ 'utm_source_platform', 'mtm_group' ],
+			'_utm_id'              => [ 'utm_id', 'mtm_cid' ],
+		];
+
+		$post_id = (int) $row->ID;
+
+		foreach ( $param_map as $meta_key => [ $utm_param, $mtm_param ] ) {
+			$stored = get_post_meta( $post_id, $meta_key, true );
+			if ( $stored !== '' && $stored !== false ) {
+				continue;
+			}
+
+			// Try UTM first, then MTM.
+			$value = sanitize_text_field( $_GET[ $utm_param ] ?? '' );
+			if ( $value === '' ) {
+				$value = sanitize_text_field( $_GET[ $mtm_param ] ?? '' );
+			}
+
+			if ( $value !== '' ) {
+				$value = mb_substr( $value, 0, 255 );
+				update_post_meta( $post_id, $meta_key, $value );
+			}
+		}
+
 		// Notify companion plugins about the click. Fires for all non-bot
 		// clicks regardless of consent state. Allows add-ons to capture
 		// platform-specific parameters (e.g. gclid) from $_GET.
 		do_action( 'kntnt_ad_attr_click', $hash, $target_url, [
-			'post_id'      => (int) $row->ID,
-			'utm_source'   => get_post_meta( (int) $row->ID, '_utm_source', true ),
-			'utm_medium'   => get_post_meta( (int) $row->ID, '_utm_medium', true ),
-			'utm_campaign' => get_post_meta( (int) $row->ID, '_utm_campaign', true ),
-			'utm_content'  => get_post_meta( (int) $row->ID, '_utm_content', true ),
-			'utm_term'     => get_post_meta( (int) $row->ID, '_utm_term', true ),
+			'post_id'              => $post_id,
+			'utm_source'           => get_post_meta( $post_id, '_utm_source', true ),
+			'utm_medium'           => get_post_meta( $post_id, '_utm_medium', true ),
+			'utm_campaign'         => get_post_meta( $post_id, '_utm_campaign', true ),
+			'utm_content'          => get_post_meta( $post_id, '_utm_content', true ),
+			'utm_term'             => get_post_meta( $post_id, '_utm_term', true ),
+			'utm_id'               => get_post_meta( $post_id, '_utm_id', true ),
+			'utm_source_platform'  => get_post_meta( $post_id, '_utm_source_platform', true ),
 		] );
 
 		// Step 11: Handle consent for cookie storage.

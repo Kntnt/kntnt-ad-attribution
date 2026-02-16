@@ -72,7 +72,7 @@ $wpdb->query( 'COMMIT' );
 After the `kntnt_ad_attr_conversion_recorded` action fires, the handler checks for registered reporters via `apply_filters('kntnt_ad_attr_conversion_reporters', [])`. If reporters are registered:
 
 1. **Look up click IDs** — calls `Click_ID_Store::get_for_hashes()` to retrieve platform-specific click IDs for all attributed hashes.
-2. **Look up campaign data** — calls `get_campaign_data()` to retrieve UTM parameters for all attributed hashes via a single JOIN query.
+2. **Look up campaign data** — calls `get_campaign_data()` to retrieve all parameter values (source, medium, campaign, content, term, id, source_platform) for all attributed hashes via a single JOIN query.
 3. **Build context** — assembles timestamp, IP, user-agent, and page URL.
 4. **Call each reporter's `enqueue` callback** — passes `$attributions`, `$click_ids`, `$campaigns`, and `$context`. Each reporter returns an array of payloads.
 5. **Enqueue payloads** — each payload is JSON-encoded and inserted into the `kntnt_ad_attr_queue` table with `status = 'pending'`.

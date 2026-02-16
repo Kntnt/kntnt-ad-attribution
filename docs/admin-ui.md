@@ -28,14 +28,14 @@ Tracking URLs are displayed and managed via a custom `WP_List_Table` subclass (n
 - Hash (truncated, e.g., first 12 characters)
 - Tracking URL (full)
 - Target URL (resolved via `get_permalink()`)
-- UTM source, medium, campaign, content, term
+- Source, medium, campaign, content, term, id, group
 
 **Row actions:** Trash (or Restore / Delete Permanently for trashed URLs).
 
 **Form (Add New):** Displayed on the same page. Fields:
 
 - Target URL: searchable select component (see below) that displays post type and post ID. All public post types are included. The plugin's own CPT is excluded.
-- UTM source (optional), medium (optional), campaign (optional), content (optional), term (optional). Only the target page is required.
+- Source (optional), medium (optional), campaign (optional), content (optional), term (optional), id (optional), group (optional). Only the target page is required.
 
 The hash is generated automatically on save.
 
@@ -74,7 +74,7 @@ Report view that joins CPT metadata with aggregated stats. Rendered as a `WP_Lis
 **Filtering** (GET parameters, page reload):
 
 - Date range: two HTML5 `<input type="date">` fields.
-- UTM dimensions: one dropdown per dimension, populated with distinct values from post meta.
+- Dimensions: one dropdown per dimension (source, medium, campaign, content, term, id, group), populated with distinct values from post meta.
 - Tracking URL / target URL: free-text field.
 
 **SQL query:**
@@ -87,6 +87,8 @@ SELECT s.hash,
        pm_camp.meta_value AS utm_campaign,
        pm_cont.meta_value AS utm_content,
        pm_term.meta_value AS utm_term,
+       pm_id.meta_value AS utm_id,
+       pm_plat.meta_value AS utm_source_platform,
        SUM(s.clicks) AS total_clicks,
        SUM(s.conversions) AS total_conversions
 FROM {prefix}kntnt_ad_attr_stats s
@@ -106,11 +108,16 @@ LEFT JOIN {wpdb->postmeta} pm_cont
     ON pm_cont.post_id = p.ID AND pm_cont.meta_key = '_utm_content'
 LEFT JOIN {wpdb->postmeta} pm_term
     ON pm_term.post_id = p.ID AND pm_term.meta_key = '_utm_term'
+LEFT JOIN {wpdb->postmeta} pm_id
+    ON pm_id.post_id = p.ID AND pm_id.meta_key = '_utm_id'
+LEFT JOIN {wpdb->postmeta} pm_plat
+    ON pm_plat.post_id = p.ID AND pm_plat.meta_key = '_utm_source_platform'
 WHERE s.date BETWEEN %s AND %s
 -- Additional WHERE clauses based on active filters
 GROUP BY s.hash, pm_target.meta_value, pm_src.meta_value,
          pm_med.meta_value, pm_camp.meta_value,
-         pm_cont.meta_value, pm_term.meta_value
+         pm_cont.meta_value, pm_term.meta_value,
+         pm_id.meta_value, pm_plat.meta_value
 ORDER BY total_clicks DESC
 LIMIT %d OFFSET %d
 ```
@@ -135,11 +142,13 @@ Button in the Campaigns tab. Same query without LIMIT/OFFSET, streamed as `text/
 |--------|---------|
 | `tracking_url` | Full tracking URL |
 | `target_url` | Target URL |
-| `utm_source` | UTM source |
-| `utm_medium` | UTM medium |
-| `utm_campaign` | UTM campaign |
-| `utm_content` | UTM content |
-| `utm_term` | UTM term |
+| `utm_source` | Source |
+| `utm_medium` | Medium |
+| `utm_campaign` | Campaign |
+| `utm_content` | Content |
+| `utm_term` | Term |
+| `utm_id` | Id |
+| `utm_source_platform` | Group |
 | `clicks` | Total clicks (integer) |
 | `conversions` | Fractional conversions (4 decimals, locale's decimal character) |
 

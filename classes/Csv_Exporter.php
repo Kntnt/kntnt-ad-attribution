@@ -73,6 +73,8 @@ final class Csv_Exporter {
 			__( 'Campaign', 'kntnt-ad-attr' ),
 			__( 'Content', 'kntnt-ad-attr' ),
 			__( 'Term', 'kntnt-ad-attr' ),
+			__( 'Id', 'kntnt-ad-attr' ),
+			__( 'Group', 'kntnt-ad-attr' ),
 			__( 'Clicks', 'kntnt-ad-attr' ),
 			__( 'Conversions', 'kntnt-ad-attr' ),
 		], $delimiter );
@@ -94,6 +96,8 @@ final class Csv_Exporter {
 				$item->utm_campaign ?? '',
 				$item->utm_content ?? '',
 				$item->utm_term ?? '',
+				$item->utm_id ?? '',
+				$item->utm_source_platform ?? '',
 				(int) $item->total_clicks,
 				number_format( (float) $item->total_conversions, 1, $decimal_point, '' ),
 			], $delimiter );

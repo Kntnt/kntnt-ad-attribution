@@ -180,7 +180,7 @@ The plugin adds **Ad Attribution** under **Tools** in the WordPress admin menu. 
 
 This is where you create and manage tracking URLs.
 
-- **Create new URL:** Select a target page via a searchable dropdown and fill in UTM parameters. Only a target page is required; all UTM fields (source, medium, campaign, content, term) are optional. Source and medium offer predefined options (configurable via the `kntnt_ad_attr_utm_options` filter) but also accept custom values. The plugin generates a SHA-256 hash and produces a tracking URL: `https://yourdomain.com/ad/<hash>`.
+- **Create new URL:** Select a target page via a searchable dropdown and optionally fill in parameter fields. Only a target page is required; all fields (source, medium, campaign, content, term, id, group) are optional. Source and medium offer predefined options (configurable via the `kntnt_ad_attr_utm_options` filter) but also accept custom values. Fields left empty can be populated automatically at click time from incoming UTM or MTM parameters (see [Click-Time Parameter Population](#click-time-parameter-population)). The plugin generates a SHA-256 hash and produces a tracking URL: `https://yourdomain.com/ad/<hash>`.
 - **URL list:** Shows all created tracking URLs with full tracking URL, target URL, and UTM values. Click a tracking URL to copy it to the clipboard. The list can be filtered by UTM dimensions.
 - **Row actions:** Trash (or Restore / Delete Permanently for trashed URLs).
 
@@ -188,12 +188,36 @@ This is where you create and manage tracking URLs.
 
 This is where you view attribution results.
 
-- **Filters:** Filter by date range and UTM dimensions (source, medium, campaign, content, term). A search box allows searching by tracking URL or hash. All filters can be combined.
+- **Filters:** Filter by date range and dimensions (source, medium, campaign, content, term, id, group). A search box allows searching by tracking URL or hash. All filters can be combined.
 - **Summary:** Shows total clicks and total (fractional) conversions for the selected filters.
-- **Results table:** Lists each tracking URL with its target URL, UTM parameters, click count, and fractional conversion count.
+- **Results table:** Lists each tracking URL with its target URL, parameter values (source, medium, campaign, content, term, id, group), click count, and fractional conversion count.
 - **Export:** Export the filtered results as a CSV file (UTF-8 with BOM; semicolon delimiter when the locale uses comma as decimal separator).
 
 **Note:** The plugin tracks clicks (each request to `/ad/<hash>`) and conversions. Ad impressions are not available since they occur on the ad platform and never reach your server.
+
+### Click-Time Parameter Population
+
+When a tracking URL is created with empty fields, the plugin can populate those fields automatically at click time from incoming query parameters. This enables ad platforms (e.g. Google Ads via Matomo Tag Manager) to supply parameter values dynamically.
+
+Both UTM and MTM (Matomo Tag Manager) parameter formats are supported:
+
+| Field | UTM param | MTM param |
+|---|---|---|
+| Source | `utm_source` | `mtm_source` |
+| Medium | `utm_medium` | `mtm_medium` |
+| Campaign | `utm_campaign` | `mtm_campaign` |
+| Term | `utm_term` | `mtm_keyword` |
+| Content | `utm_content` | `mtm_content` |
+| Group | `utm_source_platform` | `mtm_group` |
+| Id | `utm_id` | `mtm_cid` |
+
+**Priority order** (highest first):
+
+1. **Stored value** (set by admin when creating the tracking URL) — never overwritten.
+2. **Incoming UTM parameter** from query string.
+3. **Incoming MTM parameter** from query string.
+
+For example, if you create a tracking URL with source set to "google" but leave campaign empty, and a visitor clicks with `?mtm_campaign=summer`, the campaign field will be populated with "summer". The source field remains "google" because it already has a value.
 
 ### How Attribution Works
 
@@ -547,7 +571,7 @@ Parameters:
 |-----------|------|-------------|
 | `$hash` | `string` | SHA-256 hash of the clicked tracking URL. |
 | `$target_url` | `string` | The resolved target URL the visitor will be redirected to. |
-| `$campaign_data` | `array` | Associative array with keys: `post_id`, `utm_source`, `utm_medium`, `utm_campaign`, `utm_content`, `utm_term`. |
+| `$campaign_data` | `array` | Associative array with keys: `post_id`, `utm_source`, `utm_medium`, `utm_campaign`, `utm_content`, `utm_term`, `utm_id`, `utm_source_platform`. |
 
 The `$_GET` superglobal is available to callbacks and contains any URL parameters appended to the tracking URL (e.g. `$_GET['gclid']`). Callbacks must sanitize all superglobal values.
 

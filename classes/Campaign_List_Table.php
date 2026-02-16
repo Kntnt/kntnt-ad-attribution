@@ -68,15 +68,17 @@ final class Campaign_List_Table extends WP_List_Table {
 	 */
 	public function get_columns(): array {
 		return [
-			'tracking_url'      => __( 'Tracking URL', 'kntnt-ad-attr' ),
-			'target_url'        => __( 'Target URL', 'kntnt-ad-attr' ),
-			'utm_source'        => __( 'Source', 'kntnt-ad-attr' ),
-			'utm_medium'        => __( 'Medium', 'kntnt-ad-attr' ),
-			'utm_campaign'      => __( 'Campaign', 'kntnt-ad-attr' ),
-			'utm_content'       => __( 'Content', 'kntnt-ad-attr' ),
-			'utm_term'          => __( 'Term', 'kntnt-ad-attr' ),
-			'total_clicks'      => __( 'Clicks', 'kntnt-ad-attr' ),
-			'total_conversions' => __( 'Conversions', 'kntnt-ad-attr' ),
+			'tracking_url'         => __( 'Tracking URL', 'kntnt-ad-attr' ),
+			'target_url'           => __( 'Target URL', 'kntnt-ad-attr' ),
+			'utm_source'           => __( 'Source', 'kntnt-ad-attr' ),
+			'utm_medium'           => __( 'Medium', 'kntnt-ad-attr' ),
+			'utm_campaign'         => __( 'Campaign', 'kntnt-ad-attr' ),
+			'utm_content'          => __( 'Content', 'kntnt-ad-attr' ),
+			'utm_term'             => __( 'Term', 'kntnt-ad-attr' ),
+			'utm_id'               => __( 'Id', 'kntnt-ad-attr' ),
+			'utm_source_platform'  => __( 'Group', 'kntnt-ad-attr' ),
+			'total_clicks'         => __( 'Clicks', 'kntnt-ad-attr' ),
+			'total_conversions'    => __( 'Conversions', 'kntnt-ad-attr' ),
 		];
 	}
 
@@ -88,13 +90,15 @@ final class Campaign_List_Table extends WP_List_Table {
 	 */
 	protected function get_sortable_columns(): array {
 		return [
-			'total_clicks'      => [ 'total_clicks', true ],
-			'total_conversions' => [ 'total_conversions', true ],
-			'utm_source'        => [ 'utm_source', false ],
-			'utm_medium'        => [ 'utm_medium', false ],
-			'utm_campaign'      => [ 'utm_campaign', false ],
-			'utm_content'       => [ 'utm_content', false ],
-			'utm_term'          => [ 'utm_term', false ],
+			'total_clicks'         => [ 'total_clicks', true ],
+			'total_conversions'    => [ 'total_conversions', true ],
+			'utm_source'           => [ 'utm_source', false ],
+			'utm_medium'           => [ 'utm_medium', false ],
+			'utm_campaign'         => [ 'utm_campaign', false ],
+			'utm_content'          => [ 'utm_content', false ],
+			'utm_term'             => [ 'utm_term', false ],
+			'utm_id'               => [ 'utm_id', false ],
+			'utm_source_platform'  => [ 'utm_source_platform', false ],
 		];
 	}
 
@@ -232,6 +236,10 @@ final class Campaign_List_Table extends WP_List_Table {
 				ON pm_cont.post_id = p.ID AND pm_cont.meta_key = '_utm_content'
 			LEFT JOIN {$wpdb->postmeta} pm_term
 				ON pm_term.post_id = p.ID AND pm_term.meta_key = '_utm_term'
+			LEFT JOIN {$wpdb->postmeta} pm_id
+				ON pm_id.post_id = p.ID AND pm_id.meta_key = '_utm_id'
+			LEFT JOIN {$wpdb->postmeta} pm_plat
+				ON pm_plat.post_id = p.ID AND pm_plat.meta_key = '_utm_source_platform'
 			WHERE p.post_status = 'publish'
 			AND s.date BETWEEN %s AND %s";
 
@@ -245,11 +253,13 @@ final class Campaign_List_Table extends WP_List_Table {
 
 		// Dynamic WHERE clauses for UTM filters.
 		$filter_map = [
-			'utm_source'   => 'pm_src.meta_value',
-			'utm_medium'   => 'pm_med.meta_value',
-			'utm_campaign' => 'pm_camp.meta_value',
-			'utm_content'  => 'pm_cont.meta_value',
-			'utm_term'     => 'pm_term.meta_value',
+			'utm_source'          => 'pm_src.meta_value',
+			'utm_medium'          => 'pm_med.meta_value',
+			'utm_campaign'        => 'pm_camp.meta_value',
+			'utm_content'         => 'pm_cont.meta_value',
+			'utm_term'            => 'pm_term.meta_value',
+			'utm_id'              => 'pm_id.meta_value',
+			'utm_source_platform' => 'pm_plat.meta_value',
 		];
 
 		$where_clauses = '';
@@ -271,7 +281,8 @@ final class Campaign_List_Table extends WP_List_Table {
 
 		$group_by = ' GROUP BY s.hash, pm_target.meta_value, pm_src.meta_value,
 			pm_med.meta_value, pm_camp.meta_value,
-			pm_cont.meta_value, pm_term.meta_value';
+			pm_cont.meta_value, pm_term.meta_value,
+			pm_id.meta_value, pm_plat.meta_value';
 
 		return [ $from_where . $where_clauses . $group_by, $query_params ];
 	}
@@ -282,7 +293,7 @@ final class Campaign_List_Table extends WP_List_Table {
 	 * Used internally and exposed publicly so Csv_Exporter can access
 	 * the same filter values.
 	 *
-	 * @return array{date_start: string, date_end: string, utm_source: string, utm_medium: string, utm_campaign: string, utm_content: string, utm_term: string, search: string}
+	 * @return array{date_start: string, date_end: string, utm_source: string, utm_medium: string, utm_campaign: string, utm_content: string, utm_term: string, utm_id: string, utm_source_platform: string, search: string}
 	 * @since 1.0.0
 	 */
 	public function get_filter_params(): array {
@@ -295,14 +306,16 @@ final class Campaign_List_Table extends WP_List_Table {
 		$date_end     = preg_match( $date_pattern, $date_end ) ? $date_end : '9999-12-31';
 
 		return [
-			'date_start'   => $date_start,
-			'date_end'     => $date_end,
-			'utm_source'   => sanitize_text_field( wp_unslash( $_GET['utm_source'] ?? '' ) ),
-			'utm_medium'   => sanitize_text_field( wp_unslash( $_GET['utm_medium'] ?? '' ) ),
-			'utm_campaign' => sanitize_text_field( wp_unslash( $_GET['utm_campaign'] ?? '' ) ),
-			'utm_content'  => sanitize_text_field( wp_unslash( $_GET['utm_content'] ?? '' ) ),
-			'utm_term'     => sanitize_text_field( wp_unslash( $_GET['utm_term'] ?? '' ) ),
-			'search'       => sanitize_text_field( wp_unslash( $_GET['s'] ?? '' ) ),
+			'date_start'          => $date_start,
+			'date_end'            => $date_end,
+			'utm_source'          => sanitize_text_field( wp_unslash( $_GET['utm_source'] ?? '' ) ),
+			'utm_medium'          => sanitize_text_field( wp_unslash( $_GET['utm_medium'] ?? '' ) ),
+			'utm_campaign'        => sanitize_text_field( wp_unslash( $_GET['utm_campaign'] ?? '' ) ),
+			'utm_content'         => sanitize_text_field( wp_unslash( $_GET['utm_content'] ?? '' ) ),
+			'utm_term'            => sanitize_text_field( wp_unslash( $_GET['utm_term'] ?? '' ) ),
+			'utm_id'              => sanitize_text_field( wp_unslash( $_GET['utm_id'] ?? '' ) ),
+			'utm_source_platform' => sanitize_text_field( wp_unslash( $_GET['utm_source_platform'] ?? '' ) ),
+			'search'              => sanitize_text_field( wp_unslash( $_GET['s'] ?? '' ) ),
 		];
 	}
 
@@ -331,13 +344,15 @@ final class Campaign_List_Table extends WP_List_Table {
 
 		// Sorting — whitelist allowed columns to prevent SQL injection.
 		$allowed_orderby = [
-			'total_clicks'      => 'total_clicks',
-			'total_conversions' => 'total_conversions',
-			'utm_source'        => 'pm_src.meta_value',
-			'utm_medium'        => 'pm_med.meta_value',
-			'utm_campaign'      => 'pm_camp.meta_value',
-			'utm_content'       => 'pm_cont.meta_value',
-			'utm_term'          => 'pm_term.meta_value',
+			'total_clicks'         => 'total_clicks',
+			'total_conversions'    => 'total_conversions',
+			'utm_source'           => 'pm_src.meta_value',
+			'utm_medium'           => 'pm_med.meta_value',
+			'utm_campaign'         => 'pm_camp.meta_value',
+			'utm_content'          => 'pm_cont.meta_value',
+			'utm_term'             => 'pm_term.meta_value',
+			'utm_id'               => 'pm_id.meta_value',
+			'utm_source_platform'  => 'pm_plat.meta_value',
 		];
 
 		$orderby_param = sanitize_text_field( wp_unslash( $_GET['orderby'] ?? '' ) );
@@ -357,6 +372,8 @@ final class Campaign_List_Table extends WP_List_Table {
 				pm_camp.meta_value AS utm_campaign,
 				pm_cont.meta_value AS utm_content,
 				pm_term.meta_value AS utm_term,
+				pm_id.meta_value AS utm_id,
+				pm_plat.meta_value AS utm_source_platform,
 				SUM(s.clicks) AS total_clicks,
 				SUM(s.conversions) AS total_conversions
 			{$base_query}
@@ -392,6 +409,8 @@ final class Campaign_List_Table extends WP_List_Table {
 				pm_camp.meta_value AS utm_campaign,
 				pm_cont.meta_value AS utm_content,
 				pm_term.meta_value AS utm_term,
+				pm_id.meta_value AS utm_id,
+				pm_plat.meta_value AS utm_source_platform,
 				SUM(s.clicks) AS total_clicks,
 				SUM(s.conversions) AS total_conversions
 			{$base_query}
@@ -421,11 +440,13 @@ final class Campaign_List_Table extends WP_List_Table {
 		$params = $this->get_filter_params();
 
 		$utm_filters = [
-			'utm_source'   => __( 'All Sources', 'kntnt-ad-attr' ),
-			'utm_medium'   => __( 'All Mediums', 'kntnt-ad-attr' ),
-			'utm_campaign' => __( 'All Campaigns', 'kntnt-ad-attr' ),
-			'utm_content'  => __( 'All Contents', 'kntnt-ad-attr' ),
-			'utm_term'     => __( 'All Terms', 'kntnt-ad-attr' ),
+			'utm_source'          => __( 'All Sources', 'kntnt-ad-attr' ),
+			'utm_medium'          => __( 'All Mediums', 'kntnt-ad-attr' ),
+			'utm_campaign'        => __( 'All Campaigns', 'kntnt-ad-attr' ),
+			'utm_content'         => __( 'All Contents', 'kntnt-ad-attr' ),
+			'utm_term'            => __( 'All Terms', 'kntnt-ad-attr' ),
+			'utm_id'              => __( 'All Ids', 'kntnt-ad-attr' ),
+			'utm_source_platform' => __( 'All Groups', 'kntnt-ad-attr' ),
 		];
 
 		echo '<div class="alignleft actions kntnt-ad-attr-filters">';
@@ -524,6 +545,10 @@ final class Campaign_List_Table extends WP_List_Table {
 				ON pm_cont.post_id = p.ID AND pm_cont.meta_key = '_utm_content'
 			LEFT JOIN {$wpdb->postmeta} pm_term
 				ON pm_term.post_id = p.ID AND pm_term.meta_key = '_utm_term'
+			LEFT JOIN {$wpdb->postmeta} pm_id
+				ON pm_id.post_id = p.ID AND pm_id.meta_key = '_utm_id'
+			LEFT JOIN {$wpdb->postmeta} pm_plat
+				ON pm_plat.post_id = p.ID AND pm_plat.meta_key = '_utm_source_platform'
 			WHERE p.post_status = 'publish'
 			AND s.date BETWEEN %s AND %s";
 
@@ -535,11 +560,13 @@ final class Campaign_List_Table extends WP_List_Table {
 
 		// Dynamic WHERE clauses for UTM filters.
 		$filter_map = [
-			'utm_source'   => 'pm_src.meta_value',
-			'utm_medium'   => 'pm_med.meta_value',
-			'utm_campaign' => 'pm_camp.meta_value',
-			'utm_content'  => 'pm_cont.meta_value',
-			'utm_term'     => 'pm_term.meta_value',
+			'utm_source'          => 'pm_src.meta_value',
+			'utm_medium'          => 'pm_med.meta_value',
+			'utm_campaign'        => 'pm_camp.meta_value',
+			'utm_content'         => 'pm_cont.meta_value',
+			'utm_term'            => 'pm_term.meta_value',
+			'utm_id'              => 'pm_id.meta_value',
+			'utm_source_platform' => 'pm_plat.meta_value',
 		];
 
 		$where_clauses = '';

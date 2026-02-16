@@ -246,7 +246,7 @@ final class Conversion_Handler {
 			 FROM {$wpdb->postmeta} pm_hash
 			 JOIN {$wpdb->posts} p ON p.ID = pm_hash.post_id
 			 JOIN {$wpdb->postmeta} pm_utm ON pm_utm.post_id = p.ID
-			    AND pm_utm.meta_key IN ('_utm_source', '_utm_medium', '_utm_campaign', '_utm_content', '_utm_term')
+			    AND pm_utm.meta_key IN ('_utm_source', '_utm_medium', '_utm_campaign', '_utm_content', '_utm_term', '_utm_id', '_utm_source_platform')
 			 WHERE pm_hash.meta_key = '_hash'
 			   AND pm_hash.meta_value IN ({$placeholders})
 			   AND p.post_type = %s

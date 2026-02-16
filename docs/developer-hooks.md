@@ -134,7 +134,7 @@ Each reporter definition is an associative array with three keys:
 
 - `$attributions`: `[ hash => fractional_value, … ]` — sums to 1.0.
 - `$click_ids`: `[ hash => [ platform => click_id, … ], … ]` — may be empty for a given hash.
-- `$campaigns`: `[ hash => [ 'utm_source' => …, 'utm_medium' => …, 'utm_campaign' => …, 'utm_content' => …, 'utm_term' => … ], … ]`.
+- `$campaigns`: `[ hash => [ 'utm_source' => …, 'utm_medium' => …, 'utm_campaign' => …, 'utm_content' => …, 'utm_term' => …, 'utm_id' => …, 'utm_source_platform' => … ], … ]`.
 - `$context`: `[ 'timestamp' => ISO-8601, 'ip' => string, 'user_agent' => string, 'page_url' => string ]`.
 
 ```php
@@ -189,7 +189,7 @@ Parameters:
 |-----------|------|-------------|
 | `$hash` | `string` | SHA-256 hash of the clicked tracking URL. |
 | `$target_url` | `string` | The resolved target URL the visitor will be redirected to. |
-| `$campaign_data` | `array` | Associative array with keys: `post_id`, `utm_source`, `utm_medium`, `utm_campaign`, `utm_content`, `utm_term`. |
+| `$campaign_data` | `array` | Associative array with keys: `post_id`, `utm_source`, `utm_medium`, `utm_campaign`, `utm_content`, `utm_term`, `utm_id`, `utm_source_platform`. |
 
 The `$_GET` superglobal is available to callbacks and contains any URL parameters appended to the tracking URL (e.g. `$_GET['gclid']`). Callbacks must sanitize all superglobal values.
 

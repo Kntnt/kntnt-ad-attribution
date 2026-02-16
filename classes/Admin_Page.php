@@ -418,7 +418,7 @@ final class Admin_Page {
 		}
 
 		// Preserve active filters through search.
-		foreach ( [ 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term' ] as $filter ) {
+		foreach ( [ 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'utm_id', 'utm_source_platform' ] as $filter ) {
 			$value = sanitize_text_field( wp_unslash( $_GET[ $filter ] ?? '' ) );
 			if ( $value !== '' ) {
 				echo '<input type="hidden" name="' . esc_attr( $filter ) . '" value="' . esc_attr( $value ) . '">';
@@ -495,10 +495,10 @@ final class Admin_Page {
 		echo '</select>';
 		echo '</td></tr>';
 
-		// UTM Source — select with predefined options.
+		// Source — select with predefined options.
 		echo '<tr>';
 		echo '<th scope="row"><label for="kntnt-ad-attr-utm_source">'
-			. esc_html__( 'UTM Source', 'kntnt-ad-attr' ) . '</label></th>';
+			. esc_html__( 'Source', 'kntnt-ad-attr' ) . '</label></th>';
 		echo '<td>';
 		echo '<select id="kntnt-ad-attr-utm_source" name="kntnt_ad_attr_utm_source" class="kntnt-ad-attr-select2-tags">';
 		echo '<option value="">' . esc_html__( '— Select or type —', 'kntnt-ad-attr' ) . '</option>';
@@ -508,10 +508,10 @@ final class Admin_Page {
 		echo '</select>';
 		echo '</td></tr>';
 
-		// UTM Medium — select with predefined options.
+		// Medium — select with predefined options.
 		echo '<tr>';
 		echo '<th scope="row"><label for="kntnt-ad-attr-utm_medium">'
-			. esc_html__( 'UTM Medium', 'kntnt-ad-attr' ) . '</label></th>';
+			. esc_html__( 'Medium', 'kntnt-ad-attr' ) . '</label></th>';
 		echo '<td>';
 		echo '<select id="kntnt-ad-attr-utm_medium" name="kntnt_ad_attr_utm_medium" class="kntnt-ad-attr-select2-tags">';
 		echo '<option value="">' . esc_html__( '— Select or type —', 'kntnt-ad-attr' ) . '</option>';
@@ -521,11 +521,13 @@ final class Admin_Page {
 		echo '</select>';
 		echo '</td></tr>';
 
-		// Remaining UTM fields — plain text inputs.
+		// Remaining fields — plain text inputs.
 		$text_fields = [
-			'utm_campaign' => [ __( 'UTM Campaign', 'kntnt-ad-attr' ), false ],
-			'utm_content'  => [ __( 'UTM Content', 'kntnt-ad-attr' ), false ],
-			'utm_term'     => [ __( 'UTM Term', 'kntnt-ad-attr' ), false ],
+			'utm_campaign'        => [ __( 'Campaign', 'kntnt-ad-attr' ), false ],
+			'utm_content'         => [ __( 'Content', 'kntnt-ad-attr' ), false ],
+			'utm_term'            => [ __( 'Term', 'kntnt-ad-attr' ), false ],
+			'utm_id'              => [ __( 'Id', 'kntnt-ad-attr' ), false ],
+			'utm_source_platform' => [ __( 'Group', 'kntnt-ad-attr' ), false ],
 		];
 
 		foreach ( $text_fields as $field_name => [ $label, $required ] ) {
@@ -656,12 +658,14 @@ final class Admin_Page {
 		Plugin::authorize();
 
 		// Sanitize and truncate input.
-		$target_post_id = (int) ( $_POST['kntnt_ad_attr_target_post_id'] ?? 0 );
-		$utm_source     = mb_substr( sanitize_text_field( wp_unslash( $_POST['kntnt_ad_attr_utm_source'] ?? '' ) ), 0, 255 );
-		$utm_medium     = mb_substr( sanitize_text_field( wp_unslash( $_POST['kntnt_ad_attr_utm_medium'] ?? '' ) ), 0, 255 );
-		$utm_campaign   = mb_substr( sanitize_text_field( wp_unslash( $_POST['kntnt_ad_attr_utm_campaign'] ?? '' ) ), 0, 255 );
-		$utm_content    = mb_substr( sanitize_text_field( wp_unslash( $_POST['kntnt_ad_attr_utm_content'] ?? '' ) ), 0, 255 );
-		$utm_term       = mb_substr( sanitize_text_field( wp_unslash( $_POST['kntnt_ad_attr_utm_term'] ?? '' ) ), 0, 255 );
+		$target_post_id      = (int) ( $_POST['kntnt_ad_attr_target_post_id'] ?? 0 );
+		$utm_source          = mb_substr( sanitize_text_field( wp_unslash( $_POST['kntnt_ad_attr_utm_source'] ?? '' ) ), 0, 255 );
+		$utm_medium          = mb_substr( sanitize_text_field( wp_unslash( $_POST['kntnt_ad_attr_utm_medium'] ?? '' ) ), 0, 255 );
+		$utm_campaign        = mb_substr( sanitize_text_field( wp_unslash( $_POST['kntnt_ad_attr_utm_campaign'] ?? '' ) ), 0, 255 );
+		$utm_content         = mb_substr( sanitize_text_field( wp_unslash( $_POST['kntnt_ad_attr_utm_content'] ?? '' ) ), 0, 255 );
+		$utm_term            = mb_substr( sanitize_text_field( wp_unslash( $_POST['kntnt_ad_attr_utm_term'] ?? '' ) ), 0, 255 );
+		$utm_id              = mb_substr( sanitize_text_field( wp_unslash( $_POST['kntnt_ad_attr_utm_id'] ?? '' ) ), 0, 255 );
+		$utm_source_platform = mb_substr( sanitize_text_field( wp_unslash( $_POST['kntnt_ad_attr_utm_source_platform'] ?? '' ) ), 0, 255 );
 
 		// Validate required fields.
 		if ( $target_post_id <= 0 ) {
@@ -701,11 +705,13 @@ final class Admin_Page {
 
 		// Store UTM fields only when they have a value.
 		$utm_fields = [
-			'_utm_source'   => $utm_source,
-			'_utm_medium'   => $utm_medium,
-			'_utm_campaign' => $utm_campaign,
-			'_utm_content'  => $utm_content,
-			'_utm_term'     => $utm_term,
+			'_utm_source'          => $utm_source,
+			'_utm_medium'          => $utm_medium,
+			'_utm_campaign'        => $utm_campaign,
+			'_utm_content'         => $utm_content,
+			'_utm_term'            => $utm_term,
+			'_utm_id'              => $utm_id,
+			'_utm_source_platform' => $utm_source_platform,
 		];
 
 		foreach ( $utm_fields as $meta_key => $meta_value ) {
@@ -875,7 +881,7 @@ final class Admin_Page {
 
 		// Reconstruct filter params from POST into GET so Campaign_List_Table
 		// can read them via its standard get_filter_params() method.
-		$filter_keys = [ 'date_start', 'date_end', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 's' ];
+		$filter_keys = [ 'date_start', 'date_end', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'utm_id', 'utm_source_platform', 's' ];
 		foreach ( $filter_keys as $key ) {
 			if ( isset( $_POST[ $key ] ) ) {
 				$_GET[ $key ] = sanitize_text_field( wp_unslash( $_POST[ $key ] ) );
