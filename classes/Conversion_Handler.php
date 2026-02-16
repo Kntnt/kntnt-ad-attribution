@@ -136,7 +136,11 @@ final class Conversion_Handler {
 		] );
 
 		// Step 10: Notify other components that a conversion was recorded.
-		do_action( 'kntnt_ad_attr_conversion_recorded', $attributions );
+		do_action( 'kntnt_ad_attr_conversion_recorded', $attributions, [
+			'timestamp'  => gmdate( 'c' ),
+			'ip'         => $_SERVER['REMOTE_ADDR'] ?? '',
+			'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
+		] );
 	}
 
 	/**

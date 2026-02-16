@@ -14,7 +14,7 @@ Conversions are triggered via the action hook `kntnt_ad_attr_conversion` from th
 7. Calculate attribution weights
 8. Write fractional conversions to the database (in a transaction)
 9. Set/update the _ad_last_conv cookie
-10. Trigger kntnt_ad_attr_conversion_recorded
+10. Trigger kntnt_ad_attr_conversion_recorded with attributions and context (timestamp, IP, user-agent)
 ```
 
 ## Deduplication

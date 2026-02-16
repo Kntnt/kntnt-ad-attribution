@@ -15,6 +15,7 @@ The click handler is registered on `template_redirect` — the conventional hook
 8. Redirect loop guard: verify that target URL does not start with /<prefix>/
 9. Bot check: if is_bot() → redirect without logging or setting cookie
 10. Log click in database (always, regardless of consent)
+10b. Fire kntnt_ad_attr_click action (hash, target URL, campaign data) — allows companion plugins to capture platform-specific parameters (e.g. gclid)
 11. Check consent → three outcomes (see Consent below)
 12. Redirect to target URL
 ```

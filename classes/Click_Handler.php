@@ -188,6 +188,18 @@ final class Click_Handler {
 			$date,
 		) );
 
+		// Notify companion plugins about the click. Fires for all non-bot
+		// clicks regardless of consent state. Allows add-ons to capture
+		// platform-specific parameters (e.g. gclid) from $_GET.
+		do_action( 'kntnt_ad_attr_click', $hash, $target_url, [
+			'post_id'      => (int) $row->ID,
+			'utm_source'   => get_post_meta( (int) $row->ID, '_utm_source', true ),
+			'utm_medium'   => get_post_meta( (int) $row->ID, '_utm_medium', true ),
+			'utm_campaign' => get_post_meta( (int) $row->ID, '_utm_campaign', true ),
+			'utm_content'  => get_post_meta( (int) $row->ID, '_utm_content', true ),
+			'utm_term'     => get_post_meta( (int) $row->ID, '_utm_term', true ),
+		] );
+
 		// Step 11: Handle consent for cookie storage.
 		$consent_state = $this->consent->check();
 

@@ -31,6 +31,7 @@ The plugin does not hardcode integrations with any specific consent management o
 - **Platform-agnostic form support** — integrates with any form plugin via an action hook.
 - **Bot detection** — filters out known bots via User-Agent matching and `robots.txt` rules.
 - **Two redirect methods** — 302 redirect (default) or JavaScript redirect via filter, providing flexibility for different ITP mitigation strategies.
+* **Companion plugin hooks** — fires `kntnt_ad_attr_click` on every non-bot click with hash, target URL, campaign data, and access to URL parameters (gclid, fbclid, etc.). Companion plugins can capture platform-specific data and implement server-side API integrations without modifying the core plugin.
 
 ### The Problem
 
@@ -68,7 +69,7 @@ Unlike Enhanced Conversions and similar features, the plugin never sends persona
 ### Limitations
 
 - **ITP still applies.** Safari may cap the cookie lifetime to 7 days when the visitor arrives from a classified tracking domain (such as Google). Conversions after that window are lost. A JavaScript redirect method (configurable via filter) may improve this in some cases, but there are no guarantees.
-- **No feedback to ad platforms.** The plugin provides internal statistics only. It does not send conversion data back to Google Ads, Meta, or any other platform. This means it cannot improve the ad platform's bidding or AI optimization.
+- **No built-in feedback to ad platforms.** The plugin provides internal statistics only and does not include integrations with any ad platform's API. However, the `kntnt_ad_attr_click` and `kntnt_ad_attr_conversion_recorded` hooks allow companion plugins to implement server-side conversion reporting to any ad platform.
 - **Cookies can be cleared.** If the visitor clears their cookies or uses a private/incognito window for the return visit, the attribution link is broken.
 - **Cross-device tracking is not supported.** A visitor who clicks an ad on their phone but converts on their laptop will not be attributed.
 - **Impressions are not measured.** Ad views occur on the ad platform and never reach the server.
@@ -474,6 +475,31 @@ Default:
 
 ### Actions
 
+**`kntnt_ad_attr_click`**
+
+Fires after a click on a tracking URL has been logged but before consent handling and redirect. Fires for all non-bot clicks regardless of consent state. Companion plugins can use this to capture platform-specific URL parameters (e.g. `gclid`, `fbclid`, `msclkid`).
+
+Parameters:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `$hash` | `string` | SHA-256 hash of the clicked tracking URL. |
+| `$target_url` | `string` | The resolved target URL the visitor will be redirected to. |
+| `$campaign_data` | `array` | Associative array with keys: `post_id`, `utm_source`, `utm_medium`, `utm_campaign`, `utm_content`, `utm_term`. |
+
+The `$_GET` superglobal is available to callbacks and contains any URL parameters appended to the tracking URL (e.g. `$_GET['gclid']`). Callbacks must sanitize all superglobal values.
+
+```php
+add_action( 'kntnt_ad_attr_click', function ( string $hash, string $target_url, array $campaign_data ): void {
+    $gclid = sanitize_text_field( $_GET['gclid'] ?? '' );
+    if ( $gclid !== '' ) {
+        // Store gclid linked to the hash for later conversion reporting.
+    }
+}, 10, 3 );
+```
+
+**Performance:** Callbacks on this hook execute during a redirect request. The server must finish before the browser follows the redirect. Keep processing minimal or use `wp_schedule_single_event()` for any heavy work.
+
 **`kntnt_ad_attr_conversion`**
 
 Trigger this action to record a conversion for the current visitor. The plugin reads the visitor's cookie and performs the attribution. This is the hook you connect your form plugin to.
@@ -484,13 +510,20 @@ do_action( 'kntnt_ad_attr_conversion' );
 
 **`kntnt_ad_attr_conversion_recorded`**
 
-Fires after a conversion has been successfully recorded. Receives the array of attributed hashes with their fractional values.
+Fires after a conversion has been successfully recorded. Receives the array of attributed hashes with their fractional values and a context array with metadata.
+
+Parameters:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `$attributions` | `array<string, float>` | Hash => fractional attribution value (sums to 1.0). |
+| `$context` | `array` | Associative array with keys: `timestamp` (ISO 8601 UTC), `ip` (visitor IP), `user_agent` (visitor user-agent string). |
 
 ```php
-add_action( 'kntnt_ad_attr_conversion_recorded', function ( array $attributions ) {
+add_action( 'kntnt_ad_attr_conversion_recorded', function ( array $attributions, array $context ): void {
     // $attributions = [ 'a1b2c3…' => 0.7, 'd4e5f6…' => 0.3 ]
-    error_log( 'Conversion attributed: ' . print_r( $attributions, true ) );
-} );
+    // $context = [ 'timestamp' => '2025-02-15T14:30:00+00:00', 'ip' => '…', 'user_agent' => '…' ]
+}, 10, 2 );
 ```
 
 ## Frequently Asked Questions
@@ -509,7 +542,7 @@ All of them. The plugin is platform-agnostic. It works with any ad platform that
 
 **Does this plugin send conversion data back to the ad platform?**
 
-No. This plugin provides internal attribution statistics only. It does not communicate with any ad platform's API. Its purpose is to give you an independent view of which ads generate leads.
+Not by itself. The core plugin provides internal attribution statistics only and does not communicate with any ad platform's API. However, companion plugins can hook into `kntnt_ad_attr_click` (to capture parameters like `gclid`) and `kntnt_ad_attr_conversion_recorded` (to report conversions) to implement server-side API integrations with Google Ads, Meta, or any other platform.
 
 **What happens with Safari's Intelligent Tracking Prevention (ITP)?**
 

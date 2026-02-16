@@ -53,6 +53,31 @@ Bot detection. Default: `false`. The plugin registers its own callback with User
 
 ## Actions
 
+**`kntnt_ad_attr_click`**
+
+Fires after a click on a tracking URL has been logged but before consent handling and redirect. Fires for all non-bot clicks regardless of consent state. Companion plugins can use this to capture platform-specific URL parameters (e.g. `gclid`, `fbclid`, `msclkid`).
+
+Parameters:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `$hash` | `string` | SHA-256 hash of the clicked tracking URL. |
+| `$target_url` | `string` | The resolved target URL the visitor will be redirected to. |
+| `$campaign_data` | `array` | Associative array with keys: `post_id`, `utm_source`, `utm_medium`, `utm_campaign`, `utm_content`, `utm_term`. |
+
+The `$_GET` superglobal is available to callbacks and contains any URL parameters appended to the tracking URL (e.g. `$_GET['gclid']`). Callbacks must sanitize all superglobal values.
+
+```php
+add_action( 'kntnt_ad_attr_click', function ( string $hash, string $target_url, array $campaign_data ): void {
+    $gclid = sanitize_text_field( $_GET['gclid'] ?? '' );
+    if ( $gclid !== '' ) {
+        // Store gclid linked to the hash for later conversion reporting.
+    }
+}, 10, 3 );
+```
+
+**Performance:** Callbacks on this hook execute during a redirect request. The server must finish before the browser follows the redirect. Keep processing minimal or use `wp_schedule_single_event()` for any heavy work.
+
 **`kntnt_ad_attr_conversion`**
 
 Trigger to record a conversion. Connect your form plugin to this hook.
@@ -85,10 +110,18 @@ add_action( 'gform_after_submission', function( $entry, $form ) {
 
 **`kntnt_ad_attr_conversion_recorded`**
 
-Fires after a conversion has been recorded. Receives an array of attributed hashes with fractional values:
+Fires after a conversion has been successfully recorded. Receives the array of attributed hashes with their fractional values and a context array with metadata.
+
+Parameters:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `$attributions` | `array<string, float>` | Hash => fractional attribution value (sums to 1.0). |
+| `$context` | `array` | Associative array with keys: `timestamp` (ISO 8601 UTC), `ip` (visitor IP), `user_agent` (visitor user-agent string). |
 
 ```php
-add_action( 'kntnt_ad_attr_conversion_recorded', function( array $attributions ) {
+add_action( 'kntnt_ad_attr_conversion_recorded', function ( array $attributions, array $context ): void {
     // $attributions = [ 'a1b2c3…' => 0.7, 'd4e5f6…' => 0.3 ]
-} );
+    // $context = [ 'timestamp' => '2025-02-15T14:30:00+00:00', 'ip' => '…', 'user_agent' => '…' ]
+}, 10, 2 );
 ```
