@@ -105,19 +105,19 @@ final class Admin_Page {
 		// Register per-page Screen Option for the active tab.
 		$tab = sanitize_text_field( wp_unslash( $_GET['tab'] ?? 'urls' ) );
 
-		if ( $tab === 'campaigns' ) {
-			add_screen_option( 'per_page', [
+		match ( $tab ) {
+			'campaigns' => add_screen_option( 'per_page', [
 				'label'   => __( 'Campaigns per page', 'kntnt-ad-attr' ),
 				'default' => 20,
 				'option'  => Campaign_List_Table::PER_PAGE_OPTION,
-			] );
-		} else {
-			add_screen_option( 'per_page', [
+			] ),
+			'urls' => add_screen_option( 'per_page', [
 				'label'   => __( 'URLs per page', 'kntnt-ad-attr' ),
 				'default' => 20,
 				'option'  => Url_List_Table::PER_PAGE_OPTION,
-			] );
-		}
+			] ),
+			default => null,
+		};
 	}
 
 	/**
@@ -278,8 +278,9 @@ final class Admin_Page {
 		echo '<div class="kntnt-ad-attr-tab-content">';
 
 		match ( $tab ) {
+			'urls'      => $this->render_urls_tab( $action ),
 			'campaigns' => $this->render_campaigns_tab(),
-			default     => $this->render_urls_tab( $action ),
+			default     => do_action( "kntnt_ad_attr_admin_tab_{$tab}" ),
 		};
 
 		echo '</div>';
@@ -342,10 +343,10 @@ final class Admin_Page {
 	 * @since 1.0.0
 	 */
 	private function render_tabs( string $active_tab ): void {
-		$tabs = [
+		$tabs = apply_filters( 'kntnt_ad_attr_admin_tabs', [
 			'urls'      => __( 'URLs', 'kntnt-ad-attr' ),
 			'campaigns' => __( 'Campaigns', 'kntnt-ad-attr' ),
-		];
+		] );
 
 		$base_url = admin_url( 'tools.php?page=' . Plugin::get_slug() );
 
