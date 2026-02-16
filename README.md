@@ -13,7 +13,7 @@ Ad platforms like Google Ads offer conversion tracking features — such as Goog
 
 Kntnt Ad Attribution takes a different approach. It gives you the same core benefit — knowing which ads actually generate leads — but keeps all data on your own server. No personal data is sent to Google, Meta, or any other third party.
 
-Each ad gets a unique tracking URL (e.g. `example.com/ad/a1b2c3…`). When a visitor clicks an ad, your server records the click, stores the ad hash in a first-party cookie, and redirects the visitor to the landing page. When the visitor later submits a lead form, the server reads the cookie and distributes the conversion fractionally across all clicked ads, with more recent clicks weighted higher. The entire process happens on your infrastructure.
+Each ad gets a unique tracking URL (e.g. `example.com/ad/a1b2c3…`). When a visitor clicks an ad, your server records the click, stores the ad hash in a first-party cookie, and redirects the visitor to the landing page. When the visitor later submits a lead form, the server reads the cookie and attributes the conversion to the most recently clicked ad (filterable to support multi-touch models). The entire process happens on your infrastructure.
 
 The plugin is platform-agnostic and works with any ad platform — Google Ads, Meta Ads, LinkedIn Ads, Microsoft Ads, or any other source that can link to a custom URL. This means you get a single, consistent attribution method across all your advertising channels.
 
@@ -23,10 +23,10 @@ The plugin does not hardcode integrations with any specific consent management o
 
 - **Hash-based tracking URLs** — each ad gets a unique `/ad/<hash>` URL (prefix configurable via filter), independent of ad platform.
 - **First-party cookie tracking** — stores clicked ad hashes in a single `HttpOnly`, `Secure`, `SameSite=Lax` cookie (`_ad_clicks`), with a configurable lifetime (default: 90 days).
-- **Fractional attribution with linear time-weighting** — if a visitor clicked multiple ads, each gets a share of the conversion weighted by recency. More recent clicks count more.
+- **Filterable last-click attribution** — by default, the most recently clicked ad receives full conversion credit. The attribution model is filterable via the `kntnt_ad_attr_attribution` hook, enabling multi-touch models (e.g. time-weighted, linear, position-based).
 - **Deduplication** — repeated form submissions within a configurable cooldown period (default: 30 days) are not counted as new conversions.
 - **Cookie size management** — stores a maximum of 50 ad hashes per visitor, pruning the oldest when the limit is reached.
-- **Statistics dashboard** — view clicks, conversions, and fractional attribution per campaign for any date range, with CSV export.
+- **Campaign dashboard** — view clicks, conversions, and fractional attribution per campaign for any date range, with CSV export. Individual click records include per-click Content, Term, Id, and Group fields.
 - **Three-state consent model** — integrates with any cookie consent plugin via a filter hook, supporting yes, no, and undefined consent states with a transport mechanism for deferred consent.
 - **Platform-agnostic form support** — integrates with any form plugin via an action hook.
 - **Bot detection** — filters out known bots via User-Agent matching and `robots.txt` rules.
@@ -89,13 +89,13 @@ This plugin is designed with data minimization and data locality as core princip
 
 **The cookie constitutes personal data under GDPR.** The `_ad_clicks` cookie links a visitor's ad clicks to their subsequent form submissions, which makes it personal data processing. The plugin therefore requires consent for the cookie, and implements a three-state consent model (yes, no, undefined) that integrates with any cookie consent plugin. See [Cookie Consent Configuration](#cookie-consent-configuration) for details.
 
-**Click counting does not require consent.** The plugin always logs that a click occurred on a tracking URL (incrementing an aggregate counter), regardless of consent status. This is analogous to server access logs and does not constitute personal data processing, since no individual is identified or identifiable from the aggregate count alone.
+**Click counting does not require consent.** The plugin always logs that a click occurred on a tracking URL (recording a click record), regardless of consent status. This is analogous to server access logs and does not constitute personal data processing, since no individual is identified or identifiable from the click record alone.
 
 **Hashing is used for URL generation, not for pseudonymization of personal data.** The SHA-256 hashes in this plugin are derived from the ad's UTM parameters (source, medium, campaign, etc.) and serve as opaque identifiers for tracking URLs. They are not hashes of personal data such as email addresses or phone numbers. This is a fundamental difference from Enhanced Conversions, where personal data is hashed and sent to Google.
 
 **The `_aah_pending` cookie is a borderline case.** This temporary cookie (maximum 60 seconds) contains only an ad hash and serves as a technical transport mechanism for deferred consent scenarios. It contains no personal data in itself. Whether it should be classified as "necessary" or "marketing" is a judgment call that depends on your interpretation; the plugin's consent configuration section presents both options. See [Cookie Consent Configuration](#cookie-consent-configuration).
 
-**Data minimization.** The plugin stores the minimum data needed for attribution: opaque hashes in a cookie and aggregate click/conversion counts in the database. No names, email addresses, IP addresses, or other directly identifying information is stored by the plugin.
+**Data minimization.** The plugin stores the minimum data needed for attribution: opaque hashes in a cookie and individual click/conversion records in the database. No names, email addresses, IP addresses, or other directly identifying information is stored by the plugin.
 
 ## Installation
 
@@ -180,44 +180,42 @@ The plugin adds **Ad Attribution** under **Tools** in the WordPress admin menu. 
 
 This is where you create and manage tracking URLs.
 
-- **Create new URL:** Select a target page via a searchable dropdown and optionally fill in parameter fields. Only a target page is required; all fields (source, medium, campaign, content, term, id, group) are optional. Source and medium offer predefined options (configurable via the `kntnt_ad_attr_utm_options` filter) but also accept custom values. Fields left empty can be populated automatically at click time from incoming UTM or MTM parameters (see [Click-Time Parameter Population](#click-time-parameter-population)). The plugin generates a SHA-256 hash and produces a tracking URL: `https://yourdomain.com/ad/<hash>`.
-- **URL list:** Shows all created tracking URLs with full tracking URL, target URL, and UTM values. Click a tracking URL to copy it to the clipboard. The list can be filtered by UTM dimensions.
+- **Create new URL:** Select a target page via a searchable dropdown and fill in the required parameter fields: source, medium, and campaign. Source and medium offer predefined options (configurable via the `kntnt_ad_attr_utm_options` filter) but also accept custom values. Content, Term, Id, and Group are not set at creation time — they vary per click and are captured automatically from incoming UTM or MTM parameters (see [Click-Time Parameter Population](#click-time-parameter-population)). The plugin generates a SHA-256 hash and produces a tracking URL: `https://yourdomain.com/ad/<hash>`.
+- **URL list:** Shows all created tracking URLs with full tracking URL, target URL, source, medium, and campaign. Click a tracking URL to copy it to the clipboard. The list can be filtered by source, medium, and campaign.
 - **Row actions:** Trash (or Restore / Delete Permanently for trashed URLs).
 
 #### Campaigns Tab
 
 This is where you view attribution results.
 
-- **Filters:** Filter by date range and dimensions (source, medium, campaign, content, term, id, group). A search box allows searching by tracking URL or hash. All filters can be combined.
+- **Filters:** Filter by date range and dimensions (source, medium, campaign). A search box allows searching by tracking URL or hash. All filters can be combined.
 - **Summary:** Shows total clicks and total (fractional) conversions for the selected filters.
-- **Results table:** Lists each tracking URL with its target URL, parameter values (source, medium, campaign, content, term, id, group), click count, and fractional conversion count.
-- **Export:** Export the filtered results as a CSV file (UTF-8 with BOM; semicolon delimiter when the locale uses comma as decimal separator).
+- **Results table:** Lists each tracking URL with its target URL, source, medium, campaign, click count, and fractional conversion count.
+- **Export:** Export the filtered results as a CSV file (UTF-8 with BOM; semicolon delimiter when the locale uses comma as decimal separator). The CSV includes all fields including per-click Content, Term, Id, and Group from the clicks table.
 
 **Note:** The plugin tracks clicks (each request to `/ad/<hash>`) and conversions. Ad impressions are not available since they occur on the ad platform and never reach your server.
 
 ### Click-Time Parameter Population
 
-When a tracking URL is created with empty fields, the plugin can populate those fields automatically at click time from incoming query parameters. This enables ad platforms (e.g. Google Ads via Matomo Tag Manager) to supply parameter values dynamically.
+Source, medium, and campaign are set when creating the tracking URL. If any are left empty (e.g. from pre-v1.5.0 URLs), the click handler populates them at click time from incoming query parameters. Content, Term, Id, and Group are always captured per click — they vary between clicks on the same tracking URL and are stored in the clicks table, not in postmeta.
 
 Both UTM and MTM (Matomo Tag Manager) parameter formats are supported:
 
-| Field | UTM param | MTM param |
-|---|---|---|
-| Source | `utm_source` | `mtm_source` |
-| Medium | `utm_medium` | `mtm_medium` |
-| Campaign | `utm_campaign` | `mtm_campaign` |
-| Term | `utm_term` | `mtm_keyword` |
-| Content | `utm_content` | `mtm_content` |
-| Group | `utm_source_platform` | `mtm_group` |
-| Id | `utm_id` | `mtm_cid` |
+| Field | Storage | UTM param | MTM param |
+|---|---|---|---|
+| Source | Postmeta (fixed per URL) | `utm_source` | `mtm_source` |
+| Medium | Postmeta (fixed per URL) | `utm_medium` | `mtm_medium` |
+| Campaign | Postmeta (fixed per URL) | `utm_campaign` | `mtm_campaign` |
+| Content | Clicks table (per click) | `utm_content` | `mtm_content` |
+| Term | Clicks table (per click) | `utm_term` | `mtm_keyword` |
+| Id | Clicks table (per click) | `utm_id` | `mtm_cid` |
+| Group | Clicks table (per click) | `utm_source_platform` | `mtm_group` |
 
-**Priority order** (highest first):
+For Source/Medium/Campaign, the **priority order** (highest first) is:
 
 1. **Stored value** (set by admin when creating the tracking URL) — never overwritten.
 2. **Incoming UTM parameter** from query string.
 3. **Incoming MTM parameter** from query string.
-
-For example, if you create a tracking URL with source set to "google" but leave campaign empty, and a visitor clicks with `?mtm_campaign=summer`, the campaign field will be populated with "summer". The source field remains "google" because it already has a value.
 
 ### How Attribution Works
 
@@ -231,8 +229,8 @@ When a conversion is triggered (see [Connecting a Form Plugin](#connecting-a-for
 2. Reads the `_ad_clicks` cookie and extracts all ad hashes.
 3. Filters out hashes that no longer exist as registered tracking URLs.
 4. If no valid hashes remain, exits without recording anything.
-5. Gives each valid hash a time-weighted share of the conversion: a click *d* days old receives weight *max(N − d, 1)* where *N* is the cookie lifetime (default: 90 days), and all weights are normalized to sum to 1.
-6. Stores the fractional values in the database within a transaction.
+5. Applies the attribution model (default: last-click — the most recent click receives `1.0`, all others receive `0.0`). The model is filterable via `kntnt_ad_attr_attribution`.
+6. Looks up the matching click records and stores conversion rows in the database within a transaction.
 
 ### Connecting a Form Plugin
 
@@ -520,6 +518,35 @@ add_filter( 'kntnt_ad_attr_redirect_query_params', function ( array $merged, arr
 }, 10, 3 );
 ```
 
+**`kntnt_ad_attr_attribution`**
+
+Filters the attribution weights for a conversion. Receives an associative array of hash => fractional value (default: 1.0 for the most recent click, 0.0 for all others) and an array of click data with timestamps. Must return an array where values sum to 1.0.
+
+```php
+// Example: time-weighted multi-click attribution.
+add_filter( 'kntnt_ad_attr_attribution', function ( array $attributions, array $clicks ): array {
+    $lifetime = (int) apply_filters( 'kntnt_ad_attr_cookie_lifetime', 90 );
+    $now      = time();
+    $weights  = [];
+    foreach ( $clicks as $click ) {
+        $days = ( $now - $click['clicked_at'] ) / DAY_IN_SECONDS;
+        $weights[ $click['hash'] ] = max( $lifetime - $days, 1 );
+    }
+    $total = array_sum( $weights );
+    return array_map( fn( float $w ) => $w / $total, $weights );
+}, 10, 2 );
+```
+
+**`kntnt_ad_attr_click_retention_days`**
+
+Filters the number of days to retain click records. Default: `365`. Clicks older than this are deleted by the daily cron job, along with their linked conversions.
+
+```php
+add_filter( 'kntnt_ad_attr_click_retention_days', function () {
+    return 180;
+} );
+```
+
 **`kntnt_ad_attr_utm_options`**
 
 Filters the predefined UTM options shown in the source and medium dropdowns when creating a tracking URL. The array contains `sources` (a map of source names to their default medium) and `mediums` (a list of available medium values). Both accept custom values typed by the user; this filter only controls the predefined suggestions.
@@ -571,7 +598,7 @@ Parameters:
 |-----------|------|-------------|
 | `$hash` | `string` | SHA-256 hash of the clicked tracking URL. |
 | `$target_url` | `string` | The resolved target URL the visitor will be redirected to. |
-| `$campaign_data` | `array` | Associative array with keys: `post_id`, `utm_source`, `utm_medium`, `utm_campaign`, `utm_content`, `utm_term`, `utm_id`, `utm_source_platform`. |
+| `$campaign_data` | `array` | Associative array with keys: `post_id`, `utm_source`, `utm_medium`, `utm_campaign`. |
 
 The `$_GET` superglobal is available to callbacks and contains any URL parameters appended to the tracking URL (e.g. `$_GET['gclid']`). Callbacks must sanitize all superglobal values.
 
@@ -707,7 +734,7 @@ The plugin uses a deduplication mechanism. If a visitor triggers a conversion wi
 
 **What about cookie consent / GDPR?**
 
-The plugin is designed to keep all data on your own server — no personal data is sent to any third party. This eliminates the third-country transfer issues that affect solutions like Google's Enhanced Conversions. However, the `_ad_clicks` cookie constitutes personal data processing under GDPR and requires consent. The plugin supports a three-state consent model (yes, no, undefined) and integrates with any cookie consent plugin via the `kntnt_ad_attr_has_consent` filter. Click counting (aggregated statistics per tracking URL) is always performed regardless of consent, since it does not identify or track individuals. See [Privacy and GDPR](#privacy-and-gdpr) for a full discussion and [Connecting a Cookie Consent Plugin](#connecting-a-cookie-consent-plugin) for implementation details.
+The plugin is designed to keep all data on your own server — no personal data is sent to any third party. This eliminates the third-country transfer issues that affect solutions like Google's Enhanced Conversions. However, the `_ad_clicks` cookie constitutes personal data processing under GDPR and requires consent. The plugin supports a three-state consent model (yes, no, undefined) and integrates with any cookie consent plugin via the `kntnt_ad_attr_has_consent` filter. Click recording (individual click records per tracking URL) is always performed regardless of consent, since the records contain only opaque hashes and UTM parameters — no individual is identified or trackable. See [Privacy and GDPR](#privacy-and-gdpr) for a full discussion and [Connecting a Cookie Consent Plugin](#connecting-a-cookie-consent-plugin) for implementation details.
 
 **How can I get help or report a bug?**
 

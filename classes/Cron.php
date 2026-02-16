@@ -2,8 +2,8 @@
 /**
  * Daily housekeeping and target page integrity checks.
  *
- * Handles the scheduled cron cleanup of orphaned statistics and tracking
- * URLs, and warns administrators when target pages are trashed.
+ * Handles the scheduled cron cleanup of orphaned click records, expired data,
+ * and tracking URLs whose target pages no longer exist.
  *
  * @package Kntnt\Ad_Attribution
  * @since   1.0.0
@@ -17,8 +17,8 @@ namespace Kntnt\Ad_Attribution;
  * Manages daily cleanup cron job and target page integrity notices.
  *
  * Hooks into the scheduled `kntnt_ad_attr_daily_cleanup` event to remove
- * orphaned stats rows and deactivate tracking URLs whose target pages no
- * longer exist. Also warns when a target page is trashed.
+ * expired clicks, orphaned conversions, and deactivate tracking URLs whose
+ * target pages no longer exist. Also warns when a target page is trashed.
  *
  * @since 1.0.0
  */
@@ -68,14 +68,16 @@ final class Cron {
 	/**
 	 * Cron callback for daily housekeeping.
 	 *
-	 * Removes orphaned statistics rows and drafts tracking URLs whose
-	 * target pages no longer exist.
+	 * Removes expired clicks, orphaned conversions/clicks, and drafts
+	 * tracking URLs whose target pages no longer exist.
 	 *
 	 * @return void
 	 * @since 1.0.0
 	 */
 	public function run_daily_cleanup(): void {
-		$this->delete_orphaned_stats();
+		$this->cleanup_clicks();
+		$this->cleanup_conversions();
+		$this->delete_orphaned_clicks();
 		$this->draft_orphaned_urls();
 
 		// Clean up adapter infrastructure tables.
@@ -84,24 +86,105 @@ final class Cron {
 	}
 
 	/**
-	 * Deletes statistics rows whose hash has no published CPT post.
+	 * Deletes click records older than the retention period.
 	 *
-	 * A stats row becomes orphaned when its corresponding tracking URL
-	 * post is trashed or deleted.
+	 * Default retention is 365 days, filterable via
+	 * `kntnt_ad_attr_click_retention_days`.
 	 *
 	 * @return void
-	 * @since 1.0.0
+	 * @since 1.5.0
 	 */
-	private function delete_orphaned_stats(): void {
+	private function cleanup_clicks(): void {
 		global $wpdb;
 
-		$stats_table = $wpdb->prefix . 'kntnt_ad_attr_stats';
+		/** @var int $days Number of days to retain click records. */
+		$days = (int) apply_filters( 'kntnt_ad_attr_click_retention_days', 365 );
+
+		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
+		$conv_table   = $wpdb->prefix . 'kntnt_ad_attr_conversions';
+		$cutoff       = gmdate( 'Y-m-d H:i:s', time() - ( $days * DAY_IN_SECONDS ) );
+
+		// Delete conversions linked to expired clicks first.
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		$wpdb->query( $wpdb->prepare(
+			"DELETE cv FROM {$conv_table} cv
+			 INNER JOIN {$clicks_table} c ON c.id = cv.click_id
+			 WHERE c.clicked_at < %s",
+			$cutoff,
+		) );
+
+		// Delete the expired clicks.
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		$deleted = $wpdb->query( $wpdb->prepare(
+			"DELETE FROM {$clicks_table} WHERE clicked_at < %s",
+			$cutoff,
+		) );
+
+		if ( $deleted > 0 ) {
+			error_log( sprintf( 'Kntnt Ad Attribution: Deleted %d expired click(s).', $deleted ) );
+		}
+	}
+
+	/**
+	 * Deletes conversion records whose click no longer exists.
+	 *
+	 * Acts as a cascade-delete cleanup for orphaned conversion rows.
+	 *
+	 * @return void
+	 * @since 1.5.0
+	 */
+	private function cleanup_conversions(): void {
+		global $wpdb;
+
+		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
+		$conv_table   = $wpdb->prefix . 'kntnt_ad_attr_conversions';
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery
 		$deleted = $wpdb->query(
+			"DELETE cv FROM {$conv_table} cv
+			 LEFT JOIN {$clicks_table} c ON c.id = cv.click_id
+			 WHERE c.id IS NULL",
+		);
+
+		if ( $deleted > 0 ) {
+			error_log( sprintf( 'Kntnt Ad Attribution: Deleted %d orphaned conversion(s).', $deleted ) );
+		}
+	}
+
+	/**
+	 * Deletes click records whose hash has no published CPT post.
+	 *
+	 * A click becomes orphaned when its corresponding tracking URL
+	 * post is trashed or deleted.
+	 *
+	 * @return void
+	 * @since 1.5.0
+	 */
+	private function delete_orphaned_clicks(): void {
+		global $wpdb;
+
+		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
+		$conv_table   = $wpdb->prefix . 'kntnt_ad_attr_conversions';
+
+		// Delete conversions linked to orphaned clicks first.
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		$wpdb->query(
 			$wpdb->prepare(
-				"DELETE s FROM {$stats_table} s
-				 LEFT JOIN {$wpdb->postmeta} pm ON pm.meta_key = '_hash' AND pm.meta_value = s.hash
+				"DELETE cv FROM {$conv_table} cv
+				 INNER JOIN {$clicks_table} c ON c.id = cv.click_id
+				 LEFT JOIN {$wpdb->postmeta} pm ON pm.meta_key = '_hash' AND pm.meta_value = c.hash
+				 LEFT JOIN {$wpdb->posts} p ON p.ID = pm.post_id AND p.post_type = %s
+				 WHERE p.ID IS NULL",
+				Post_Type::SLUG,
+			),
+		);
+
+		// Delete orphaned click records.
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		$deleted = $wpdb->query(
+			$wpdb->prepare(
+				"DELETE c FROM {$clicks_table} c
+				 LEFT JOIN {$wpdb->postmeta} pm ON pm.meta_key = '_hash' AND pm.meta_value = c.hash
 				 LEFT JOIN {$wpdb->posts} p ON p.ID = pm.post_id AND p.post_type = %s
 				 WHERE p.ID IS NULL",
 				Post_Type::SLUG,
@@ -109,7 +192,7 @@ final class Cron {
 		);
 
 		if ( $deleted > 0 ) {
-			error_log( sprintf( 'Kntnt Ad Attribution: Deleted %d orphaned stats row(s).', $deleted ) );
+			error_log( sprintf( 'Kntnt Ad Attribution: Deleted %d orphaned click(s).', $deleted ) );
 		}
 	}
 

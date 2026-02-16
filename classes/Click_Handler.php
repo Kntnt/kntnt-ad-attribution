@@ -215,17 +215,32 @@ final class Click_Handler {
 			$this->redirect( $target_url );
 		}
 
-		// Step 10: Log the click in the stats table.
-		$table = $wpdb->prefix . 'kntnt_ad_attr_stats';
-		$date  = gmdate( 'Y-m-d' );
+		// Capture the current time once for consistent timestamps across
+		// click recording and cookie storage.
+		$now     = time();
+		$post_id = (int) $row->ID;
 
-		$wpdb->query( $wpdb->prepare(
-			"INSERT INTO {$table} (hash, date, clicks)
-			 VALUES (%s, %s, 1)
-			 ON DUPLICATE KEY UPDATE clicks = clicks + 1",
-			$hash,
-			$date,
-		) );
+		// Step 10: Extract per-click UTM fields from incoming parameters.
+		$click_content = sanitize_text_field( $_GET['utm_content'] ?? '' )
+			?: sanitize_text_field( $_GET['mtm_content'] ?? '' );
+		$click_term    = sanitize_text_field( $_GET['utm_term'] ?? '' )
+			?: sanitize_text_field( $_GET['mtm_keyword'] ?? '' );
+		$click_id_val  = sanitize_text_field( $_GET['utm_id'] ?? '' )
+			?: sanitize_text_field( $_GET['mtm_cid'] ?? '' );
+		$click_group   = sanitize_text_field( $_GET['utm_source_platform'] ?? '' )
+			?: sanitize_text_field( $_GET['mtm_group'] ?? '' );
+
+		// Insert the click record into the clicks table.
+		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
+
+		$wpdb->insert( $clicks_table, [
+			'hash'                => $hash,
+			'clicked_at'          => gmdate( 'Y-m-d H:i:s', $now ),
+			'utm_content'         => $click_content !== '' ? mb_substr( $click_content, 0, 255 ) : null,
+			'utm_term'            => $click_term !== '' ? mb_substr( $click_term, 0, 255 ) : null,
+			'utm_id'              => $click_id_val !== '' ? mb_substr( $click_id_val, 0, 255 ) : null,
+			'utm_source_platform' => $click_group !== '' ? mb_substr( $click_group, 0, 255 ) : null,
+		] );
 
 		// Capture platform-specific click IDs via registered capturers.
 		// Returns early with no overhead if no capturers are registered.
@@ -237,19 +252,14 @@ final class Click_Handler {
 			}
 		}
 
-		// Populate empty postmeta fields from incoming UTM/MTM query parameters.
-		// Priority: stored value (admin) > UTM param > MTM param.
+		// Populate empty Source/Medium/Campaign postmeta from incoming params.
+		// These are fixed per tracking URL and stored in postmeta. Kept for
+		// backwards compatibility with pre-v1.5.0 URLs that may lack them.
 		$param_map = [
-			'_utm_source'          => [ 'utm_source', 'mtm_source' ],
-			'_utm_medium'          => [ 'utm_medium', 'mtm_medium' ],
-			'_utm_campaign'        => [ 'utm_campaign', 'mtm_campaign' ],
-			'_utm_term'            => [ 'utm_term', 'mtm_keyword' ],
-			'_utm_content'         => [ 'utm_content', 'mtm_content' ],
-			'_utm_source_platform' => [ 'utm_source_platform', 'mtm_group' ],
-			'_utm_id'              => [ 'utm_id', 'mtm_cid' ],
+			'_utm_source'   => [ 'utm_source', 'mtm_source' ],
+			'_utm_medium'   => [ 'utm_medium', 'mtm_medium' ],
+			'_utm_campaign' => [ 'utm_campaign', 'mtm_campaign' ],
 		];
-
-		$post_id = (int) $row->ID;
 
 		foreach ( $param_map as $meta_key => [ $utm_param, $mtm_param ] ) {
 			$stored = get_post_meta( $post_id, $meta_key, true );
@@ -273,21 +283,17 @@ final class Click_Handler {
 		// clicks regardless of consent state. Allows add-ons to capture
 		// platform-specific parameters (e.g. gclid) from $_GET.
 		do_action( 'kntnt_ad_attr_click', $hash, $target_url, [
-			'post_id'              => $post_id,
-			'utm_source'           => get_post_meta( $post_id, '_utm_source', true ),
-			'utm_medium'           => get_post_meta( $post_id, '_utm_medium', true ),
-			'utm_campaign'         => get_post_meta( $post_id, '_utm_campaign', true ),
-			'utm_content'          => get_post_meta( $post_id, '_utm_content', true ),
-			'utm_term'             => get_post_meta( $post_id, '_utm_term', true ),
-			'utm_id'               => get_post_meta( $post_id, '_utm_id', true ),
-			'utm_source_platform'  => get_post_meta( $post_id, '_utm_source_platform', true ),
+			'post_id'     => $post_id,
+			'utm_source'  => get_post_meta( $post_id, '_utm_source', true ),
+			'utm_medium'  => get_post_meta( $post_id, '_utm_medium', true ),
+			'utm_campaign' => get_post_meta( $post_id, '_utm_campaign', true ),
 		] );
 
 		// Step 11: Handle consent for cookie storage.
 		$consent_state = $this->consent->check();
 
 		match ( $consent_state ) {
-			true  => $this->set_cookie( $hash ),
+			true  => $this->set_cookie( $hash, $now ),
 			false => null, // Consent denied — attribution lost for this visitor.
 			null  => $this->handle_pending_consent( $hash, $target_url ),
 		};
@@ -300,14 +306,15 @@ final class Click_Handler {
 	 * Sets the _ad_clicks cookie with the current hash merged into
 	 * any existing entries.
 	 *
-	 * @param string $hash The SHA-256 hash to add.
+	 * @param string $hash      The SHA-256 hash to add.
+	 * @param int    $timestamp Unix timestamp to store in the cookie entry.
 	 *
 	 * @return void
 	 * @since 1.0.0
 	 */
-	private function set_cookie( string $hash ): void {
+	private function set_cookie( string $hash, int $timestamp ): void {
 		$entries = $this->cookie_manager->parse();
-		$entries = $this->cookie_manager->add( $entries, $hash );
+		$entries = $this->cookie_manager->add( $entries, $hash, $timestamp );
 		$this->cookie_manager->set_clicks_cookie( $entries );
 	}
 

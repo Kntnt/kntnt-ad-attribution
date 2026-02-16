@@ -8,7 +8,7 @@ All machine-readable names use `kntnt-ad-attr` (hyphens) / `kntnt_ad_attr` (unde
 |---------|------|
 | Text domain | `kntnt-ad-attr` |
 | Post type | `kntnt_ad_attr_url` |
-| Custom tables | `{prefix}kntnt_ad_attr_stats`, `{prefix}kntnt_ad_attr_click_ids`, `{prefix}kntnt_ad_attr_queue` |
+| Custom tables | `{prefix}kntnt_ad_attr_clicks`, `{prefix}kntnt_ad_attr_conversions`, `{prefix}kntnt_ad_attr_click_ids`, `{prefix}kntnt_ad_attr_queue` |
 | Capability | `kntnt_ad_attr` |
 | DB version option | `kntnt_ad_attr_version` |
 | Cron hooks | `kntnt_ad_attr_daily_cleanup`, `kntnt_ad_attr_process_queue` |
@@ -50,13 +50,9 @@ CPT registration — key arguments:
 |----------|-------|
 | `_hash` | SHA-256 hash (64 characters). Unique per application logic (see below). |
 | `_target_post_id` | WordPress post ID for the target page |
-| `_utm_source` | UTM source |
-| `_utm_medium` | UTM medium |
-| `_utm_campaign` | UTM campaign |
-| `_utm_content` | UTM content (optional) |
-| `_utm_term` | UTM term (optional) |
-| `_utm_id` | Campaign ID (optional) |
-| `_utm_source_platform` | Source platform / group (optional) |
+| `_utm_source` | UTM source (required) |
+| `_utm_medium` | UTM medium (required) |
+| `_utm_campaign` | UTM campaign (required) |
 
 The hash is stored as post meta. The hash is not the post slug — slugs have length limitations and normalization that can cause issues with exact 64-character hex strings.
 
@@ -78,38 +74,61 @@ The hash is an identifier, not a checksum. It must be possible to create any num
 
 If `INSERT` fails with a duplicate key (race condition): display an error message and ask the user to try again.
 
-### Click and Conversion Statistics — Custom Table
+### Individual Clicks — Custom Table
 
-Individual events do not need to be stored. The admin UI displays totals per hash per date range. A single table with daily granularity:
+Each non-bot click is recorded as an individual row. Source/Medium/Campaign are fixed per tracking URL and stored in postmeta. Content/Term/Id/Group vary per click and are stored here.
 
 ```sql
-CREATE TABLE {prefix}kntnt_ad_attr_stats (
-    hash        CHAR(64)       NOT NULL,
-    date        DATE           NOT NULL,
-    clicks      INT UNSIGNED   NOT NULL DEFAULT 0,
-    conversions DECIMAL(10,4)  NOT NULL DEFAULT 0,
-    PRIMARY KEY (hash, date),
-    INDEX idx_date (date)
+CREATE TABLE {prefix}kntnt_ad_attr_clicks (
+    id                  BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    hash                CHAR(64)        NOT NULL,
+    clicked_at          DATETIME        NOT NULL,
+    utm_content         VARCHAR(255)    NULL,
+    utm_term            VARCHAR(255)    NULL,
+    utm_id              VARCHAR(255)    NULL,
+    utm_source_platform VARCHAR(255)    NULL,
+    PRIMARY KEY (id),
+    INDEX idx_hash (hash),
+    INDEX idx_clicked_at (clicked_at)
 ) {charset}
 ```
 
 **On click:**
 
+```php
+$wpdb->insert( $clicks_table, [
+    'hash'                => $hash,
+    'clicked_at'          => gmdate( 'Y-m-d H:i:s', $now ),
+    'utm_content'         => $click_content ?: null,
+    'utm_term'            => $click_term ?: null,
+    'utm_id'              => $click_id_val ?: null,
+    'utm_source_platform' => $click_group ?: null,
+] );
+```
+
+Timestamps are stored in UTC using `gmdate()`. Click retention defaults to 365 days, configurable via `kntnt_ad_attr_click_retention_days`.
+
+### Conversions — Custom Table
+
+Conversion attribution linked to specific clicks. Each conversion produces one row per attributed click. With last-click attribution (default), one row per conversion.
+
 ```sql
-INSERT INTO {prefix}kntnt_ad_attr_stats (hash, date, clicks, conversions)
-VALUES (%s, %s, 1, 0)
-ON DUPLICATE KEY UPDATE clicks = clicks + 1
+CREATE TABLE {prefix}kntnt_ad_attr_conversions (
+    id                    BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    click_id              BIGINT UNSIGNED NOT NULL,
+    converted_at          DATETIME        NOT NULL,
+    fractional_conversion DECIMAL(10,4)   NOT NULL,
+    PRIMARY KEY (id),
+    INDEX idx_click_id (click_id),
+    INDEX idx_converted_at (converted_at)
+) {charset}
 ```
 
 **On conversion:**
 
-```sql
-INSERT INTO {prefix}kntnt_ad_attr_stats (hash, date, clicks, conversions)
-VALUES (%s, %s, 0, %f)
-ON DUPLICATE KEY UPDATE conversions = conversions + %f
-```
+The handler looks up the click record matching the cookie timestamp, then inserts a conversion row with the fractional attribution value.
 
-Dates are stored in UTC using `gmdate( 'Y-m-d' )`.
+Aggregated statistics (total clicks, total conversions per tracking URL) are computed at query time via `COUNT()` and `SUM()` on these tables.
 
 ### Click IDs — Custom Table
 

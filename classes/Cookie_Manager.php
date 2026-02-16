@@ -85,17 +85,18 @@ final class Cookie_Manager {
 	/**
 	 * Adds or updates a hash in the entries array.
 	 *
-	 * Sets the timestamp to the current time. If the resulting array exceeds
-	 * MAX_HASHES, the oldest entry (by timestamp) is removed.
+	 * Sets the timestamp to the provided value (or current time). If the
+	 * resulting array exceeds MAX_HASHES, the oldest entry is removed.
 	 *
-	 * @param array<string, int> $entries Existing hash => timestamp map.
-	 * @param string             $hash    The SHA-256 hash to add or update.
+	 * @param array<string, int> $entries   Existing hash => timestamp map.
+	 * @param string             $hash      The SHA-256 hash to add or update.
+	 * @param int|null           $timestamp Unix timestamp to store, or null for time().
 	 *
 	 * @return array<string, int> Updated hash => timestamp map.
 	 * @since 1.0.0
 	 */
-	public function add( array $entries, string $hash ): array {
-		$entries[ $hash ] = time();
+	public function add( array $entries, string $hash, ?int $timestamp = null ): array {
+		$entries[ $hash ] = $timestamp ?? time();
 
 		// Evict oldest entries if we exceed the limit.
 		if ( count( $entries ) > self::MAX_HASHES ) {

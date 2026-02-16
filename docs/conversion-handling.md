@@ -11,8 +11,8 @@ Conversions are triggered via the action hook `kntnt_ad_attr_conversion` from th
 4. Validate and extract hash:timestamp pairs
 5. Filter out hashes that do not exist as published tracking URLs (CPT with post_status = publish)
 6. If no valid hashes remain → exit (no attribution, _ad_last_conv is NOT set)
-7. Calculate attribution weights
-8. Write fractional conversions to the database (in a transaction)
+7. Apply attribution model (default: last-click) via kntnt_ad_attr_attribution filter
+8. Look up click records and write conversion rows to the database (in a transaction)
 9. Set/update the _ad_last_conv cookie
 10. Trigger kntnt_ad_attr_conversion_recorded with attributions and context (timestamp, IP, user-agent)
 11. Look up click IDs and campaign data for attributed hashes
@@ -32,31 +32,46 @@ $dedup_days = min( $dedup_days, $lifetime );
 
 ## Attribution Logic
 
-Fractional, time-weighted attribution. More recent clicks receive more weight.
+Filterable last-click attribution. By default, the most recent click receives full credit (1.0), all others receive 0.0.
 
-```
-N   = apply_filters( 'kntnt_ad_attr_cookie_lifetime', 90 )
-d_i = number of days since the hash's timestamp
-w_i = max( N − d_i, 1 )
-a_i = w_i / Σ w_j
+```php
+$latest_hash = array_keys( $valid_entries, max( $valid_entries ) )[0];
+$attributions = array_fill_keys( array_keys( $valid_entries ), 0.0 );
+$attributions[ $latest_hash ] = 1.0;
+
+$attributions = apply_filters( 'kntnt_ad_attr_attribution', $attributions, $clicks );
 ```
 
-Each hash is assigned the fractional value `a_i` that sums to 1.
+The `kntnt_ad_attr_attribution` filter receives `$attributions` (hash => fractional value) and `$clicks` (array of `['hash' => string, 'clicked_at' => int]`). Custom attribution models (time-weighted, linear, position-based) can be implemented via this filter.
 
 ## Database Write
 
-The conversion write is wrapped in a transaction:
+The handler looks up click records matching the cookie timestamps, then inserts conversion rows. The write is wrapped in a transaction:
 
 ```php
 $wpdb->query( 'START TRANSACTION' );
 
 foreach ( $attributions as $hash => $value ) {
-    $result = $wpdb->query( $wpdb->prepare(
-        "INSERT INTO {$table} (hash, date, clicks, conversions)
-         VALUES (%s, %s, 0, %f)
-         ON DUPLICATE KEY UPDATE conversions = conversions + %f",
-        $hash, gmdate( 'Y-m-d' ), $value, $value
+    if ( $value <= 0 ) {
+        continue;
+    }
+
+    $click_id = $wpdb->get_var( $wpdb->prepare(
+        "SELECT id FROM {$clicks_table} WHERE hash = %s AND clicked_at = %s LIMIT 1",
+        $hash,
+        gmdate( 'Y-m-d H:i:s', $valid_entries[ $hash ] ),
     ) );
+
+    if ( ! $click_id ) {
+        continue;
+    }
+
+    $result = $wpdb->insert( $conv_table, [
+        'click_id'              => (int) $click_id,
+        'converted_at'          => $converted_at,
+        'fractional_conversion' => $value,
+    ] );
+
     if ( $result === false ) {
         $wpdb->query( 'ROLLBACK' );
         error_log( '[Kntnt Ad Attribution] Conversion write failed, rolled back.' );
@@ -72,7 +87,7 @@ $wpdb->query( 'COMMIT' );
 After the `kntnt_ad_attr_conversion_recorded` action fires, the handler checks for registered reporters via `apply_filters('kntnt_ad_attr_conversion_reporters', [])`. If reporters are registered:
 
 1. **Look up click IDs** — calls `Click_ID_Store::get_for_hashes()` to retrieve platform-specific click IDs for all attributed hashes.
-2. **Look up campaign data** — calls `get_campaign_data()` to retrieve all parameter values (source, medium, campaign, content, term, id, source_platform) for all attributed hashes via a single JOIN query.
+2. **Look up campaign data** — calls `get_campaign_data()` to retrieve Source/Medium/Campaign from postmeta and Content/Term/Id/Group from the clicks table for all attributed hashes.
 3. **Build context** — assembles timestamp, IP, user-agent, and page URL.
 4. **Call each reporter's `enqueue` callback** — passes `$attributions`, `$click_ids`, `$campaigns`, and `$context`. Each reporter returns an array of payloads.
 5. **Enqueue payloads** — each payload is JSON-encoded and inserted into the `kntnt_ad_attr_queue` table with `status = 'pending'`.

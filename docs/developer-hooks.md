@@ -51,6 +51,32 @@ Transport mechanism for undefined consent: `'cookie'` (default) or `'fragment'`.
 
 Bot detection. Default: `false`. The plugin registers its own callback with User-Agent matching. The developer can supplement or replace it.
 
+**`kntnt_ad_attr_attribution`**
+
+Filters the attribution weights for a conversion. Default: last-click (1.0 for most recent click, 0.0 for all others). Must return an array where values sum to 1.0.
+
+Parameters:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `$attributions` | `array<string, float>` | Hash => fractional value. |
+| `$clicks` | `array<int, array{hash: string, clicked_at: int}>` | Click data with timestamps. |
+
+```php
+add_filter( 'kntnt_ad_attr_attribution', function ( array $attributions, array $clicks ): array {
+    // Custom attribution logic.
+    return $attributions;
+}, 10, 2 );
+```
+
+**`kntnt_ad_attr_click_retention_days`**
+
+Number of days to retain click records. Default: `365`. Clicks older than this are deleted by the daily cron job along with their linked conversions.
+
+```php
+add_filter( 'kntnt_ad_attr_click_retention_days', fn() => 180 );
+```
+
 **`kntnt_ad_attr_utm_options`**
 
 Predefined UTM source and medium options for the admin form dropdowns. Sources map to a default medium that is auto-filled client-side. Filterable to add or remove options.
@@ -189,7 +215,7 @@ Parameters:
 |-----------|------|-------------|
 | `$hash` | `string` | SHA-256 hash of the clicked tracking URL. |
 | `$target_url` | `string` | The resolved target URL the visitor will be redirected to. |
-| `$campaign_data` | `array` | Associative array with keys: `post_id`, `utm_source`, `utm_medium`, `utm_campaign`, `utm_content`, `utm_term`, `utm_id`, `utm_source_platform`. |
+| `$campaign_data` | `array` | Associative array with keys: `post_id`, `utm_source`, `utm_medium`, `utm_campaign`. |
 
 The `$_GET` superglobal is available to callbacks and contains any URL parameters appended to the tracking URL (e.g. `$_GET['gclid']`). Callbacks must sanitize all superglobal values.
 

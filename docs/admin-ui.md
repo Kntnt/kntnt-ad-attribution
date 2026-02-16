@@ -28,14 +28,14 @@ Tracking URLs are displayed and managed via a custom `WP_List_Table` subclass (n
 - Hash (truncated, e.g., first 12 characters)
 - Tracking URL (full)
 - Target URL (resolved via `get_permalink()`)
-- Source, medium, campaign, content, term, id, group
+- Source, medium, campaign
 
 **Row actions:** Trash (or Restore / Delete Permanently for trashed URLs).
 
 **Form (Add New):** Displayed on the same page. Fields:
 
 - Target URL: searchable select component (see below) that displays post type and post ID. All public post types are included. The plugin's own CPT is excluded.
-- Source (optional), medium (optional), campaign (optional), content (optional), term (optional), id (optional), group (optional). Only the target page is required.
+- Source (required), medium (required), campaign (required). Content, Term, Id, and Group are captured per click from incoming parameters and are not set in the form.
 
 The hash is generated automatically on save.
 
@@ -74,28 +74,24 @@ Report view that joins CPT metadata with aggregated stats. Rendered as a `WP_Lis
 **Filtering** (GET parameters, page reload):
 
 - Date range: two HTML5 `<input type="date">` fields.
-- Dimensions: one dropdown per dimension (source, medium, campaign, content, term, id, group), populated with distinct values from post meta.
+- Dimensions: one dropdown per dimension (source, medium, campaign), populated with distinct values from post meta.
 - Tracking URL / target URL: free-text field.
 
-**SQL query:**
+**SQL query (tab view):**
 
 ```sql
-SELECT s.hash,
+SELECT c.hash,
        pm_target.meta_value AS target_post_id,
        pm_src.meta_value AS utm_source,
        pm_med.meta_value AS utm_medium,
        pm_camp.meta_value AS utm_campaign,
-       pm_cont.meta_value AS utm_content,
-       pm_term.meta_value AS utm_term,
-       pm_id.meta_value AS utm_id,
-       pm_plat.meta_value AS utm_source_platform,
-       SUM(s.clicks) AS total_clicks,
-       SUM(s.conversions) AS total_conversions
-FROM {prefix}kntnt_ad_attr_stats s
+       COUNT(c.id) AS total_clicks,
+       COALESCE(SUM(cv.fractional_conversion), 0) AS total_conversions
+FROM {prefix}kntnt_ad_attr_clicks c
 INNER JOIN {wpdb->postmeta} pm_hash
-    ON pm_hash.meta_key = '_hash' AND pm_hash.meta_value = s.hash
+    ON pm_hash.meta_key = '_hash' AND pm_hash.meta_value = c.hash
 INNER JOIN {wpdb->posts} p
-    ON p.ID = pm_hash.post_id AND p.post_type = 'kntnt_ad_attr_url'
+    ON p.ID = pm_hash.post_id AND p.post_type = 'kntnt_ad_attr_url' AND p.post_status = 'publish'
 INNER JOIN {wpdb->postmeta} pm_target
     ON pm_target.post_id = p.ID AND pm_target.meta_key = '_target_post_id'
 LEFT JOIN {wpdb->postmeta} pm_src
@@ -104,27 +100,21 @@ LEFT JOIN {wpdb->postmeta} pm_med
     ON pm_med.post_id = p.ID AND pm_med.meta_key = '_utm_medium'
 LEFT JOIN {wpdb->postmeta} pm_camp
     ON pm_camp.post_id = p.ID AND pm_camp.meta_key = '_utm_campaign'
-LEFT JOIN {wpdb->postmeta} pm_cont
-    ON pm_cont.post_id = p.ID AND pm_cont.meta_key = '_utm_content'
-LEFT JOIN {wpdb->postmeta} pm_term
-    ON pm_term.post_id = p.ID AND pm_term.meta_key = '_utm_term'
-LEFT JOIN {wpdb->postmeta} pm_id
-    ON pm_id.post_id = p.ID AND pm_id.meta_key = '_utm_id'
-LEFT JOIN {wpdb->postmeta} pm_plat
-    ON pm_plat.post_id = p.ID AND pm_plat.meta_key = '_utm_source_platform'
-WHERE s.date BETWEEN %s AND %s
+LEFT JOIN {prefix}kntnt_ad_attr_conversions cv
+    ON cv.click_id = c.id
+WHERE c.clicked_at BETWEEN %s AND %s
 -- Additional WHERE clauses based on active filters
-GROUP BY s.hash, pm_target.meta_value, pm_src.meta_value,
-         pm_med.meta_value, pm_camp.meta_value,
-         pm_cont.meta_value, pm_term.meta_value,
-         pm_id.meta_value, pm_plat.meta_value
+GROUP BY c.hash, pm_target.meta_value,
+         pm_src.meta_value, pm_med.meta_value, pm_camp.meta_value
 ORDER BY total_clicks DESC
 LIMIT %d OFFSET %d
 ```
 
+**CSV query** uses the same base but groups additionally by `c.utm_content, c.utm_term, c.utm_id, c.utm_source_platform` and includes those fields in SELECT, providing per-click granularity.
+
 **Target URL is resolved in PHP**, not in SQL: `get_permalink( (int) $row->target_post_id )`. This ensures the URL always reflects the current permalink structure.
 
-**Summation:** Separate query without GROUP BY — totals for the entire filtered dataset.
+**Summation:** Separate query without GROUP BY — totals for the entire filtered dataset using `COUNT(DISTINCT c.id)` for clicks and `COALESCE(SUM(cv.fractional_conversion), 0)` for conversions.
 
 **Pagination:** Built into `WP_List_Table`. Default 20 rows (configurable via Screen Options).
 

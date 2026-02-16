@@ -29,15 +29,18 @@ kntnt-ad-attribution/
 │   ├── Queue.php                 ← Async job queue (v1.2.0)
 │   └── Queue_Processor.php       ← Queue processing via cron (v1.2.0)
 ├── migrations/
-│   ├── 1.0.0.php                 ← Initial table creation
-│   ├── 1.1.0.php                 ← No schema changes (companion hooks)
+│   ├── 1.0.0.php                 ← Initial table creation (stats)
 │   ├── 1.2.0.php                 ← Click ID and queue tables
-│   └── 1.4.0.php                 ← No schema changes (MTM support, new meta keys)
+│   └── 1.5.0.php                 ← Clicks + conversions tables, drops stats
 ├── js/
 │   ├── pending-consent.js        ← Client-side consent/cookie script
 │   └── admin.js                  ← Admin: select2 initialization, page selector
 ├── tests/
-│   └── test-query-forwarding.sh  ← Shell script for testing query param forwarding
+│   ├── test-v150-required-fields.sh      ← Required Source/Medium/Campaign validation
+│   ├── test-v150-click-recording.sh      ← Individual click recording in clicks table
+│   ├── test-v150-last-click-attribution.sh ← Last-click attribution model
+│   ├── test-v150-campaigns-aggregation.sh ← Campaigns tab aggregation queries
+│   └── test-v150-csv-export.sh           ← CSV export with per-click fields
 ├── css/
 │   └── admin.css                 ← Admin: styling for page selector and tabs
 └── languages/

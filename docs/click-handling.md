@@ -15,10 +15,11 @@ The click handler is registered on `template_redirect` — the conventional hook
 7b. Forward query parameters: merge incoming request params with target URL params (target wins on collision), filter via `kntnt_ad_attr_redirect_query_params`
 8. Redirect loop guard: verify that target URL does not start with /<prefix>/
 9. Bot check: if is_bot() → redirect without logging or setting cookie
-10. Log click in database (always, regardless of consent)
-10b. Capture platform-specific click IDs via registered kntnt_ad_attr_click_id_capturers filter
-10c. Populate empty postmeta fields from incoming UTM/MTM query parameters (see Click-Time Parameter Population below)
-10d. Fire kntnt_ad_attr_click action (hash, target URL, campaign data) — allows companion plugins to capture platform-specific parameters (e.g. gclid)
+10. Extract per-click UTM fields (Content, Term, Id, Group) from incoming parameters
+10b. Insert click record into kntnt_ad_attr_clicks table
+10c. Capture platform-specific click IDs via registered kntnt_ad_attr_click_id_capturers filter
+10d. Populate empty postmeta fields (Source, Medium, Campaign only) from incoming UTM/MTM query parameters
+10e. Fire kntnt_ad_attr_click action (hash, target URL, campaign data) — allows companion plugins to capture platform-specific parameters (e.g. gclid)
 11. Check consent → three outcomes (see Consent below)
 12. Redirect to target URL
 ```
@@ -33,21 +34,28 @@ Each registered capturer maps a platform to a GET parameter. The core iterates t
 
 Click ID capture happens **before** the `kntnt_ad_attr_click` action fires, so click IDs are already stored when companion plugins receive the click notification. Click ID capture occurs independently of consent — like click counting, it does not set any cookies or track individuals.
 
-## Click-Time Parameter Population
+## Per-Click UTM Fields
 
-When a tracking URL is created with empty fields (e.g. no source, medium, or campaign), the click handler can populate those fields at click time from incoming query parameters. This enables ad platforms (e.g. Google Ads via Matomo Tag Manager) to supply parameter values dynamically.
+Content, Term, Id, and Group vary per click and are extracted from incoming UTM/MTM parameters, then stored directly in the `kntnt_ad_attr_clicks` table:
 
-The handler supports both UTM and MTM (Matomo Tag Manager) parameter formats:
+| Field | Column | UTM param | MTM param |
+|---|---|---|---|
+| Content | `utm_content` | `utm_content` | `mtm_content` |
+| Term | `utm_term` | `utm_term` | `mtm_keyword` |
+| Id | `utm_id` | `utm_id` | `mtm_cid` |
+| Group | `utm_source_platform` | `utm_source_platform` | `mtm_group` |
+
+Values are sanitized with `sanitize_text_field()` and truncated to 255 characters via `mb_substr()`. Empty values are stored as `NULL`.
+
+## Postmeta Population (Source/Medium/Campaign)
+
+Source, medium, and campaign are fixed per tracking URL and stored in postmeta. They are required when creating a tracking URL (v1.5.0+), but the click handler still attempts to populate empty values for backwards compatibility with pre-v1.5.0 URLs.
 
 | Field | UTM param | MTM param | Meta key |
 |---|---|---|---|
 | Source | `utm_source` | `mtm_source` | `_utm_source` |
 | Medium | `utm_medium` | `mtm_medium` | `_utm_medium` |
 | Campaign | `utm_campaign` | `mtm_campaign` | `_utm_campaign` |
-| Term | `utm_term` | `mtm_keyword` | `_utm_term` |
-| Content | `utm_content` | `mtm_content` | `_utm_content` |
-| Group | `utm_source_platform` | `mtm_group` | `_utm_source_platform` |
-| Id | `utm_id` | `mtm_cid` | `_utm_id` |
 
 **Priority order** (highest first):
 
@@ -55,7 +63,7 @@ The handler supports both UTM and MTM (Matomo Tag Manager) parameter formats:
 2. **Incoming UTM parameter** from query string.
 3. **Incoming MTM parameter** from query string.
 
-Values are sanitized with `sanitize_text_field()` and truncated to 255 characters via `mb_substr()`. Population occurs before the `kntnt_ad_attr_click` action fires, so the action callback receives the final (potentially populated) values.
+Population occurs before the `kntnt_ad_attr_click` action fires.
 
 ## URL Matching
 

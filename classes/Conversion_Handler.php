@@ -1,10 +1,10 @@
 <?php
 /**
- * Conversion handling with fractional time-weighted attribution.
+ * Conversion handling with filterable last-click attribution.
  *
  * Listens for the `kntnt_ad_attr_conversion` action hook (fired by the form
- * plugin) and distributes a single conversion across all previously clicked
- * tracking URLs using time-weighted fractional attribution.
+ * plugin) and attributes the conversion to clicked tracking URLs using a
+ * filterable attribution model (default: last-click).
  *
  * @package Kntnt\Ad_Attribution
  * @since   1.0.0
@@ -85,11 +85,11 @@ final class Conversion_Handler {
 	}
 
 	/**
-	 * Processes a conversion through the 10-step attribution flow.
+	 * Processes a conversion through the attribution flow.
 	 *
 	 * Steps: deduplication check → cookie parse → hash validation →
-	 * weight calculation → transactional DB write → dedup cookie →
-	 * recorded hook.
+	 * attribution calculation → conversions DB write → dedup cookie →
+	 * recorded hook → reporter enqueueing.
 	 *
 	 * @return void
 	 * @since 1.0.0
@@ -118,34 +118,55 @@ final class Conversion_Handler {
 			return;
 		}
 
-		// Step 6–7: Calculate fractional time-weighted attribution.
-		$now     = time();
-		$weights = [];
-
+		// Step 6: Prepare click data for the attribution filter.
+		$clicks = [];
 		foreach ( $valid_entries as $hash => $timestamp ) {
-			$days            = ( $now - $timestamp ) / DAY_IN_SECONDS;
-			$weights[ $hash ] = max( $lifetime - $days, 1 );
+			$clicks[] = [ 'hash' => $hash, 'clicked_at' => $timestamp ];
 		}
 
-		$total        = array_sum( $weights );
-		$attributions = array_map( fn( float $w ) => $w / $total, $weights );
+		// Step 7: Default last-click attribution — full credit to most recent click.
+		$latest_hash  = array_keys( $valid_entries, max( $valid_entries ) )[0];
+		$attributions = array_fill_keys( array_keys( $valid_entries ), 0.0 );
+		$attributions[ $latest_hash ] = 1.0;
 
-		// Step 8: Write fractional conversions in a transaction.
-		$table = $wpdb->prefix . 'kntnt_ad_attr_stats';
-		$date  = gmdate( 'Y-m-d' );
+		/**
+		 * Filters the attribution weights for a conversion.
+		 *
+		 * @param array<string, float>                       $attributions Hash => fractional value. Default: 1.0 for last click, 0.0 for rest.
+		 * @param array<int, array{hash: string, clicked_at: int}> $clicks Click data with timestamps.
+		 *
+		 * @since 1.5.0
+		 */
+		$attributions = apply_filters( 'kntnt_ad_attr_attribution', $attributions, $clicks );
+
+		// Step 8: Look up click records and write conversion rows.
+		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
+		$conv_table   = $wpdb->prefix . 'kntnt_ad_attr_conversions';
+		$converted_at = gmdate( 'Y-m-d H:i:s' );
 
 		$wpdb->query( 'START TRANSACTION' );
 
 		foreach ( $attributions as $hash => $value ) {
-			$result = $wpdb->query( $wpdb->prepare(
-				"INSERT INTO {$table} (hash, date, clicks, conversions)
-				 VALUES (%s, %s, 0, %f)
-				 ON DUPLICATE KEY UPDATE conversions = conversions + %f",
+			if ( $value <= 0 ) {
+				continue;
+			}
+
+			// Find the click record matching the cookie timestamp.
+			$click_id = $wpdb->get_var( $wpdb->prepare(
+				"SELECT id FROM {$clicks_table} WHERE hash = %s AND clicked_at = %s LIMIT 1",
 				$hash,
-				$date,
-				$value,
-				$value,
+				gmdate( 'Y-m-d H:i:s', $valid_entries[ $hash ] ),
 			) );
+
+			if ( ! $click_id ) {
+				continue;
+			}
+
+			$result = $wpdb->insert( $conv_table, [
+				'click_id'              => (int) $click_id,
+				'converted_at'          => $converted_at,
+				'fractional_conversion' => $value,
+			] );
 
 			if ( $result === false ) {
 				$wpdb->query( 'ROLLBACK' );
@@ -222,12 +243,12 @@ final class Conversion_Handler {
 	/**
 	 * Retrieves campaign data (UTM parameters) for an array of hashes.
 	 *
-	 * Performs a single JOIN query against wp_postmeta to fetch all UTM
-	 * meta values per hash efficiently.
+	 * Source/Medium/Campaign are fetched from postmeta. Content/Term/Id/Group
+	 * are fetched from the clicks table based on the cookie timestamps.
 	 *
 	 * @param string[] $hashes SHA-256 hashes.
 	 *
-	 * @return array<string, array> Hash => ['utm_source' => …, 'utm_medium' => …, …].
+	 * @return array<string, array> Hash => ['utm_source' => ..., 'utm_medium' => ..., ...].
 	 * @since 1.2.0
 	 */
 	private function get_campaign_data( array $hashes ): array {
@@ -239,6 +260,7 @@ final class Conversion_Handler {
 
 		$placeholders = implode( ',', array_fill( 0, count( $hashes ), '%s' ) );
 
+		// Fetch Source/Medium/Campaign from postmeta.
 		$rows = $wpdb->get_results( $wpdb->prepare(
 			"SELECT pm_hash.meta_value AS hash,
 			        pm_utm.meta_key,
@@ -246,7 +268,7 @@ final class Conversion_Handler {
 			 FROM {$wpdb->postmeta} pm_hash
 			 JOIN {$wpdb->posts} p ON p.ID = pm_hash.post_id
 			 JOIN {$wpdb->postmeta} pm_utm ON pm_utm.post_id = p.ID
-			    AND pm_utm.meta_key IN ('_utm_source', '_utm_medium', '_utm_campaign', '_utm_content', '_utm_term', '_utm_id', '_utm_source_platform')
+			    AND pm_utm.meta_key IN ('_utm_source', '_utm_medium', '_utm_campaign')
 			 WHERE pm_hash.meta_key = '_hash'
 			   AND pm_hash.meta_value IN ({$placeholders})
 			   AND p.post_type = %s
@@ -256,9 +278,30 @@ final class Conversion_Handler {
 
 		$result = [];
 		foreach ( $rows as $row ) {
-			// Strip the leading underscore from meta_key for the output.
 			$key = ltrim( $row->meta_key, '_' );
 			$result[ $row->hash ][ $key ] = $row->meta_value;
+		}
+
+		// Fetch Content/Term/Id/Group from the clicks table.
+		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
+
+		$click_rows = $wpdb->get_results( $wpdb->prepare(
+			"SELECT hash, utm_content, utm_term, utm_id, utm_source_platform
+			 FROM {$clicks_table}
+			 WHERE hash IN ({$placeholders})
+			 ORDER BY clicked_at DESC",
+			...$hashes,
+		) );
+
+		// Use the most recent click's per-click fields for each hash.
+		foreach ( $click_rows as $row ) {
+			if ( isset( $result[ $row->hash ]['utm_content'] ) ) {
+				continue;
+			}
+			$result[ $row->hash ]['utm_content']         = $row->utm_content ?? '';
+			$result[ $row->hash ]['utm_term']            = $row->utm_term ?? '';
+			$result[ $row->hash ]['utm_id']              = $row->utm_id ?? '';
+			$result[ $row->hash ]['utm_source_platform'] = $row->utm_source_platform ?? '';
 		}
 
 		return $result;
