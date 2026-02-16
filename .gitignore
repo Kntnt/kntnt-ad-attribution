@@ -18,6 +18,9 @@ Desktop.ini
 *.sublime-project
 *.sublime-workspace
 
+# Claude Code
+.claude/
+
 # VS Code
 .vscode/
 
