@@ -63,6 +63,26 @@ add_filter( 'kntnt_ad_attr_utm_options', function ( array $options ): array {
 } );
 ```
 
+**`kntnt_ad_attr_redirect_query_params`**
+
+Filters the merged query parameters before building the redirect URL. When a visitor clicks a tracking URL with extra query parameters (e.g. `/ad/<hash>?gclid=abc&utm_term=x`), these are forwarded to the target page. Target URL parameters take precedence over incoming ones.
+
+Parameters:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `$merged_params` | `array<string, string>` | Merged parameters (target wins on collision). |
+| `$target_params` | `array<string, string>` | Parameters already present on the target URL. |
+| `$incoming_params` | `array<string, string>` | Sanitized parameters from the incoming request (excluding `kntnt_ad_attr_hash`). |
+
+```php
+add_filter( 'kntnt_ad_attr_redirect_query_params', function ( array $merged, array $target, array $incoming ): array {
+    // Prevent internal tracking parameters from leaking to the landing page.
+    unset( $merged['fbclid'], $merged['gclid'] );
+    return $merged;
+}, 10, 3 );
+```
+
 **`kntnt_ad_attr_click_id_capturers`**
 
 Registers platform-specific GET parameters that the core captures and stores at ad click time. Return an associative array mapping platform identifiers to GET parameter names. Default: `[]` (no click IDs captured).

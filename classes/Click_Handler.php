@@ -170,6 +170,35 @@ final class Click_Handler {
 			$this->send_404();
 		}
 
+		// Forward incoming query parameters to the target URL. Target URL
+		// parameters take precedence over incoming ones so that the site
+		// owner's configuration cannot be overridden by the ad platform.
+		$incoming_params = array_map( 'sanitize_text_field', $_GET );
+		unset( $incoming_params['kntnt_ad_attr_hash'] );
+
+		$target_query  = wp_parse_url( $target_url, PHP_URL_QUERY ) ?? '';
+		$target_params = [];
+		if ( $target_query !== '' ) {
+			wp_parse_str( $target_query, $target_params );
+		}
+
+		$merged_params = array_merge( $incoming_params, $target_params );
+
+		/**
+		 * Filters the merged query parameters before building the redirect URL.
+		 *
+		 * @param array<string, string> $merged_params   Merged parameters (target wins on collision).
+		 * @param array<string, string> $target_params   Parameters from the target URL.
+		 * @param array<string, string> $incoming_params Sanitized parameters from the incoming request.
+		 *
+		 * @since 1.3.0
+		 */
+		$merged_params = apply_filters( 'kntnt_ad_attr_redirect_query_params', $merged_params, $target_params, $incoming_params );
+
+		if ( $merged_params !== [] ) {
+			$target_url = add_query_arg( $merged_params, strtok( $target_url, '?' ) );
+		}
+
 		// Step 8: Redirect loop guard — ensure target doesn't point back
 		// to a tracking URL.
 		/** @var string $prefix The URL path prefix for tracking URLs. */
