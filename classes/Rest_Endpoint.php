@@ -119,10 +119,11 @@ final class Rest_Endpoint {
 	}
 
 	/**
-	 * Searches published posts across all public post types.
+	 * Searches published posts by ID, URL, slug, or title.
 	 *
-	 * Excludes the plugin's own CPT from results. Returns an array of
-	 * objects with id, title, and type for the select2 component.
+	 * Supports multiple lookup strategies in descending priority:
+	 * exact post ID, full/partial URL resolution, slug LIKE matching,
+	 * and title search. Excludes the plugin's own CPT from results.
 	 *
 	 * @param WP_REST_Request $request The REST request object.
 	 *
@@ -130,6 +131,8 @@ final class Rest_Endpoint {
 	 * @since 1.0.0
 	 */
 	public function search_posts( WP_REST_Request $request ): WP_REST_Response {
+		global $wpdb;
+
 		$search = $request->get_param( 'search' );
 
 		// Get all public post types except the plugin's own CPT.
@@ -138,21 +141,116 @@ final class Rest_Endpoint {
 			[ Post_Type::SLUG ],
 		) );
 
-		$query = new WP_Query( [
-			'post_type'      => $post_types,
-			'post_status'    => 'publish',
-			's'              => $search,
-			'posts_per_page' => 20,
-			'no_found_rows'  => true,
-		] );
+		// Strip protocol and domain, then trim surrounding slashes.
+		$cleaned  = preg_replace( '#^https?://[^/]+/?#', '', $search );
+		$cleaned  = trim( $cleaned, '/' );
+		$found    = [];
+		$found_ids = [];
 
-		$results = array_map( fn( $post ) => [
+		// Exact post ID lookup.
+		if ( ctype_digit( $cleaned ) ) {
+			$post = get_post( (int) $cleaned );
+			if ( $post && $post->post_status === 'publish' && in_array( $post->post_type, $post_types, true ) ) {
+				$found[]     = $this->format_post( $post );
+				$found_ids[] = $post->ID;
+			}
+		}
+
+		// URL resolution for paths containing a slash.
+		if ( str_contains( $cleaned, '/' ) ) {
+			$post_id = url_to_postid( home_url( $cleaned ) );
+			if ( $post_id && ! in_array( $post_id, $found_ids, true ) ) {
+				$post = get_post( $post_id );
+				if ( $post && $post->post_status === 'publish' && in_array( $post->post_type, $post_types, true ) ) {
+					$found[]     = $this->format_post( $post );
+					$found_ids[] = $post->ID;
+				}
+			}
+		}
+
+		// Slug LIKE search on each path segment.
+		if ( $cleaned !== '' ) {
+			$segments    = explode( '/', $cleaned );
+			$like_clauses = [];
+			$like_args    = [];
+
+			foreach ( $segments as $segment ) {
+				if ( $segment === '' ) {
+					continue;
+				}
+				$like_clauses[] = 'p.post_name LIKE %s';
+				$like_args[]    = '%' . $wpdb->esc_like( $segment ) . '%';
+			}
+
+			if ( $like_clauses ) {
+				$type_placeholders = implode( ',', array_fill( 0, count( $post_types ), '%s' ) );
+				$where_like        = implode( ' OR ', $like_clauses );
+
+				$exclude_clause = '';
+				$query_args     = [ ...$like_args, ...$post_types ];
+
+				if ( $found_ids ) {
+					$id_placeholders = implode( ',', array_fill( 0, count( $found_ids ), '%d' ) );
+					$exclude_clause  = "AND p.ID NOT IN ($id_placeholders)";
+					$query_args      = [ ...$like_args, ...$post_types, ...$found_ids ];
+				}
+
+				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				$slug_posts = $wpdb->get_results( $wpdb->prepare(
+					"SELECT p.ID, p.post_title, p.post_type
+					 FROM {$wpdb->posts} p
+					 WHERE ($where_like)
+					   AND p.post_status = 'publish'
+					   AND p.post_type IN ($type_placeholders)
+					   $exclude_clause
+					 LIMIT 20",
+					...$query_args,
+				) );
+
+				foreach ( $slug_posts as $row ) {
+					$found[] = [
+						'id'    => (int) $row->ID,
+						'title' => $row->post_title,
+						'type'  => $row->post_type,
+					];
+					$found_ids[] = (int) $row->ID;
+				}
+			}
+		}
+
+		// Title search via WP_Query as a final fallback.
+		if ( $cleaned !== '' && count( $found ) < 20 ) {
+			$query = new WP_Query( [
+				'post_type'      => $post_types,
+				'post_status'    => 'publish',
+				's'              => $cleaned,
+				'post__not_in'   => $found_ids,
+				'posts_per_page' => 20 - count( $found ),
+				'no_found_rows'  => true,
+			] );
+
+			foreach ( $query->posts as $post ) {
+				$found[] = $this->format_post( $post );
+			}
+		}
+
+		return new WP_REST_Response( $found );
+	}
+
+	/**
+	 * Formats a post object for the select2 component response.
+	 *
+	 * @param \WP_Post $post The post to format.
+	 *
+	 * @return array{id: int, title: string, type: string} Formatted post data.
+	 * @since 1.0.0
+	 */
+	private function format_post( \WP_Post $post ): array {
+		return [
 			'id'    => $post->ID,
 			'title' => $post->post_title,
 			'type'  => $post->post_type,
-		], $query->posts );
-
-		return new WP_REST_Response( $results );
+		];
 	}
 
 	/**
