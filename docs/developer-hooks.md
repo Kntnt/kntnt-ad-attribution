@@ -63,6 +63,19 @@ add_filter( 'kntnt_ad_attr_utm_options', function ( array $options ): array {
 } );
 ```
 
+**`kntnt_ad_attr_admin_tabs`**
+
+Filters the admin page tab list. Add-on plugins can register custom tabs by appending slug → label entries to the array. Unrecognized tab slugs dispatch to the `kntnt_ad_attr_admin_tab_{$tab}` action for rendering.
+
+```php
+add_filter( 'kntnt_ad_attr_admin_tabs', function ( array $tabs ): array {
+    $tabs['settings'] = __( 'Settings', 'my-addon' );
+    return $tabs;
+} );
+```
+
+Default tabs: `[ 'urls' => 'URLs', 'campaigns' => 'Campaigns' ]`.
+
 **`kntnt_ad_attr_redirect_query_params`**
 
 Filters the merged query parameters before building the redirect URL. When a visitor clicks a tracking URL with extra query parameters (e.g. `/ad/<hash>?gclid=abc&utm_term=x`), these are forwarded to the target page. Target URL parameters take precedence over incoming ones.
@@ -154,6 +167,17 @@ add_filter( 'kntnt_ad_attr_conversion_reporters', function ( array $reporters ):
 ```
 
 ## Actions
+
+**`kntnt_ad_attr_admin_tab_{$tab}`**
+
+Fires when the admin page renders an unrecognized tab slug. Add-on plugins that register a custom tab via `kntnt_ad_attr_admin_tabs` must hook into this action to render the tab's content.
+
+```php
+add_action( 'kntnt_ad_attr_admin_tab_settings', function (): void {
+    echo '<h2>' . esc_html__( 'Settings', 'my-addon' ) . '</h2>';
+    // Render settings form.
+} );
+```
 
 **`kntnt_ad_attr_click`**
 

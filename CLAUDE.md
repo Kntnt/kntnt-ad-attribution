@@ -37,6 +37,12 @@ All machine-readable names use `kntnt-ad-attr` (hyphens) / `kntnt_ad_attr` (unde
 
 **Adapter infrastructure (v1.2.0):** Click_ID_Store, Queue, and Queue_Processor are instantiated in Plugin constructor and injected into Click_Handler (Click_ID_Store), Conversion_Handler (Click_ID_Store, Queue, Queue_Processor), Cron (Click_ID_Store, Queue), and Admin_Page (Queue). Two new filters: `kntnt_ad_attr_click_id_capturers` and `kntnt_ad_attr_conversion_reporters`. Queue processing via `kntnt_ad_attr_process_queue` cron hook.
 
+**Admin tab extensibility (v1.3.0):** The tab list is filterable via `kntnt_ad_attr_admin_tabs`. Unrecognized tab slugs dispatch to the `kntnt_ad_attr_admin_tab_{$tab}` action, allowing add-on plugins to register custom admin tabs.
+
+**Query parameter forwarding (v1.3.0):** Click_Handler merges incoming query parameters (e.g. `gclid`, `fbclid`) into the redirect target URL. Target URL parameters take precedence on collision. The merged set is filterable via `kntnt_ad_attr_redirect_query_params`.
+
+**Optional UTM fields (v1.3.0):** Source, medium, and campaign are no longer required when creating tracking URLs. UTM meta fields are stored only when non-empty. Campaign_List_Table uses LEFT JOIN for all UTM fields (source, medium, campaign, content, term).
+
 ## Specifications
 
 All specs are in `docs/`. Read the relevant doc before implementing a feature:

@@ -15,9 +15,9 @@ Regex: `/^[a-f0-9]{64}$/`. Validated at:
 
 | Field | Required | Max length | Sanitization |
 |-------|----------|------------|--------------|
-| `source` | Yes | 255 | `sanitize_text_field()` |
-| `medium` | Yes | 255 | `sanitize_text_field()` |
-| `campaign` | Yes | 255 | `sanitize_text_field()` |
+| `source` | No | 255 | `sanitize_text_field()` |
+| `medium` | No | 255 | `sanitize_text_field()` |
+| `campaign` | No | 255 | `sanitize_text_field()` |
 | `content` | No | 255 | `sanitize_text_field()` |
 | `term` | No | 255 | `sanitize_text_field()` |
 

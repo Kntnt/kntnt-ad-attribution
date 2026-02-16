@@ -129,6 +129,7 @@ final class Rest_Endpoint {
 	 *
 	 * @return WP_REST_Response Array of matching posts.
 	 * @since 1.0.0
+	 * @since 1.3.0 Rewritten with multi-strategy lookup (ID, URL, slug, title).
 	 */
 	public function search_posts( WP_REST_Request $request ): WP_REST_Response {
 		global $wpdb;

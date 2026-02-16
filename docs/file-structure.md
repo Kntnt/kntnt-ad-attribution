@@ -35,6 +35,8 @@ kntnt-ad-attribution/
 ├── js/
 │   ├── pending-consent.js        ← Client-side consent/cookie script
 │   └── admin.js                  ← Admin: select2 initialization, page selector
+├── tests/
+│   └── test-query-forwarding.sh  ← Shell script for testing query param forwarding
 ├── css/
 │   └── admin.css                 ← Admin: styling for page selector and tabs
 └── languages/

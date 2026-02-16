@@ -17,7 +17,7 @@ tools_page_kntnt-ad-attribution&tab=urls
 tools_page_kntnt-ad-attribution&tab=campaigns
 ```
 
-Default tab (if `tab` is missing): `urls`. No JavaScript required — full page reload on tab switch. Version 1 has no Settings tab — all behavior is configured via filters (see [developer-hooks.md](developer-hooks.md)).
+Default tab (if `tab` is missing): `urls`. No JavaScript required — full page reload on tab switch. The tab list is filterable via `kntnt_ad_attr_admin_tabs`, allowing add-on plugins to register custom tabs. Unrecognized tab slugs dispatch to the `kntnt_ad_attr_admin_tab_{$tab}` action for rendering. All core behavior is configured via filters (see [developer-hooks.md](developer-hooks.md)).
 
 ## URLs Tab
 
@@ -35,7 +35,7 @@ Tracking URLs are displayed and managed via a custom `WP_List_Table` subclass (n
 **Form (Add New):** Displayed on the same page. Fields:
 
 - Target URL: searchable select component (see below) that displays post type and post ID. All public post types are included. The plugin's own CPT is excluded.
-- UTM source (required), medium (required), campaign (required), content (optional), term (optional).
+- UTM source (optional), medium (optional), campaign (optional), content (optional), term (optional). Only the target page is required.
 
 The hash is generated automatically on save.
 
@@ -96,11 +96,11 @@ INNER JOIN {wpdb->posts} p
     ON p.ID = pm_hash.post_id AND p.post_type = 'kntnt_ad_attr_url'
 INNER JOIN {wpdb->postmeta} pm_target
     ON pm_target.post_id = p.ID AND pm_target.meta_key = '_target_post_id'
-INNER JOIN {wpdb->postmeta} pm_src
+LEFT JOIN {wpdb->postmeta} pm_src
     ON pm_src.post_id = p.ID AND pm_src.meta_key = '_utm_source'
-INNER JOIN {wpdb->postmeta} pm_med
+LEFT JOIN {wpdb->postmeta} pm_med
     ON pm_med.post_id = p.ID AND pm_med.meta_key = '_utm_medium'
-INNER JOIN {wpdb->postmeta} pm_camp
+LEFT JOIN {wpdb->postmeta} pm_camp
     ON pm_camp.post_id = p.ID AND pm_camp.meta_key = '_utm_campaign'
 LEFT JOIN {wpdb->postmeta} pm_cont
     ON pm_cont.post_id = p.ID AND pm_cont.meta_key = '_utm_content'

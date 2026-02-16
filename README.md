@@ -32,6 +32,7 @@ The plugin does not hardcode integrations with any specific consent management o
 - **Bot detection** — filters out known bots via User-Agent matching and `robots.txt` rules.
 - **Two redirect methods** — 302 redirect (default) or JavaScript redirect via filter, providing flexibility for different ITP mitigation strategies.
 - **Companion plugin hooks** — fires `kntnt_ad_attr_click` on every non-bot click with hash, target URL, campaign data, and access to URL parameters (gclid, fbclid, etc.). Companion plugins can capture platform-specific data and implement server-side API integrations without modifying the core plugin.
+- **Query parameter forwarding** — ad platform parameters (gclid, fbclid, msclkid, etc.) appended to the tracking URL are automatically forwarded to the target page through the redirect. Target URL parameters take precedence, and the merged set is filterable.
 - **Adapter infrastructure for add-ons** — a built-in adapter system lets add-on plugins or code snippets register click-ID capturers (for `gclid`, `fbclid`, `msclkid`, etc.) and conversion reporters (for Google Ads, Meta, Matomo, GA4, etc.). The core captures click IDs and processes a report queue; adapters define what to capture and where to report. If no adapters are registered, the plugin behaves identically to previous versions.
 
 ### The Problem
@@ -179,7 +180,7 @@ The plugin adds **Ad Attribution** under **Tools** in the WordPress admin menu. 
 
 This is where you create and manage tracking URLs.
 
-- **Create new URL:** Select a target page via a searchable dropdown and fill in UTM parameters. Source, medium, and campaign are required; content and term are optional. Source and medium offer predefined options (configurable via the `kntnt_ad_attr_utm_options` filter) but also accept custom values. The plugin generates a SHA-256 hash and produces a tracking URL: `https://yourdomain.com/ad/<hash>`.
+- **Create new URL:** Select a target page via a searchable dropdown and fill in UTM parameters. Only a target page is required; all UTM fields (source, medium, campaign, content, term) are optional. Source and medium offer predefined options (configurable via the `kntnt_ad_attr_utm_options` filter) but also accept custom values. The plugin generates a SHA-256 hash and produces a tracking URL: `https://yourdomain.com/ad/<hash>`.
 - **URL list:** Shows all created tracking URLs with full tracking URL, target URL, and UTM values. Click a tracking URL to copy it to the clipboard. The list can be filtered by UTM dimensions.
 - **Row actions:** Trash (or Restore / Delete Permanently for trashed URLs).
 
@@ -472,6 +473,29 @@ Reporter definition:
 
 See [Adapter System](#adapter-system) for full examples and documentation.
 
+**`kntnt_ad_attr_admin_tabs`**
+
+Filters the admin page tab list. Add-on plugins can register custom tabs by adding slug → label entries. Unrecognized tab slugs dispatch to the `kntnt_ad_attr_admin_tab_{$tab}` action for rendering.
+
+```php
+add_filter( 'kntnt_ad_attr_admin_tabs', function ( array $tabs ): array {
+    $tabs['settings'] = __( 'Settings', 'my-addon' );
+    return $tabs;
+} );
+```
+
+**`kntnt_ad_attr_redirect_query_params`**
+
+Filters the merged query parameters before building the redirect URL. When a visitor clicks a tracking URL with extra query parameters (e.g. `/ad/<hash>?gclid=abc`), these are forwarded to the target page. Target URL parameters take precedence over incoming ones.
+
+```php
+add_filter( 'kntnt_ad_attr_redirect_query_params', function ( array $merged, array $target, array $incoming ): array {
+    // Prevent internal tracking parameters from leaking to the landing page.
+    unset( $merged['fbclid'], $merged['gclid'] );
+    return $merged;
+}, 10, 3 );
+```
+
 **`kntnt_ad_attr_utm_options`**
 
 Filters the predefined UTM options shown in the source and medium dropdowns when creating a tracking URL. The array contains `sources` (a map of source names to their default medium) and `mediums` (a list of available medium values). Both accept custom values typed by the user; this filter only controls the predefined suggestions.
@@ -501,6 +525,17 @@ Default:
 ```
 
 ### Actions
+
+**`kntnt_ad_attr_admin_tab_{$tab}`**
+
+Fires when the admin page renders an unrecognized tab slug. Add-on plugins that register a custom tab via `kntnt_ad_attr_admin_tabs` must hook into this action to render the tab's content.
+
+```php
+add_action( 'kntnt_ad_attr_admin_tab_settings', function (): void {
+    echo '<h2>' . esc_html__( 'Settings', 'my-addon' ) . '</h2>';
+    // Render settings form.
+} );
+```
 
 **`kntnt_ad_attr_click`**
 

@@ -51,7 +51,16 @@ This means the REST endpoint and the click handler use the same `Cookie_Manager`
 GET /wp-json/kntnt-ad-attribution/v1/search-posts?search=<search term>
 ```
 
-Internal endpoint — consumed by the admin page's page selector (select2). Searches published posts (all public post types except `kntnt_ad_attr_url`) via `WP_Query` and returns:
+Internal endpoint — consumed by the admin page's page selector (select2). Searches published posts (all public post types except `kntnt_ad_attr_url`) using a multi-strategy lookup:
+
+1. **Exact post ID** — if the search term is numeric, looks up the post directly via `get_post()`.
+2. **URL resolution** — if the search term contains `/`, strips protocol and domain, then resolves it via `url_to_postid()`.
+3. **Slug LIKE matching** — splits the cleaned search term on `/` and performs `LIKE` matching against `post_name` for each segment. Limited to 20 results.
+4. **Title search** — falls back to `WP_Query` with `s` parameter for title/content matching. Limited to fill up to 20 total results.
+
+Results are deduplicated across strategies (a post found by ID lookup won't appear again in slug or title results). Each strategy returns at most 20 results, and earlier strategies take priority.
+
+**Response:**
 
 ```json
 [

@@ -12,6 +12,7 @@ The click handler is registered on `template_redirect` — the conventional hook
 5. If CPT post_status ≠ publish → 404
 6. Resolve target URL: get_permalink( $target_post_id )
 7. If target URL not found → 404
+7b. Forward query parameters: merge incoming request params with target URL params (target wins on collision), filter via `kntnt_ad_attr_redirect_query_params`
 8. Redirect loop guard: verify that target URL does not start with /<prefix>/
 9. Bot check: if is_bot() → redirect without logging or setting cookie
 10. Log click in database (always, regardless of consent)
@@ -64,7 +65,7 @@ if ( ! $hash ) {
 
 **Flush:** Rewrite rules are flushed on activation (`flush_rewrite_rules()`) and cleared on deactivation.
 
-Query parameters (including `gclid`) are ignored in the attribution logic — they do not pass through the rewrite rule and do not affect hash matching.
+Query parameters (e.g. `gclid`, `fbclid`) are forwarded from the incoming request to the target URL (target URL parameters take precedence on collision). The merged parameters can be modified via the `kntnt_ad_attr_redirect_query_params` filter. Query parameters do not affect hash matching — the hash is extracted from the URL path via the rewrite rule, independently of the query string.
 
 ## Bot Detection
 

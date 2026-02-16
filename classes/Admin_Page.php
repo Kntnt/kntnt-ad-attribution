@@ -280,7 +280,7 @@ final class Admin_Page {
 		match ( $tab ) {
 			'urls'      => $this->render_urls_tab( $action ),
 			'campaigns' => $this->render_campaigns_tab(),
-			default     => do_action( "kntnt_ad_attr_admin_tab_{$tab}" ),
+			default     => do_action( "kntnt_ad_attr_admin_tab_{$tab}" ), /** @since 1.3.0 */
 		};
 
 		echo '</div>';
@@ -343,6 +343,7 @@ final class Admin_Page {
 	 * @since 1.0.0
 	 */
 	private function render_tabs( string $active_tab ): void {
+		/** @since 1.3.0 */
 		$tabs = apply_filters( 'kntnt_ad_attr_admin_tabs', [
 			'urls'      => __( 'URLs', 'kntnt-ad-attr' ),
 			'campaigns' => __( 'Campaigns', 'kntnt-ad-attr' ),
