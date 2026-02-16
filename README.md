@@ -32,6 +32,7 @@ The plugin does not hardcode integrations with any specific consent management o
 - **Bot detection** — filters out known bots via User-Agent matching and `robots.txt` rules.
 - **Two redirect methods** — 302 redirect (default) or JavaScript redirect via filter, providing flexibility for different ITP mitigation strategies.
 * **Companion plugin hooks** — fires `kntnt_ad_attr_click` on every non-bot click with hash, target URL, campaign data, and access to URL parameters (gclid, fbclid, etc.). Companion plugins can capture platform-specific data and implement server-side API integrations without modifying the core plugin.
+- **Adapter infrastructure for add-ons** — a built-in adapter system lets add-on plugins or code snippets register click-ID capturers (for `gclid`, `fbclid`, `msclkid`, etc.) and conversion reporters (for Google Ads, Meta, Matomo, GA4, etc.). The core captures click IDs and processes a report queue; adapters define what to capture and where to report. If no adapters are registered, the plugin behaves identically to previous versions.
 
 ### The Problem
 
@@ -69,7 +70,7 @@ Unlike Enhanced Conversions and similar features, the plugin never sends persona
 ### Limitations
 
 - **ITP still applies.** Safari may cap the cookie lifetime to 7 days when the visitor arrives from a classified tracking domain (such as Google). Conversions after that window are lost. A JavaScript redirect method (configurable via filter) may improve this in some cases, but there are no guarantees.
-- **No built-in feedback to ad platforms.** The plugin provides internal statistics only and does not include integrations with any ad platform's API. However, the `kntnt_ad_attr_click` and `kntnt_ad_attr_conversion_recorded` hooks allow companion plugins to implement server-side conversion reporting to any ad platform.
+- **No built-in feedback to ad platforms.** The core plugin provides internal statistics only and does not include integrations with any external API. However, the adapter system allows add-on plugins to register click-ID capturers and conversion reporters for any ad platform or analytics tool. See [Adapter System](#adapter-system) for details.
 - **Cookies can be cleared.** If the visitor clears their cookies or uses a private/incognito window for the return visit, the attribution link is broken.
 - **Cross-device tracking is not supported.** A visitor who clicks an ad on their phone but converts on their laptop will not be attributed.
 - **Impressions are not measured.** Ad views occur on the ad platform and never reach the server.
@@ -81,7 +82,7 @@ Despite these limitations, server-side first-party cookie tracking captures sign
 
 This plugin is designed with data minimization and data locality as core principles. Here is how it relates to common privacy concerns:
 
-**No personal data leaves your server.** Unlike Google's Enhanced Conversions or Meta's Advanced Matching, this plugin never transmits personal data — hashed or otherwise — to any third party. All attribution data stays in your WordPress database on your own infrastructure. This is the plugin's fundamental privacy advantage.
+**No personal data leaves your server.** Unlike Google's Enhanced Conversions or Meta's Advanced Matching, this plugin never transmits personal data — hashed or otherwise — to any third party. All attribution data stays in your WordPress database on your own infrastructure. This is the plugin's fundamental privacy advantage. Note: if you install add-on plugins that report conversions to external services (such as Google Ads or Matomo), those add-ons will transmit data to external servers. The core plugin itself never does — it only provides the infrastructure that add-ons use.
 
 **No third-country transfer problem.** Because no data is sent to external servers, there is no dependency on the EU-US Data Privacy Framework, Standard Contractual Clauses, or any other international data transfer mechanism. If the Data Privacy Framework is invalidated by a future court ruling (as Safe Harbor and Privacy Shield were before it), this plugin is unaffected.
 
@@ -445,6 +446,32 @@ add_filter( 'kntnt_ad_attr_is_bot', function ( bool $is_bot ): bool {
 } );
 ```
 
+**`kntnt_ad_attr_click_id_capturers`**
+
+Registers platform-specific GET parameters to capture at ad click time. Return an associative array mapping platform identifiers to GET parameter names. Default: `[]`.
+
+```php
+add_filter( 'kntnt_ad_attr_click_id_capturers', function ( array $capturers ): array {
+    $capturers['google_ads'] = 'gclid';
+    $capturers['meta']       = 'fbclid';
+    return $capturers;
+} );
+```
+
+**`kntnt_ad_attr_conversion_reporters`**
+
+Registers conversion reporters for async processing. Return an associative array mapping reporter IDs to reporter definitions. Default: `[]`.
+
+Reporter definition:
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `label` | `string` | Name for logging and admin UI. |
+| `enqueue` | `callable` | Called at conversion time. Signature: `( array $attributions, array $click_ids, array $campaigns, array $context ) → array` of payloads. |
+| `process` | `callable` | Called by queue processor. Signature: `( array $payload ) → bool`. |
+
+See [Adapter System](#adapter-system) for full examples and documentation.
+
 **`kntnt_ad_attr_utm_options`**
 
 Filters the predefined UTM options shown in the source and medium dropdowns when creating a tracking URL. The array contains `sources` (a map of source names to their default medium) and `mediums` (a list of available medium values). Both accept custom values typed by the user; this filter only controls the predefined suggestions.
@@ -526,6 +553,65 @@ add_action( 'kntnt_ad_attr_conversion_recorded', function ( array $attributions,
 }, 10, 2 );
 ```
 
+## Adapter System
+
+The adapter system lets add-on plugins (or code snippets) extend the core with platform-specific functionality without modifying the core plugin. It has two components:
+
+### Click-ID Capturers
+
+A *click-ID capturer* tells the core which URL parameter to capture at ad click time. For example, Google Ads appends `gclid` to the landing page URL, Meta appends `fbclid`, and Microsoft Ads appends `msclkid`. Register a capturer via the `kntnt_ad_attr_click_id_capturers` filter:
+
+```php
+add_filter( 'kntnt_ad_attr_click_id_capturers', function ( array $capturers ): array {
+    $capturers['google_ads'] = 'gclid';
+    return $capturers;
+} );
+```
+
+The core handles sanitization, validation, and storage. Click IDs are stored in a dedicated database table and associated with the tracking URL hash.
+
+### Conversion Reporters
+
+A *conversion reporter* tells the core how to report a conversion to an external service. Each reporter defines two callbacks:
+
+- **`enqueue`** — called synchronously at conversion time. Receives attribution data, click IDs, campaign data, and context. Returns an array of payloads to be queued for async processing.
+- **`process`** — called asynchronously by the queue processor. Receives a single payload and performs the actual API call. Returns `true` on success, `false` on failure.
+
+```php
+add_filter( 'kntnt_ad_attr_conversion_reporters', function ( array $reporters ): array {
+    $reporters['my_platform'] = [
+        'label'   => 'My Platform',
+        'enqueue' => function ( array $attributions, array $click_ids, array $campaigns, array $context ): array {
+            // Build payloads for each attributed hash that has a click ID.
+            $payloads = [];
+            foreach ( $attributions as $hash => $value ) {
+                $click_id = $click_ids[ $hash ]['my_platform'] ?? '';
+                if ( $click_id !== '' ) {
+                    $payloads[] = [
+                        'click_id'  => $click_id,
+                        'value'     => $value,
+                        'timestamp' => $context['timestamp'],
+                    ];
+                }
+            }
+            return $payloads;
+        },
+        'process' => function ( array $payload ): bool {
+            // Make HTTP request to external API.
+            $response = wp_remote_post( 'https://api.example.com/conversions', [
+                'body' => wp_json_encode( $payload ),
+            ] );
+            return ! is_wp_error( $response ) && wp_remote_retrieve_response_code( $response ) === 200;
+        },
+    ];
+    return $reporters;
+} );
+```
+
+The core handles infrastructure: storage, queueing, retry logic (max 3 attempts), and daily cleanup. The adapter handles only the platform-specific logic. A simple click-ID capturer requires ~5 lines of PHP. A full HTTP-based reporter requires ~60 lines. Integrations that require Composer dependencies (e.g. Google Ads API client library) should be implemented as separate plugins.
+
+If no adapters are registered, the plugin behaves identically to previous versions — the adapter infrastructure adds zero overhead.
+
 ## Frequently Asked Questions
 
 **How does this compare to Google's Enhanced Conversions?**
@@ -542,7 +628,11 @@ All of them. The plugin is platform-agnostic. It works with any ad platform that
 
 **Does this plugin send conversion data back to the ad platform?**
 
-Not by itself. The core plugin provides internal attribution statistics only and does not communicate with any ad platform's API. However, companion plugins can hook into `kntnt_ad_attr_click` (to capture parameters like `gclid`) and `kntnt_ad_attr_conversion_recorded` (to report conversions) to implement server-side API integrations with Google Ads, Meta, or any other platform.
+Not by itself. The core plugin provides internal attribution statistics only and never communicates with external APIs. However, the adapter system lets add-on plugins register conversion reporters that report to any ad platform (Google Ads, Meta, Microsoft, etc.) or analytics tool (Matomo, GA4, etc.). The core handles click-ID capture, queueing, and retry logic; the add-on handles the actual API call. See [Adapter System](#adapter-system) for details.
+
+**What is the adapter system?**
+
+The adapter system is a set of filter hooks that let add-on plugins (or code snippets) extend the core with platform-specific functionality. A *click-ID capturer* tells the core which URL parameter to capture (e.g. `gclid` for Google Ads), and a *conversion reporter* tells the core how to report a conversion to an external service. The core handles storage, queueing, retry logic, and cleanup — the adapter handles only the platform-specific logic. If no adapters are registered, the plugin behaves identically to previous versions.
 
 **What happens with Safari's Intelligent Tracking Prevention (ITP)?**
 

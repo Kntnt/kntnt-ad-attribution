@@ -27,8 +27,10 @@ if ( isset( $wp_roles ) ) {
 	}
 }
 
-// Drop the statistics table.
+// Drop custom tables.
 $wpdb->query( "DROP TABLE IF EXISTS {$wpdb->prefix}kntnt_ad_attr_stats" );
+$wpdb->query( "DROP TABLE IF EXISTS {$wpdb->prefix}kntnt_ad_attr_click_ids" );
+$wpdb->query( "DROP TABLE IF EXISTS {$wpdb->prefix}kntnt_ad_attr_queue" );
 
 // Delete all tracking URL posts and their meta.
 $post_ids = $wpdb->get_col(
@@ -52,5 +54,6 @@ $wpdb->query(
 	),
 );
 
-// Remove scheduled cron job.
+// Remove scheduled cron jobs.
 wp_clear_scheduled_hook( 'kntnt_ad_attr_daily_cleanup' );
+wp_clear_scheduled_hook( 'kntnt_ad_attr_process_queue' );

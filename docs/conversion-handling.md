@@ -15,6 +15,9 @@ Conversions are triggered via the action hook `kntnt_ad_attr_conversion` from th
 8. Write fractional conversions to the database (in a transaction)
 9. Set/update the _ad_last_conv cookie
 10. Trigger kntnt_ad_attr_conversion_recorded with attributions and context (timestamp, IP, user-agent)
+11. Look up click IDs and campaign data for attributed hashes
+12. Call registered reporters' enqueue callbacks, insert payloads into queue
+13. Schedule queue processing
 ```
 
 ## Deduplication
@@ -63,3 +66,27 @@ foreach ( $attributions as $hash => $value ) {
 
 $wpdb->query( 'COMMIT' );
 ```
+
+## Conversion Reporting
+
+After the `kntnt_ad_attr_conversion_recorded` action fires, the handler checks for registered reporters via `apply_filters('kntnt_ad_attr_conversion_reporters', [])`. If reporters are registered:
+
+1. **Look up click IDs** — calls `Click_ID_Store::get_for_hashes()` to retrieve platform-specific click IDs for all attributed hashes.
+2. **Look up campaign data** — calls `get_campaign_data()` to retrieve UTM parameters for all attributed hashes via a single JOIN query.
+3. **Build context** — assembles timestamp, IP, user-agent, and page URL.
+4. **Call each reporter's `enqueue` callback** — passes `$attributions`, `$click_ids`, `$campaigns`, and `$context`. Each reporter returns an array of payloads.
+5. **Enqueue payloads** — each payload is JSON-encoded and inserted into the `kntnt_ad_attr_queue` table with `status = 'pending'`.
+6. **Schedule processing** — calls `Queue_Processor::schedule()` to trigger a cron event.
+
+If no reporters are registered (default), the filter returns `[]`, the `! empty()` check exits immediately, and no database queries are made against the click_ids or queue tables.
+
+## Queue Processing
+
+Queue jobs are processed by `Queue_Processor::process()`, triggered by the `kntnt_ad_attr_process_queue` cron hook.
+
+1. Fetches reporters via `kntnt_ad_attr_conversion_reporters` filter.
+2. Dequeues up to 10 pending jobs (atomically updated to `processing` status).
+3. For each job, finds the matching reporter by `$item->reporter` key and calls its `process` callback with the decoded payload.
+4. On success (`true`): marks the job as `done`.
+5. On failure (`false` or exception): increments the attempt counter. After 3 failed attempts, the job is marked as `failed` with the error message. Otherwise, it returns to `pending` for retry.
+6. If pending jobs remain after processing, schedules another cron run.

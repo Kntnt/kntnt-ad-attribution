@@ -106,6 +106,44 @@ ON DUPLICATE KEY UPDATE conversions = conversions + %f
 
 Dates are stored in UTC using `gmdate( 'Y-m-d' )`.
 
+### Click IDs — Custom Table
+
+Platform-specific click IDs (e.g. `gclid`, `fbclid`, `msclkid`) are captured by registered adapters via the `kntnt_ad_attr_click_id_capturers` filter and stored in `kntnt_ad_attr_click_ids`. Each hash/platform combination has exactly one row.
+
+```sql
+CREATE TABLE {prefix}kntnt_ad_attr_click_ids (
+    hash       CHAR(64)     NOT NULL,
+    platform   VARCHAR(50)  NOT NULL,
+    click_id   VARCHAR(255) NOT NULL,
+    clicked_at DATETIME     NOT NULL,
+    PRIMARY KEY (hash, platform),
+    INDEX idx_clicked_at (clicked_at)
+) {charset}
+```
+
+The composite PK `(hash, platform)` allows a single click to carry IDs from multiple platforms (e.g. a Google Ads ad that also has `fbclid` in the URL). `INSERT … ON DUPLICATE KEY UPDATE` is used for atomic upserts. Rows older than 120 days are cleaned up by the daily cron job.
+
+### Report Queue — Custom Table
+
+The `kntnt_ad_attr_queue` table provides an asynchronous job queue for conversion reporting via registered reporters. Jobs are enqueued during conversion handling and processed by `Queue_Processor` via a cron event.
+
+```sql
+CREATE TABLE {prefix}kntnt_ad_attr_queue (
+    id            BIGINT UNSIGNED  NOT NULL AUTO_INCREMENT,
+    reporter      VARCHAR(50)      NOT NULL,
+    payload       TEXT             NOT NULL,
+    status        VARCHAR(20)      NOT NULL DEFAULT 'pending',
+    attempts      TINYINT UNSIGNED NOT NULL DEFAULT 0,
+    created_at    DATETIME         NOT NULL,
+    processed_at  DATETIME         NULL,
+    error_message TEXT             NULL,
+    PRIMARY KEY (id),
+    INDEX idx_status (status, created_at)
+) {charset}
+```
+
+Status transitions: `pending` → `processing` → `done` | `failed`. `status` is `VARCHAR(20)` instead of `ENUM` to avoid schema changes if new statuses are added. Jobs are retried up to 3 times before being marked as `failed`. Completed jobs are cleaned up after 30 days, failed jobs after 90 days.
+
 ### Target URL — Dynamic Resolving
 
 The target URL is stored as a WordPress post ID in meta (`_target_post_id`), not as a static URL string. On redirect, the URL is resolved dynamically:

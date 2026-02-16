@@ -51,18 +51,28 @@ final class Click_Handler {
 	private readonly Bot_Detector $bot_detector;
 
 	/**
+	 * Click ID store for capturing platform-specific click IDs.
+	 *
+	 * @var Click_ID_Store
+	 * @since 1.2.0
+	 */
+	private readonly Click_ID_Store $click_id_store;
+
+	/**
 	 * Initializes the click handler with its dependencies.
 	 *
-	 * @param Cookie_Manager $cookie_manager Cookie read/write operations.
-	 * @param Consent        $consent        Consent state resolution.
-	 * @param Bot_Detector   $bot_detector   Bot traffic detection.
+	 * @param Cookie_Manager $cookie_manager  Cookie read/write operations.
+	 * @param Consent        $consent         Consent state resolution.
+	 * @param Bot_Detector   $bot_detector    Bot traffic detection.
+	 * @param Click_ID_Store $click_id_store  Platform-specific click ID storage.
 	 *
 	 * @since 1.0.0
 	 */
-	public function __construct( Cookie_Manager $cookie_manager, Consent $consent, Bot_Detector $bot_detector ) {
+	public function __construct( Cookie_Manager $cookie_manager, Consent $consent, Bot_Detector $bot_detector, Click_ID_Store $click_id_store ) {
 		$this->cookie_manager = $cookie_manager;
 		$this->consent        = $consent;
 		$this->bot_detector   = $bot_detector;
+		$this->click_id_store = $click_id_store;
 	}
 
 	/**
@@ -187,6 +197,16 @@ final class Click_Handler {
 			$hash,
 			$date,
 		) );
+
+		// Capture platform-specific click IDs via registered capturers.
+		// Returns early with no overhead if no capturers are registered.
+		$capturers = apply_filters( 'kntnt_ad_attr_click_id_capturers', [] );
+		foreach ( $capturers as $platform => $parameter ) {
+			$value = sanitize_text_field( $_GET[ $parameter ] ?? '' );
+			if ( $value !== '' && strlen( $value ) <= 255 ) {
+				$this->click_id_store->store( $hash, (string) $platform, $value );
+			}
+		}
 
 		// Notify companion plugins about the click. Fires for all non-bot
 		// clicks regardless of consent state. Allows add-ons to capture

@@ -13,14 +13,14 @@ Transient resources are unregistered. Persistent data is preserved.
 
 **Removed:**
 
-- WP-Cron job (`wp_clear_scheduled_hook`)
+- WP-Cron jobs: `kntnt_ad_attr_daily_cleanup` and `kntnt_ad_attr_process_queue`
 - Rewrite rules (`flush_rewrite_rules`)
 - Transients
 
 **Preserved:**
 
 - Capability (`kntnt_ad_attr`)
-- Custom table (`kntnt_ad_attr_stats`)
+- Custom tables (`kntnt_ad_attr_stats`, `kntnt_ad_attr_click_ids`, `kntnt_ad_attr_queue`)
 - CPT posts (`kntnt_ad_attr_url`) and meta
 - Options (`kntnt_ad_attr_version`)
 
@@ -29,10 +29,11 @@ Transient resources are unregistered. Persistent data is preserved.
 Complete removal of all data:
 
 - Remove capability `kntnt_ad_attr` from all roles.
-- Drop the table `{prefix}kntnt_ad_attr_stats`.
+- Drop tables: `kntnt_ad_attr_stats`, `kntnt_ad_attr_click_ids`, `kntnt_ad_attr_queue`.
 - Delete all posts with post type `kntnt_ad_attr_url` and associated meta.
 - Delete option `kntnt_ad_attr_version`.
 - Delete any transients.
+- Clear cron hooks: `kntnt_ad_attr_daily_cleanup`, `kntnt_ad_attr_process_queue`.
 
 ## Migration
 
@@ -42,9 +43,9 @@ Migration files are located in the `migrations/` directory, named after the vers
 
 ```
 migrations/
-├── 1.0.0.php    ← initial: creates the table
-├── 1.2.0.php    ← adds a column
-└── 1.5.0.php    ← changes an index
+├── 1.0.0.php    ← initial: creates the stats table
+├── 1.1.0.php    ← no schema changes (companion hooks)
+└── 1.2.0.php    ← click ID and queue tables
 ```
 
 Each file returns a callable:
@@ -61,6 +62,8 @@ Hook: `kntnt_ad_attr_daily_cleanup`. Performs:
 
 1. Cleans up rows in `kntnt_ad_attr_stats` whose hash does not have a corresponding CPT post.
 2. Checks if tracking URLs point to pages that no longer exist. If so: changes post status to `draft` and stores an admin notice.
+3. Cleans up click IDs older than 120 days from `kntnt_ad_attr_click_ids`.
+4. Cleans up queue jobs: `done` older than 30 days, `failed` older than 90 days from `kntnt_ad_attr_queue`.
 
 ## Warning on Target Page Deletion
 

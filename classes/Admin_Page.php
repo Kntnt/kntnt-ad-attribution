@@ -25,6 +25,14 @@ namespace Kntnt\Ad_Attribution;
 final class Admin_Page {
 
 	/**
+	 * Queue for displaying status information in the admin UI.
+	 *
+	 * @var Queue
+	 * @since 1.2.0
+	 */
+	private readonly Queue $queue;
+
+	/**
 	 * The hook suffix returned by add_management_page().
 	 *
 	 * Used for targeting admin_enqueue_scripts and load-{$hook_suffix}.
@@ -33,6 +41,17 @@ final class Admin_Page {
 	 * @since 1.0.0
 	 */
 	private string $hook_suffix = '';
+
+	/**
+	 * Initializes the admin page with its dependencies.
+	 *
+	 * @param Queue $queue Async job queue for status display.
+	 *
+	 * @since 1.2.0
+	 */
+	public function __construct( Queue $queue ) {
+		$this->queue = $queue;
+	}
 
 	/**
 	 * Registers WordPress hooks for the admin page.
@@ -264,6 +283,53 @@ final class Admin_Page {
 		};
 
 		echo '</div>';
+
+		// Show queue status only when reporters are registered.
+		$reporters = apply_filters( 'kntnt_ad_attr_conversion_reporters', [] );
+		if ( ! empty( $reporters ) ) {
+			$this->render_queue_status();
+		}
+
+		echo '</div>';
+	}
+
+	/**
+	 * Renders the queue status section in the admin page.
+	 *
+	 * Displays the number of pending and failed jobs, and the last error
+	 * message if any. Only called when reporters are registered.
+	 *
+	 * @return void
+	 * @since 1.2.0
+	 */
+	private function render_queue_status(): void {
+		$status = $this->queue->get_status();
+
+		echo '<div class="kntnt-ad-attr-queue-status">';
+		echo '<h3>' . esc_html__( 'Report Queue', 'kntnt-ad-attr' ) . '</h3>';
+
+		echo '<table class="widefat striped" style="max-width:500px">';
+		echo '<tbody>';
+
+		echo '<tr>';
+		echo '<td>' . esc_html__( 'Pending jobs', 'kntnt-ad-attr' ) . '</td>';
+		echo '<td>' . esc_html( (string) $status['pending'] ) . '</td>';
+		echo '</tr>';
+
+		echo '<tr>';
+		echo '<td>' . esc_html__( 'Failed jobs', 'kntnt-ad-attr' ) . '</td>';
+		echo '<td>' . esc_html( (string) $status['failed'] ) . '</td>';
+		echo '</tr>';
+
+		if ( $status['last_error'] !== null ) {
+			echo '<tr>';
+			echo '<td>' . esc_html__( 'Last error', 'kntnt-ad-attr' ) . '</td>';
+			echo '<td>' . esc_html( $status['last_error'] ) . '</td>';
+			echo '</tr>';
+		}
+
+		echo '</tbody>';
+		echo '</table>';
 		echo '</div>';
 	}
 

@@ -15,10 +15,21 @@ The click handler is registered on `template_redirect` — the conventional hook
 8. Redirect loop guard: verify that target URL does not start with /<prefix>/
 9. Bot check: if is_bot() → redirect without logging or setting cookie
 10. Log click in database (always, regardless of consent)
-10b. Fire kntnt_ad_attr_click action (hash, target URL, campaign data) — allows companion plugins to capture platform-specific parameters (e.g. gclid)
+10b. Capture platform-specific click IDs via registered kntnt_ad_attr_click_id_capturers filter
+10c. Fire kntnt_ad_attr_click action (hash, target URL, campaign data) — allows companion plugins to capture platform-specific parameters (e.g. gclid)
 11. Check consent → three outcomes (see Consent below)
 12. Redirect to target URL
 ```
+
+## Click ID Capture
+
+Platform-specific click IDs (e.g. `gclid`, `fbclid`, `msclkid`) are captured via the `kntnt_ad_attr_click_id_capturers` filter, which returns an array mapping platform identifiers to GET parameter names.
+
+If no capturers are registered (default), the filter returns `[]` and the foreach loop iterates zero times — no extra processing occurs.
+
+Each registered capturer maps a platform to a GET parameter. The core iterates the capturers, sanitizes the parameter value with `sanitize_text_field()`, validates it is non-empty and at most 255 characters, and stores it via `Click_ID_Store::store()`.
+
+Click ID capture happens **before** the `kntnt_ad_attr_click` action fires, so click IDs are already stored when companion plugins receive the click notification. Click ID capture occurs independently of consent — like click counting, it does not set any cookies or track individuals.
 
 ## URL Matching
 

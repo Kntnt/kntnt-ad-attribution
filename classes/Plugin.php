@@ -122,6 +122,30 @@ final class Plugin {
 	public readonly Cron $cron;
 
 	/**
+	 * Click ID store component instance.
+	 *
+	 * @var Click_ID_Store
+	 * @since 1.2.0
+	 */
+	public readonly Click_ID_Store $click_id_store;
+
+	/**
+	 * Queue component instance.
+	 *
+	 * @var Queue
+	 * @since 1.2.0
+	 */
+	public readonly Queue $queue;
+
+	/**
+	 * Queue processor component instance.
+	 *
+	 * @var Queue_Processor
+	 * @since 1.2.0
+	 */
+	public readonly Queue_Processor $queue_processor;
+
+	/**
 	 * Cached plugin metadata from header.
 	 *
 	 * @var array|null
@@ -161,10 +185,13 @@ final class Plugin {
 		$this->cookie_manager       = new Cookie_Manager();
 		$this->consent              = new Consent();
 		$this->bot_detector         = new Bot_Detector();
-		$this->click_handler        = new Click_Handler( $this->cookie_manager, $this->consent, $this->bot_detector );
-		$this->conversion_handler   = new Conversion_Handler( $this->cookie_manager );
-		$this->cron                 = new Cron();
-		$this->admin_page           = new Admin_Page();
+		$this->click_id_store       = new Click_ID_Store();
+		$this->queue                = new Queue();
+		$this->queue_processor      = new Queue_Processor( $this->queue );
+		$this->click_handler        = new Click_Handler( $this->cookie_manager, $this->consent, $this->bot_detector, $this->click_id_store );
+		$this->conversion_handler   = new Conversion_Handler( $this->cookie_manager, $this->click_id_store, $this->queue, $this->queue_processor );
+		$this->cron                 = new Cron( $this->click_id_store, $this->queue );
+		$this->admin_page           = new Admin_Page( $this->queue );
 		$this->rest_endpoint        = new Rest_Endpoint( $this->cookie_manager, $this->consent );
 
 		// Register WordPress hooks.
@@ -381,6 +408,9 @@ final class Plugin {
 		// Register cron callbacks and target-trash warning.
 		$this->cron->register();
 
+		// Register queue processor cron callback.
+		add_action( 'kntnt_ad_attr_process_queue', [ $this->queue_processor, 'process' ] );
+
 		// Register bot detection filters and robots.txt rule.
 		$this->bot_detector->register();
 
@@ -466,8 +496,9 @@ final class Plugin {
 	 */
 	public static function deactivate(): void {
 
-		// Remove scheduled cron job.
+		// Remove scheduled cron jobs.
 		wp_clear_scheduled_hook( 'kntnt_ad_attr_daily_cleanup' );
+		wp_clear_scheduled_hook( 'kntnt_ad_attr_process_queue' );
 
 		// Remove plugin transients.
 		global $wpdb;

@@ -25,6 +25,35 @@ namespace Kntnt\Ad_Attribution;
 final class Cron {
 
 	/**
+	 * Click ID store for cleanup of expired click IDs.
+	 *
+	 * @var Click_ID_Store
+	 * @since 1.2.0
+	 */
+	private readonly Click_ID_Store $click_id_store;
+
+	/**
+	 * Queue for cleanup of old completed and failed jobs.
+	 *
+	 * @var Queue
+	 * @since 1.2.0
+	 */
+	private readonly Queue $queue;
+
+	/**
+	 * Initializes the cron handler with its dependencies.
+	 *
+	 * @param Click_ID_Store $click_id_store Platform-specific click ID storage.
+	 * @param Queue          $queue          Async job queue.
+	 *
+	 * @since 1.2.0
+	 */
+	public function __construct( Click_ID_Store $click_id_store, Queue $queue ) {
+		$this->click_id_store = $click_id_store;
+		$this->queue          = $queue;
+	}
+
+	/**
 	 * Registers WordPress hooks for cron and admin notices.
 	 *
 	 * @return void
@@ -48,6 +77,10 @@ final class Cron {
 	public function run_daily_cleanup(): void {
 		$this->delete_orphaned_stats();
 		$this->draft_orphaned_urls();
+
+		// Clean up adapter infrastructure tables.
+		$this->click_id_store->cleanup( 120 );
+		$this->queue->cleanup( 30, 90 );
 	}
 
 	/**

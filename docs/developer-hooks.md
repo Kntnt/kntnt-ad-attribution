@@ -51,6 +51,76 @@ Transport mechanism for undefined consent: `'cookie'` (default) or `'fragment'`.
 
 Bot detection. Default: `false`. The plugin registers its own callback with User-Agent matching. The developer can supplement or replace it.
 
+**`kntnt_ad_attr_click_id_capturers`**
+
+Registers platform-specific GET parameters that the core captures and stores at ad click time. Return an associative array mapping platform identifiers to GET parameter names. Default: `[]` (no click IDs captured).
+
+```php
+add_filter( 'kntnt_ad_attr_click_id_capturers', function ( array $capturers ): array {
+    $capturers['google_ads'] = 'gclid';
+    return $capturers;
+} );
+```
+
+Multiple capturers can be registered by different plugins:
+
+```php
+add_filter( 'kntnt_ad_attr_click_id_capturers', function ( array $capturers ): array {
+    $capturers['meta'] = 'fbclid';
+    return $capturers;
+} );
+```
+
+The core iterates the returned array, reads each GET parameter, sanitizes it with `sanitize_text_field()`, validates length (max 255), and stores it in the `kntnt_ad_attr_click_ids` table. Capture happens before the `kntnt_ad_attr_click` action fires.
+
+**`kntnt_ad_attr_conversion_reporters`**
+
+Registers conversion reporters whose `enqueue` callbacks are called at conversion time and whose `process` callbacks are called by the queue processor. Default: `[]` (no reporters).
+
+Each reporter definition is an associative array with three keys:
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `label` | `string` | Name for logging and admin UI. |
+| `enqueue` | `callable` | Called at conversion time. Signature: `( array $attributions, array $click_ids, array $campaigns, array $context ) → array`. Returns array of payloads. |
+| `process` | `callable` | Called by queue processor. Signature: `( array $payload ) → bool`. Returns `true` on success, `false` on failure. |
+
+`enqueue` callback parameters:
+
+- `$attributions`: `[ hash => fractional_value, … ]` — sums to 1.0.
+- `$click_ids`: `[ hash => [ platform => click_id, … ], … ]` — may be empty for a given hash.
+- `$campaigns`: `[ hash => [ 'utm_source' => …, 'utm_medium' => …, 'utm_campaign' => …, 'utm_content' => …, 'utm_term' => … ], … ]`.
+- `$context`: `[ 'timestamp' => ISO-8601, 'ip' => string, 'user_agent' => string, 'page_url' => string ]`.
+
+```php
+add_filter( 'kntnt_ad_attr_conversion_reporters', function ( array $reporters ): array {
+    $reporters['my_platform'] = [
+        'label'   => 'My Platform',
+        'enqueue' => function ( array $attributions, array $click_ids, array $campaigns, array $context ): array {
+            $payloads = [];
+            foreach ( $attributions as $hash => $value ) {
+                $click_id = $click_ids[ $hash ]['my_platform'] ?? '';
+                if ( $click_id === '' ) {
+                    continue;
+                }
+                $payloads[] = [
+                    'click_id'    => $click_id,
+                    'value'       => $value,
+                    'campaign'    => $campaigns[ $hash ]['utm_campaign'] ?? '',
+                    'timestamp'   => $context['timestamp'],
+                ];
+            }
+            return $payloads;
+        },
+        'process' => function ( array $payload ): bool {
+            // Call external API with $payload.
+            return true;
+        },
+    ];
+    return $reporters;
+} );
+```
+
 ## Actions
 
 **`kntnt_ad_attr_click`**

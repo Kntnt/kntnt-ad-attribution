@@ -34,14 +34,44 @@ final class Conversion_Handler {
 	private readonly Cookie_Manager $cookie_manager;
 
 	/**
+	 * Click ID store for retrieving platform-specific click IDs.
+	 *
+	 * @var Click_ID_Store
+	 * @since 1.2.0
+	 */
+	private readonly Click_ID_Store $click_id_store;
+
+	/**
+	 * Queue for enqueuing conversion report jobs.
+	 *
+	 * @var Queue
+	 * @since 1.2.0
+	 */
+	private readonly Queue $queue;
+
+	/**
+	 * Queue processor for scheduling job processing.
+	 *
+	 * @var Queue_Processor
+	 * @since 1.2.0
+	 */
+	private readonly Queue_Processor $queue_processor;
+
+	/**
 	 * Initializes the conversion handler with its dependencies.
 	 *
-	 * @param Cookie_Manager $cookie_manager Cookie read operations.
+	 * @param Cookie_Manager  $cookie_manager  Cookie read operations.
+	 * @param Click_ID_Store  $click_id_store  Platform-specific click ID retrieval.
+	 * @param Queue           $queue           Async job queue.
+	 * @param Queue_Processor $queue_processor Queue processing scheduler.
 	 *
 	 * @since 1.0.0
 	 */
-	public function __construct( Cookie_Manager $cookie_manager ) {
-		$this->cookie_manager = $cookie_manager;
+	public function __construct( Cookie_Manager $cookie_manager, Click_ID_Store $click_id_store, Queue $queue, Queue_Processor $queue_processor ) {
+		$this->cookie_manager  = $cookie_manager;
+		$this->click_id_store  = $click_id_store;
+		$this->queue           = $queue;
+		$this->queue_processor = $queue_processor;
 	}
 
 	/**
@@ -141,6 +171,35 @@ final class Conversion_Handler {
 			'ip'         => $_SERVER['REMOTE_ADDR'] ?? '',
 			'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
 		] );
+
+		// Step 11: Enqueue conversion reports for registered reporters.
+		$reporters = apply_filters( 'kntnt_ad_attr_conversion_reporters', [] );
+		if ( ! empty( $reporters ) ) {
+
+			// Look up click IDs and campaign data for attributed hashes.
+			$hashes    = array_keys( $attributions );
+			$click_ids = $this->click_id_store->get_for_hashes( $hashes );
+			$campaigns = $this->get_campaign_data( $hashes );
+
+			$context = [
+				'timestamp'  => gmdate( 'c' ),
+				'ip'         => $_SERVER['REMOTE_ADDR'] ?? '',
+				'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
+				'page_url'   => home_url( $_SERVER['REQUEST_URI'] ?? '' ),
+			];
+
+			foreach ( $reporters as $reporter_id => $reporter ) {
+				if ( ! is_callable( $reporter['enqueue'] ?? null ) ) {
+					continue;
+				}
+				$payloads = ( $reporter['enqueue'] )( $attributions, $click_ids, $campaigns, $context );
+				foreach ( (array) $payloads as $payload ) {
+					$this->queue->enqueue( (string) $reporter_id, $payload );
+				}
+			}
+
+			$this->queue_processor->schedule();
+		}
 	}
 
 	/**
@@ -158,6 +217,51 @@ final class Conversion_Handler {
 		$valid_hashes = $this->get_valid_hashes( array_keys( $entries ) );
 
 		return array_intersect_key( $entries, array_flip( $valid_hashes ) );
+	}
+
+	/**
+	 * Retrieves campaign data (UTM parameters) for an array of hashes.
+	 *
+	 * Performs a single JOIN query against wp_postmeta to fetch all UTM
+	 * meta values per hash efficiently.
+	 *
+	 * @param string[] $hashes SHA-256 hashes.
+	 *
+	 * @return array<string, array> Hash => ['utm_source' => …, 'utm_medium' => …, …].
+	 * @since 1.2.0
+	 */
+	private function get_campaign_data( array $hashes ): array {
+		global $wpdb;
+
+		if ( empty( $hashes ) ) {
+			return [];
+		}
+
+		$placeholders = implode( ',', array_fill( 0, count( $hashes ), '%s' ) );
+
+		$rows = $wpdb->get_results( $wpdb->prepare(
+			"SELECT pm_hash.meta_value AS hash,
+			        pm_utm.meta_key,
+			        pm_utm.meta_value
+			 FROM {$wpdb->postmeta} pm_hash
+			 JOIN {$wpdb->posts} p ON p.ID = pm_hash.post_id
+			 JOIN {$wpdb->postmeta} pm_utm ON pm_utm.post_id = p.ID
+			    AND pm_utm.meta_key IN ('_utm_source', '_utm_medium', '_utm_campaign', '_utm_content', '_utm_term')
+			 WHERE pm_hash.meta_key = '_hash'
+			   AND pm_hash.meta_value IN ({$placeholders})
+			   AND p.post_type = %s
+			   AND p.post_status = 'publish'",
+			...array_merge( $hashes, [ Post_Type::SLUG ] ),
+		) );
+
+		$result = [];
+		foreach ( $rows as $row ) {
+			// Strip the leading underscore from meta_key for the output.
+			$key = ltrim( $row->meta_key, '_' );
+			$result[ $row->hash ][ $key ] = $row->meta_value;
+		}
+
+		return $result;
 	}
 
 	/**

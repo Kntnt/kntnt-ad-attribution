@@ -23,9 +23,14 @@ kntnt-ad-attribution/
 │   ├── Campaign_List_Table.php   ← WP_List_Table for the Campaigns tab
 │   ├── Post_Type.php             ← CPT registration (no admin UI)
 │   ├── Csv_Exporter.php          ← CSV export handler
-│   └── Cron.php                  ← Daily cleanup job
+│   ├── Cron.php                  ← Daily cleanup job
+│   ├── Click_ID_Store.php        ← Click ID storage (v1.2.0)
+│   ├── Queue.php                 ← Async job queue (v1.2.0)
+│   └── Queue_Processor.php       ← Queue processing via cron (v1.2.0)
 ├── migrations/
-│   └── 1.0.0.php                 ← Initial table creation
+│   ├── 1.0.0.php                 ← Initial table creation
+│   ├── 1.1.0.php                 ← No schema changes (companion hooks)
+│   └── 1.2.0.php                 ← Click ID and queue tables
 ├── js/
 │   ├── pending-consent.js        ← Client-side consent/cookie script
 │   └── admin.js                  ← Admin: select2 initialization, page selector
