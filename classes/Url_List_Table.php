@@ -84,6 +84,8 @@ final class Url_List_Table extends WP_List_Table {
 			'utm_source'          => [ 'utm_source', false ],
 			'utm_medium'          => [ 'utm_medium', false ],
 			'utm_campaign'        => [ 'utm_campaign', false ],
+			'utm_content'         => [ 'utm_content', false ],
+			'utm_term'            => [ 'utm_term', false ],
 			'utm_id'              => [ 'utm_id', false ],
 			'utm_source_platform' => [ 'utm_source_platform', false ],
 		];
@@ -374,6 +376,8 @@ final class Url_List_Table extends WP_List_Table {
 			'utm_source'          => 'pm_src.meta_value',
 			'utm_medium'          => 'pm_med.meta_value',
 			'utm_campaign'        => 'pm_camp.meta_value',
+			'utm_content'         => 'pm_cont.meta_value',
+			'utm_term'            => 'pm_term.meta_value',
 			'utm_id'              => 'pm_id.meta_value',
 			'utm_source_platform' => 'pm_plat.meta_value',
 		];

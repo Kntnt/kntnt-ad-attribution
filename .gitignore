@@ -21,6 +21,9 @@ Desktop.ini
 # Claude Code
 .claude/
 
+# Tests (local only, not distributed)
+tests/
+
 # VS Code
 .vscode/
 
