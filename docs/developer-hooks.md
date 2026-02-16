@@ -51,6 +51,18 @@ Transport mechanism for undefined consent: `'cookie'` (default) or `'fragment'`.
 
 Bot detection. Default: `false`. The plugin registers its own callback with User-Agent matching. The developer can supplement or replace it.
 
+**`kntnt_ad_attr_utm_options`**
+
+Predefined UTM source and medium options for the admin form dropdowns. Sources map to a default medium that is auto-filled client-side. Filterable to add or remove options.
+
+```php
+add_filter( 'kntnt_ad_attr_utm_options', function ( array $options ): array {
+    $options['sources']['snapchat'] = 'paid_social';
+    $options['mediums'][] = 'native';
+    return $options;
+} );
+```
+
 **`kntnt_ad_attr_click_id_capturers`**
 
 Registers platform-specific GET parameters that the core captures and stores at ad click time. Return an associative array mapping platform identifiers to GET parameter names. Default: `[]` (no click IDs captured).

@@ -8,10 +8,13 @@ All machine-readable names use `kntnt-ad-attr` (hyphens) / `kntnt_ad_attr` (unde
 |---------|------|
 | Text domain | `kntnt-ad-attr` |
 | Post type | `kntnt_ad_attr_url` |
-| Custom table | `{prefix}kntnt_ad_attr_stats` |
+| Custom tables | `{prefix}kntnt_ad_attr_stats`, `{prefix}kntnt_ad_attr_click_ids`, `{prefix}kntnt_ad_attr_queue` |
 | Capability | `kntnt_ad_attr` |
-| DB version in options | `kntnt_ad_attr_version` |
+| DB version option | `kntnt_ad_attr_version` |
+| Cron hooks | `kntnt_ad_attr_daily_cleanup`, `kntnt_ad_attr_process_queue` |
+| REST base | `kntnt-ad-attr-urls` |
 | All filters/actions | `kntnt_ad_attr_*` |
+| Namespace | `Kntnt\Ad_Attribution` |
 
 ## Data Model
 

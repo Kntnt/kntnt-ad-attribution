@@ -17,7 +17,7 @@ All machine-readable names use `kntnt-ad-attr` (hyphens) / `kntnt_ad_attr` (unde
 | Custom tables | `{prefix}kntnt_ad_attr_stats`, `{prefix}kntnt_ad_attr_click_ids`, `{prefix}kntnt_ad_attr_queue` |
 | Capability | `kntnt_ad_attr` |
 | DB version option | `kntnt_ad_attr_version` |
-| Cron hook | `kntnt_ad_attr_daily_cleanup` |
+| Cron hooks | `kntnt_ad_attr_daily_cleanup`, `kntnt_ad_attr_process_queue` |
 | REST base | `kntnt-ad-attr-urls` |
 | All filters/actions | `kntnt_ad_attr_*` |
 | Namespace | `Kntnt\Ad_Attribution` |
@@ -37,10 +37,6 @@ All machine-readable names use `kntnt-ad-attr` (hyphens) / `kntnt_ad_attr` (unde
 
 **Adapter infrastructure (v1.2.0):** Click_ID_Store, Queue, and Queue_Processor are instantiated in Plugin constructor and injected into Click_Handler (Click_ID_Store), Conversion_Handler (Click_ID_Store, Queue, Queue_Processor), Cron (Click_ID_Store, Queue), and Admin_Page (Queue). Two new filters: `kntnt_ad_attr_click_id_capturers` and `kntnt_ad_attr_conversion_reporters`. Queue processing via `kntnt_ad_attr_process_queue` cron hook.
 
-## Implementation Status
-
-The plugin is being built incrementally per `IMPLEMENTATION-PLAN.md`. Increments 1–7 are complete. Increment 1: skeleton + data model + lifecycle. Increment 2: click handling (Click_Handler, Cookie_Manager, Consent, Bot_Detector). Increment 3: admin UI URLs tab (Admin_Page, Url_List_Table, Rest_Endpoint, select2 form, CSS/JS assets). Increment 4: conversion handling (Conversion_Handler — dedup, cookie parse, hash validation, fractional time-weighted attribution, transactional DB write). Increment 5: client-side script + REST set-cookie (pending-consent.js — sessionStorage, consent callback, REST POST; Rest_Endpoint set-cookie route with hash validation and cookie merge; Plugin script enqueue with localized REST URL and nonce). Increment 6: Campaigns tab + CSV export (Campaign_List_Table — aggregated stats with date/UTM filtering, sorting, pagination, totals row; Csv_Exporter — locale-aware streaming CSV with UTF-8 BOM; Admin_Page updated with tab-aware screen options, CSV routing, campaigns rendering). Increment 7: Cron, translations, final polish (Cron — daily orphaned stats cleanup, orphaned URL drafting, target-trash warning with admin notices; Updater file-level docblock; $wpdb->prepare() audit fix in Plugin::deactivate() and uninstall.php; .pot generation). Version 1.1.0 adds companion plugin support: `kntnt_ad_attr_click` action hook in Click_Handler (fires after click logging, before consent/redirect, passes hash + target URL + campaign data + exposes $_GET for gclid etc.), extended `kntnt_ad_attr_conversion_recorded` with context array (timestamp, IP, user-agent). Version 1.2.0 adds adapter infrastructure: `kntnt_ad_attr_click_ids` table for platform-specific click IDs, `kntnt_ad_attr_queue` table for async job queue, Click_ID_Store / Queue / Queue_Processor classes, `kntnt_ad_attr_click_id_capturers` filter (register click-ID parameters), `kntnt_ad_attr_conversion_reporters` filter (register conversion reporters with enqueue/process callbacks). Queue processor handles retry (max 3 attempts) and daily cleanup. If no adapters registered, plugin behaves identically to v1.1.0. Builds on the hooks added in v1.1.0 (kntnt_ad_attr_click action and extended kntnt_ad_attr_conversion_recorded).
-
 ## Specifications
 
 All specs are in `docs/`. Read the relevant doc before implementing a feature:
@@ -48,9 +44,9 @@ All specs are in `docs/`. Read the relevant doc before implementing a feature:
 | Doc | Covers |
 |-----|--------|
 | `architecture.md` | Data model, CPT args, hash generation, target URL resolving |
-| `click-handling.md` | 12-step click flow, rewrite rules, bot detection, redirect |
+| `click-handling.md` | Click flow, rewrite rules, bot detection, click ID capture, redirect |
 | `cookies.md` | Cookie format, attributes, size limits, validation regex |
-| `conversion-handling.md` | 10-step conversion flow, dedup, attribution formula |
+| `conversion-handling.md` | Conversion flow, dedup, attribution formula, reporter enqueueing |
 | `rest-api.md` | REST endpoints (set-cookie, search-posts) |
 | `client-script.md` | sessionStorage, pending consent, JS consent interface |
 | `admin-ui.md` | WP_List_Table tabs, SQL queries, CSV export |

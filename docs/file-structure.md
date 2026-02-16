@@ -23,6 +23,7 @@ kntnt-ad-attribution/
 │   ├── Campaign_List_Table.php   ← WP_List_Table for the Campaigns tab
 │   ├── Post_Type.php             ← CPT registration (no admin UI)
 │   ├── Csv_Exporter.php          ← CSV export handler
+│   ├── Utm_Options.php           ← Predefined UTM source/medium options
 │   ├── Cron.php                  ← Daily cleanup job
 │   ├── Click_ID_Store.php        ← Click ID storage (v1.2.0)
 │   ├── Queue.php                 ← Async job queue (v1.2.0)
