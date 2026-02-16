@@ -10,26 +10,19 @@
 	margin-top: 15px;
 }
 
-/* List table column widths */
+/* URLs table column widths */
 .wp-list-table .column-tracking_url {
-	width: 22%;
+	width: 35%;
 }
 
 .wp-list-table .column-target_url {
-	width: 16%;
+	width: 25%;
 }
 
 .wp-list-table .column-utm_source,
 .wp-list-table .column-utm_medium,
 .wp-list-table .column-utm_campaign {
-	width: 9%;
-}
-
-.wp-list-table .column-utm_content,
-.wp-list-table .column-utm_term,
-.wp-list-table .column-utm_id,
-.wp-list-table .column-utm_source_platform {
-	width: 7%;
+	width: 12%;
 }
 
 /* Click-to-copy tracking URL */
