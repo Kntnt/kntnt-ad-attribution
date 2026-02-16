@@ -45,6 +45,15 @@ All machine-readable names use `kntnt-ad-attr` (hyphens) / `kntnt_ad_attr` (unde
 
 **MTM parameter support and new fields (v1.4.0):** Click_Handler populates empty postmeta fields at click time from incoming UTM or MTM (Matomo Tag Manager) query parameters. Priority: stored value > UTM param > MTM param. Two new fields added: Id (`_utm_id`, from `utm_id`/`mtm_cid`) and Group (`_utm_source_platform`, from `utm_source_platform`/`mtm_group`). Admin UI labels use generic names (Source, Medium, etc.) without "UTM" prefix. Internal meta keys retain their `_utm_*` naming for backwards compatibility.
 
+## Tests
+
+Integration test scripts live in `tests/` (gitignored, local only — not included in releases). They use `ddev wp`, `ddev mysql`, and `curl` to create fixtures, fire requests, and assert on the results. Run from the project root:
+
+```bash
+bash tests/test-query-forwarding.sh
+bash tests/test-mtm-parameters.sh
+```
+
 ## Specifications
 
 All specs are in `docs/`. Read the relevant doc before implementing a feature:
