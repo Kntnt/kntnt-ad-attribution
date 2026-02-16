@@ -222,11 +222,11 @@ final class Campaign_List_Table extends WP_List_Table {
 				ON p.ID = pm_hash.post_id AND p.post_type = %s
 			INNER JOIN {$wpdb->postmeta} pm_target
 				ON pm_target.post_id = p.ID AND pm_target.meta_key = '_target_post_id'
-			INNER JOIN {$wpdb->postmeta} pm_src
+			LEFT JOIN {$wpdb->postmeta} pm_src
 				ON pm_src.post_id = p.ID AND pm_src.meta_key = '_utm_source'
-			INNER JOIN {$wpdb->postmeta} pm_med
+			LEFT JOIN {$wpdb->postmeta} pm_med
 				ON pm_med.post_id = p.ID AND pm_med.meta_key = '_utm_medium'
-			INNER JOIN {$wpdb->postmeta} pm_camp
+			LEFT JOIN {$wpdb->postmeta} pm_camp
 				ON pm_camp.post_id = p.ID AND pm_camp.meta_key = '_utm_campaign'
 			LEFT JOIN {$wpdb->postmeta} pm_cont
 				ON pm_cont.post_id = p.ID AND pm_cont.meta_key = '_utm_content'
@@ -514,11 +514,11 @@ final class Campaign_List_Table extends WP_List_Table {
 				ON p.ID = pm_hash.post_id AND p.post_type = %s
 			INNER JOIN {$wpdb->postmeta} pm_target
 				ON pm_target.post_id = p.ID AND pm_target.meta_key = '_target_post_id'
-			INNER JOIN {$wpdb->postmeta} pm_src
+			LEFT JOIN {$wpdb->postmeta} pm_src
 				ON pm_src.post_id = p.ID AND pm_src.meta_key = '_utm_source'
-			INNER JOIN {$wpdb->postmeta} pm_med
+			LEFT JOIN {$wpdb->postmeta} pm_med
 				ON pm_med.post_id = p.ID AND pm_med.meta_key = '_utm_medium'
-			INNER JOIN {$wpdb->postmeta} pm_camp
+			LEFT JOIN {$wpdb->postmeta} pm_camp
 				ON pm_camp.post_id = p.ID AND pm_camp.meta_key = '_utm_campaign'
 			LEFT JOIN {$wpdb->postmeta} pm_cont
 				ON pm_cont.post_id = p.ID AND pm_cont.meta_key = '_utm_content'

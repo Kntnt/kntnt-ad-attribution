@@ -497,9 +497,9 @@ final class Admin_Page {
 		// UTM Source — select with predefined options.
 		echo '<tr>';
 		echo '<th scope="row"><label for="kntnt-ad-attr-utm_source">'
-			. esc_html__( 'UTM Source', 'kntnt-ad-attr' ) . ' <span class="required">*</span></label></th>';
+			. esc_html__( 'UTM Source', 'kntnt-ad-attr' ) . '</label></th>';
 		echo '<td>';
-		echo '<select id="kntnt-ad-attr-utm_source" name="kntnt_ad_attr_utm_source" class="kntnt-ad-attr-select2-tags" required>';
+		echo '<select id="kntnt-ad-attr-utm_source" name="kntnt_ad_attr_utm_source" class="kntnt-ad-attr-select2-tags">';
 		echo '<option value="">' . esc_html__( '— Select or type —', 'kntnt-ad-attr' ) . '</option>';
 		foreach ( array_keys( $options['sources'] ) as $source ) {
 			echo '<option value="' . esc_attr( $source ) . '">' . esc_html( $source ) . '</option>';
@@ -510,9 +510,9 @@ final class Admin_Page {
 		// UTM Medium — select with predefined options.
 		echo '<tr>';
 		echo '<th scope="row"><label for="kntnt-ad-attr-utm_medium">'
-			. esc_html__( 'UTM Medium', 'kntnt-ad-attr' ) . ' <span class="required">*</span></label></th>';
+			. esc_html__( 'UTM Medium', 'kntnt-ad-attr' ) . '</label></th>';
 		echo '<td>';
-		echo '<select id="kntnt-ad-attr-utm_medium" name="kntnt_ad_attr_utm_medium" class="kntnt-ad-attr-select2-tags" required>';
+		echo '<select id="kntnt-ad-attr-utm_medium" name="kntnt_ad_attr_utm_medium" class="kntnt-ad-attr-select2-tags">';
 		echo '<option value="">' . esc_html__( '— Select or type —', 'kntnt-ad-attr' ) . '</option>';
 		foreach ( $options['mediums'] as $medium ) {
 			echo '<option value="' . esc_attr( $medium ) . '">' . esc_html( $medium ) . '</option>';
@@ -522,7 +522,7 @@ final class Admin_Page {
 
 		// Remaining UTM fields — plain text inputs.
 		$text_fields = [
-			'utm_campaign' => [ __( 'UTM Campaign', 'kntnt-ad-attr' ), true ],
+			'utm_campaign' => [ __( 'UTM Campaign', 'kntnt-ad-attr' ), false ],
 			'utm_content'  => [ __( 'UTM Content', 'kntnt-ad-attr' ), false ],
 			'utm_term'     => [ __( 'UTM Term', 'kntnt-ad-attr' ), false ],
 		];
@@ -663,7 +663,7 @@ final class Admin_Page {
 		$utm_term       = mb_substr( sanitize_text_field( wp_unslash( $_POST['kntnt_ad_attr_utm_term'] ?? '' ) ), 0, 255 );
 
 		// Validate required fields.
-		if ( $target_post_id <= 0 || $utm_source === '' || $utm_medium === '' || $utm_campaign === '' ) {
+		if ( $target_post_id <= 0 ) {
 			wp_die( esc_html__( 'Please fill in all required fields.', 'kntnt-ad-attr' ) );
 		}
 
@@ -694,14 +694,24 @@ final class Admin_Page {
 			wp_die( esc_html__( 'Failed to create tracking URL. Please try again.', 'kntnt-ad-attr' ) );
 		}
 
-		// Store meta fields.
+		// Store meta fields (always-required fields first).
 		add_post_meta( $post_id, '_hash', $hash, true );
 		add_post_meta( $post_id, '_target_post_id', (string) $target_post_id, true );
-		add_post_meta( $post_id, '_utm_source', $utm_source, true );
-		add_post_meta( $post_id, '_utm_medium', $utm_medium, true );
-		add_post_meta( $post_id, '_utm_campaign', $utm_campaign, true );
-		add_post_meta( $post_id, '_utm_content', $utm_content, true );
-		add_post_meta( $post_id, '_utm_term', $utm_term, true );
+
+		// Store UTM fields only when they have a value.
+		$utm_fields = [
+			'_utm_source'   => $utm_source,
+			'_utm_medium'   => $utm_medium,
+			'_utm_campaign' => $utm_campaign,
+			'_utm_content'  => $utm_content,
+			'_utm_term'     => $utm_term,
+		];
+
+		foreach ( $utm_fields as $meta_key => $meta_value ) {
+			if ( $meta_value !== '' ) {
+				add_post_meta( $post_id, $meta_key, $meta_value, true );
+			}
+		}
 
 		// Redirect to the list view with a success message.
 		wp_safe_redirect( admin_url( sprintf(

@@ -299,7 +299,7 @@ final class Url_List_Table extends WP_List_Table {
 	 * Fetches tracking URL data with filtering, sorting, and pagination.
 	 *
 	 * Uses direct SQL with JOINs to retrieve all meta fields in one query.
-	 * UTM content and term use LEFT JOIN since they are optional.
+	 * All UTM fields use LEFT JOIN since they are optional.
 	 *
 	 * @param int $per_page     Number of items per page.
 	 * @param int $current_page Current page number.
@@ -317,9 +317,9 @@ final class Url_List_Table extends WP_List_Table {
 		$base_query = "FROM {$wpdb->posts} p
 			INNER JOIN {$wpdb->postmeta} pm_hash   ON pm_hash.post_id = p.ID   AND pm_hash.meta_key = '_hash'
 			INNER JOIN {$wpdb->postmeta} pm_target  ON pm_target.post_id = p.ID AND pm_target.meta_key = '_target_post_id'
-			INNER JOIN {$wpdb->postmeta} pm_src     ON pm_src.post_id = p.ID    AND pm_src.meta_key = '_utm_source'
-			INNER JOIN {$wpdb->postmeta} pm_med     ON pm_med.post_id = p.ID    AND pm_med.meta_key = '_utm_medium'
-			INNER JOIN {$wpdb->postmeta} pm_camp    ON pm_camp.post_id = p.ID   AND pm_camp.meta_key = '_utm_campaign'
+			LEFT JOIN  {$wpdb->postmeta} pm_src     ON pm_src.post_id = p.ID    AND pm_src.meta_key = '_utm_source'
+			LEFT JOIN  {$wpdb->postmeta} pm_med     ON pm_med.post_id = p.ID    AND pm_med.meta_key = '_utm_medium'
+			LEFT JOIN  {$wpdb->postmeta} pm_camp    ON pm_camp.post_id = p.ID   AND pm_camp.meta_key = '_utm_campaign'
 			LEFT JOIN  {$wpdb->postmeta} pm_cont    ON pm_cont.post_id = p.ID   AND pm_cont.meta_key = '_utm_content'
 			LEFT JOIN  {$wpdb->postmeta} pm_term    ON pm_term.post_id = p.ID   AND pm_term.meta_key = '_utm_term'
 			WHERE p.post_type = %s AND p.post_status = %s";
