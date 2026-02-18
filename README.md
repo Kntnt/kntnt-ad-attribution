@@ -97,14 +97,22 @@ This plugin is designed with data minimization and data locality as core princip
 
 **Data minimization.** The plugin stores the minimum data needed for attribution: opaque hashes in a cookie and individual click/conversion records in the database. No names, email addresses, IP addresses, or other directly identifying information is stored by the plugin.
 
-## Installation
+---
+
+## For Users
+
+This section is for marketers, website owners, WordPress administrators, and agency staff who want to install, configure, and use the plugin.
+
+### Installation
 
 1. [Download the latest release ZIP file](https://github.com/Kntnt/kntnt-ad-attribution/releases/latest/download/kntnt-ad-attribution.zip).
 2. In your WordPress admin panel, go to **Plugins → Add New**.
 3. Click **Upload Plugin** and select the downloaded ZIP file.
 4. Activate the plugin.
 
-### System Requirements
+The plugin is distributed via GitHub Releases and updated through the standard WordPress plugin update UI. When a new version is available, you will see it on the WordPress Updates page.
+
+#### System Requirements
 
 | Requirement | Minimum |
 |-------------|---------|
@@ -115,55 +123,13 @@ This plugin is designed with data minimization and data locality as core princip
 
 The plugin checks the PHP version on activation and aborts with a clear error message if the requirement is not met.
 
-### Building from Source
-
-If you clone the repository instead of downloading the release ZIP, you need to compile the translation files before the plugin is fully functional:
-
-```bash
-git clone https://github.com/Kntnt/kntnt-ad-attribution.git
-cd kntnt-ad-attribution
-wp i18n make-mo languages/
-```
-
-> [!NOTE]
-> The repository does not include compiled `.mo` translation files. You must compile them from the `.po` source files using either `wp i18n make-mo` ([WP-CLI](https://wp-cli.org/)) or `msgfmt` ([GNU gettext](https://www.gnu.org/software/gettext/)).
-
-> [!TIP]
-> The repository includes `CLAUDE.md` and a `docs/` directory with detailed technical documentation. These files are primarily written for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (an AI coding assistant), giving it the context it needs to work effectively with this codebase. However, they are equally useful for human developers — covering architecture, data model, click and conversion flows, cookie handling, consent logic, security considerations, coding standards, and more.
-
-### Building a Release ZIP
-
-The `build-release-zip.sh` script creates a clean distribution ZIP by removing development files (docs, CLAUDE.md, etc.), compiling `.mo` translation files, and packaging the result. It can build from local files (default) or from a specific git tag.
-
-```bash
-# Build from local files → zip in current directory
-./build-release-zip.sh
-
-# Build from local files → zip in /tmp
-./build-release-zip.sh --output /tmp
-
-# Build from a git tag → zip in current directory
-./build-release-zip.sh --tag v1.5.1
-
-# Build from a git tag and upload to an existing GitHub release
-./build-release-zip.sh --tag v1.5.1 --update
-
-# Build from a git tag, create a new GitHub release, and upload
-./build-release-zip.sh --tag v1.5.1 --create
-
-# Combine --output with --update/--create to save locally AND upload
-./build-release-zip.sh --tag v1.5.1 --output . --update
-```
-
-Requires `zip` and `msgfmt` (GNU gettext). `gh` ([GitHub CLI](https://cli.github.com/)) is required only with `--update` or `--create`.
-
-### Permissions
+#### Permissions
 
 On activation, the plugin registers a custom capability: `kntnt_ad_attr`. This capability is automatically granted to the **Administrator** and **Editor** roles. Only users with this capability can access the Ad Attribution page and manage tracking URLs.
 
 To grant access to other roles (e.g. Author), use a role management plugin such as [Members](https://wordpress.org/plugins/members/) or [User Role Editor](https://wordpress.org/plugins/user-role-editor/) to assign the `kntnt_ad_attr` capability.
 
-## Cookie Consent Configuration
+### Cookie Consent Configuration
 
 If you use a cookie consent plugin (such as [Real Cookie Banner](https://devowl.io/wordpress-real-cookie-banner/), which is an excellent and recommended choice), you need to register the plugin's cookies as a marketing service. Here is the information you need:
 
@@ -196,13 +162,13 @@ Replace `.yourdomain.com` with your actual domain.
 
 \*** `_aah_pending` contains no personal data, lives at most 60 seconds, and serves only as a technical transport mechanism for deferred consent scenarios. Whether to classify it as "Necessary" or "Marketing" is a judgment call — see [Privacy and GDPR](#privacy-and-gdpr) for a discussion.
 
-## Usage
+### Usage
 
-### Admin Interface
+#### Admin Interface
 
 The plugin adds **Ad Attribution** under **Tools** in the WordPress admin menu. The page has two tabs:
 
-#### URLs Tab (default)
+##### URLs Tab (default)
 
 This is where you create and manage tracking URLs.
 
@@ -210,7 +176,7 @@ This is where you create and manage tracking URLs.
 - **URL list:** Shows all created tracking URLs with full tracking URL, target URL, source, medium, and campaign. Click a tracking URL to copy it to the clipboard. The list can be filtered by source, medium, and campaign.
 - **Row actions:** Trash (or Restore / Delete Permanently for trashed URLs).
 
-#### Campaigns Tab
+##### Campaigns Tab
 
 This is where you view attribution results.
 
@@ -221,7 +187,7 @@ This is where you view attribution results.
 
 **Note:** The plugin tracks clicks (each request to `/ad/<hash>`) and conversions. Ad impressions are not available since they occur on the ad platform and never reach your server.
 
-### Click-Time Parameter Population
+#### Click-Time Parameter Population
 
 Source, medium, and campaign are set when creating the tracking URL. If any are left empty (e.g. from pre-v1.5.0 URLs), the click handler populates them at click time from incoming query parameters. Content, Term, Id, and Group are always captured per click — they vary between clicks on the same tracking URL and are stored in the clicks table, not in postmeta.
 
@@ -243,13 +209,13 @@ For Source/Medium/Campaign, the **priority order** (highest first) is:
 2. **Incoming UTM parameter** from query string.
 3. **Incoming MTM parameter** from query string.
 
-### How Attribution Works
+#### How Attribution Works
 
 When a visitor clicks a tracking URL, the plugin logs the click, stores the ad hash in a first-party cookie (if consent is given), and redirects the visitor to the landing page.
 
 If consent is undefined (the visitor hasn't decided yet), the hash is transported to the landing page via a temporary cookie (`_aah_pending`, 60 seconds) or a URL fragment. A client-side script picks up the hash and stores it in `sessionStorage` until consent is resolved.
 
-When a conversion is triggered (see [Connecting a Form Plugin](#connecting-a-form-plugin)), the plugin:
+When a conversion is triggered (see [Connecting a Form Plugin](#connecting-a-form-plugin) in the Builders section), the plugin:
 
 1. Checks for deduplication — if a conversion was already recorded within the cooldown period (default: 30 days), the new one is ignored.
 2. Reads the `_ad_clicks` cookie and extracts all ad hashes.
@@ -257,6 +223,50 @@ When a conversion is triggered (see [Connecting a Form Plugin](#connecting-a-for
 4. If no valid hashes remain, exits without recording anything.
 5. Applies the attribution model (default: last-click — the most recent click receives `1.0`, all others receive `0.0`). The model is filterable via `kntnt_ad_attr_attribution`.
 6. Looks up the matching click records and stores conversion rows in the database within a transaction.
+
+### User FAQ
+
+**What problem does this plugin solve?**
+
+Ad platforms report clicks but not which clicks became leads on your website. Standard client-side tracking (JavaScript tags) is increasingly blocked by ad blockers, Safari's ITP, and privacy-focused browsers. This plugin moves the tracking to the server side, where it is immune to ad blockers and more resilient to browser restrictions. It gives you an internal, independent view of which ads actually generate leads. See [The Problem](#the-problem) and [Limitations](#limitations) for details.
+
+**Which ad platforms does this plugin support (Google Ads, Meta Ads, …)?**
+
+All of them. The plugin is platform-agnostic. It works with any ad platform that lets you set a custom destination URL — Google Ads, Meta Ads, LinkedIn Ads, Microsoft Ads, and any other platform.
+
+**How does this compare to Google's Enhanced Conversions?**
+
+Both this plugin and Enhanced Conversions aim to improve ad attribution beyond what basic client-side tracking provides. The key difference is where the data goes. Enhanced Conversions sends hashed personal data (email, phone, name) to Google's servers, where it is matched against Google accounts. This plugin keeps all data on your own server and never sends personal data to any third party. The trade-off is that this plugin cannot feed conversion data back to the ad platform's bidding algorithms — it provides internal attribution statistics only. See [Privacy and GDPR](#privacy-and-gdpr) for a detailed comparison.
+
+**What about cookie consent / GDPR?**
+
+The plugin is designed to keep all data on your own server — no personal data is sent to any third party. This eliminates the third-country transfer issues that affect solutions like Google's Enhanced Conversions. However, the `_ad_clicks` cookie constitutes personal data processing under GDPR and requires consent. The plugin supports a three-state consent model (yes, no, undefined) and integrates with any cookie consent plugin. See [Privacy and GDPR](#privacy-and-gdpr) for a full discussion and [Cookie Consent Configuration](#cookie-consent-configuration) for the cookie details to register.
+
+**What happens with Safari's Intelligent Tracking Prevention (ITP)?**
+
+Safari's ITP may limit the cookie lifetime to 7 days (or less) when the visitor arrives from a classified cross-site source such as a Google Ads click. This means conversions that happen more than 7 days after the ad click may not be attributed on Safari/iOS. A JavaScript redirect method is available as a filter option that may improve this in some cases, but there are no guarantees.
+
+**What if a visitor clicks more than 50 ads?**
+
+The cookie stores a maximum of 50 ad hashes. When the limit is reached, the oldest hash is removed to make room for the new one.
+
+**What if the same visitor submits the form twice?**
+
+The plugin uses a deduplication mechanism. If a visitor triggers a conversion within the cooldown period (default: 30 days) after a previous conversion, the second submission is not counted. After the cooldown period, a new submission is counted as a new conversion. The cooldown can be changed via the `kntnt_ad_attr_dedup_days` filter.
+
+**Does the plugin send conversion data back to the ad platform?**
+
+Not by itself. The core plugin provides internal attribution statistics only and never communicates with external APIs. However, the adapter system lets add-on plugins register conversion reporters that report to any ad platform or analytics tool. See the [Adapter System](#adapter-system) section under Builders.
+
+**How can I get help or report a bug?**
+
+Please visit the plugin's [issue tracker on GitHub](https://github.com/kntnt/kntnt-ad-attribution/issues) to ask questions, report bugs, or view existing discussions.
+
+---
+
+## For Builders
+
+This section is for developers who want to integrate the plugin with form plugins, consent plugins, or other systems using WordPress hooks. It assumes familiarity with PHP and WordPress development.
 
 ### Connecting a Form Plugin
 
@@ -396,9 +406,9 @@ The callback accepts `'yes'`, `'no'`, or `'unknown'`. The script handles multipl
 
 Real Cookie Banner's `consentApi.consent()` method returns a Promise — it is a function, not a property object. The Promise resolves when the visitor grants consent (immediately if already consented) and rejects when the visitor denies consent. If the visitor hasn't decided yet, the Promise stays pending until a decision is made.
 
-## Developer Hooks
+### Developer Hooks
 
-### Filters
+#### Filters
 
 **`kntnt_ad_attr_has_consent`**
 
@@ -601,7 +611,7 @@ Default:
 ]
 ```
 
-### Actions
+#### Actions
 
 **`kntnt_ad_attr_admin_tab_{$tab}`**
 
@@ -665,11 +675,11 @@ add_action( 'kntnt_ad_attr_conversion_recorded', function ( array $attributions,
 }, 10, 2 );
 ```
 
-## Adapter System
+### Adapter System
 
 The adapter system lets add-on plugins (or code snippets) extend the core with platform-specific functionality without modifying the core plugin. It has two components:
 
-### Click-ID Capturers
+#### Click-ID Capturers
 
 A *click-ID capturer* tells the core which URL parameter to capture at ad click time. For example, Google Ads appends `gclid` to the landing page URL, Meta appends `fbclid`, and Microsoft Ads appends `msclkid`. Register a capturer via the `kntnt_ad_attr_click_id_capturers` filter:
 
@@ -682,7 +692,7 @@ add_filter( 'kntnt_ad_attr_click_id_capturers', function ( array $capturers ): a
 
 The core handles sanitization, validation, and storage. Click IDs are stored in a dedicated database table and associated with the tracking URL hash.
 
-### Conversion Reporters
+#### Conversion Reporters
 
 A *conversion reporter* tells the core how to report a conversion to an external service. Each reporter defines two callbacks:
 
@@ -724,48 +734,268 @@ The core handles infrastructure: storage, queueing, retry logic (max 3 attempts)
 
 If no adapters are registered, the plugin behaves identically to previous versions — the adapter infrastructure adds zero overhead.
 
-## Frequently Asked Questions
-
-**How does this compare to Google's Enhanced Conversions?**
-
-Both this plugin and Enhanced Conversions aim to improve ad attribution beyond what basic client-side tracking provides. The key difference is where the data goes. Enhanced Conversions sends hashed personal data (email, phone, name) to Google's servers, where it is matched against Google accounts. This plugin keeps all data on your own server and never sends personal data to any third party. The trade-off is that this plugin cannot feed conversion data back to the ad platform's bidding algorithms — it provides internal attribution statistics only. See [Privacy and GDPR](#privacy-and-gdpr) for a detailed comparison.
-
-**What problem does this plugin solve?**
-
-Ad platforms report clicks but not which clicks became leads on your website. Standard client-side tracking (JavaScript tags) is increasingly blocked by ad blockers, Safari's ITP, and privacy-focused browsers. This plugin moves the tracking to the server side, where it is immune to ad blockers and more resilient to browser restrictions. It gives you an internal, independent view of which ads actually generate leads. See [The Problem](#the-problem) and [Limitations](#limitations) for details.
-
-**Which ad platforms does this plugin support (Google Ads, Meta Ads, …)?**
-
-All of them. The plugin is platform-agnostic. It works with any ad platform that lets you set a custom destination URL — Google Ads, Meta Ads, LinkedIn Ads, Microsoft Ads, and any other platform.
-
-**Does this plugin send conversion data back to the ad platform?**
-
-Not by itself. The core plugin provides internal attribution statistics only and never communicates with external APIs. However, the adapter system lets add-on plugins register conversion reporters that report to any ad platform (Google Ads, Meta, Microsoft, etc.) or analytics tool (Matomo, GA4, etc.). The core handles click-ID capture, queueing, and retry logic; the add-on handles the actual API call. See [Adapter System](#adapter-system) for details.
+### Builder FAQ
 
 **What is the adapter system?**
 
 The adapter system is a set of filter hooks that let add-on plugins (or code snippets) extend the core with platform-specific functionality. A *click-ID capturer* tells the core which URL parameter to capture (e.g. `gclid` for Google Ads), and a *conversion reporter* tells the core how to report a conversion to an external service. The core handles storage, queueing, retry logic, and cleanup — the adapter handles only the platform-specific logic. If no adapters are registered, the plugin behaves identically to previous versions.
 
-**What happens with Safari's Intelligent Tracking Prevention (ITP)?**
+**Do I need to write code to use this plugin?**
 
-Safari's ITP may limit the cookie lifetime to 7 days (or less) when the visitor arrives from a classified cross-site source such as a Google Ads click. This means conversions that happen more than 7 days after the ad click may not be attributed on Safari/iOS. The JavaScript redirect method (`kntnt_ad_attr_redirect_method` → `'js'`) may improve this in some cases, but there are no guarantees.
+For basic usage you need to connect at least a form plugin to trigger conversions (via the `kntnt_ad_attr_conversion` action). If you use a cookie consent plugin, you also need to connect it via the `kntnt_ad_attr_has_consent` filter. Some form plugins (like WS Form) support firing action hooks directly from the UI, which requires no code. For other form and consent plugins, a short PHP snippet is needed — see [Connecting a Form Plugin](#connecting-a-form-plugin) and [Connecting a Cookie Consent Plugin](#connecting-a-cookie-consent-plugin) for ready-to-use examples.
 
-**What if a visitor clicks more than 50 ads?**
+**Can I implement a custom attribution model?**
 
-The cookie stores a maximum of 50 ad hashes. When the limit is reached, the oldest hash is removed to make room for the new one.
+Yes. The default is last-click (the most recent click gets 100% credit). You can implement any model — time-weighted, linear, position-based, or something custom — by hooking into the `kntnt_ad_attr_attribution` filter. See the [`kntnt_ad_attr_attribution` filter](#filters) for a working time-weighted example.
 
-**What if the same visitor submits the form twice?**
+**Can I extend the admin interface with custom tabs?**
 
-The plugin uses a deduplication mechanism. If a visitor triggers a conversion within the cooldown period (default: 30 days) after a previous conversion, the second submission is not counted. After the cooldown period, a new submission is counted as a new conversion. The cooldown can be changed via the `kntnt_ad_attr_dedup_days` filter.
+Yes. Use the `kntnt_ad_attr_admin_tabs` filter to register a tab slug and label, then hook into `kntnt_ad_attr_admin_tab_{$slug}` to render its content. This is intended for add-on plugins that need their own settings or reports page within the plugin's admin area.
 
-**What about cookie consent / GDPR?**
+**Where can I find detailed technical specifications?**
 
-The plugin is designed to keep all data on your own server — no personal data is sent to any third party. This eliminates the third-country transfer issues that affect solutions like Google's Enhanced Conversions. However, the `_ad_clicks` cookie constitutes personal data processing under GDPR and requires consent. The plugin supports a three-state consent model (yes, no, undefined) and integrates with any cookie consent plugin via the `kntnt_ad_attr_has_consent` filter. Click recording (individual click records per tracking URL) is always performed regardless of consent, since the records contain only opaque hashes and UTM parameters — no individual is identified or trackable. See [Privacy and GDPR](#privacy-and-gdpr) for a full discussion and [Connecting a Cookie Consent Plugin](#connecting-a-cookie-consent-plugin) for implementation details.
+The repository includes a `docs/` directory with in-depth documentation covering architecture, data model, click flow, conversion flow, cookie handling, consent logic, REST API, client-side script behavior, security, and more. These docs are equally useful for AI coding assistants and human developers.
 
-**How can I get help or report a bug?**
+---
 
-Please visit the plugin's [issue tracker on GitHub](https://github.com/kntnt/kntnt-ad-attribution/issues) to ask questions, report bugs, or view existing discussions.
+## For Contributors
+
+This section is for developers who want to contribute code to the plugin — cloning the repository, understanding the architecture, running tests, building releases, and submitting pull requests.
+
+### Building from Source
+
+```bash
+git clone https://github.com/Kntnt/kntnt-ad-attribution.git
+cd kntnt-ad-attribution
+wp i18n make-mo languages/
+```
+
+> [!NOTE]
+> The repository does not include compiled `.mo` translation files. You must compile them from the `.po` source files using either `wp i18n make-mo` ([WP-CLI](https://wp-cli.org/)) or `msgfmt` ([GNU gettext](https://www.gnu.org/software/gettext/)).
+
+> [!TIP]
+> The repository includes `CLAUDE.md` and a `docs/` directory with detailed technical documentation. These files are primarily written for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (an AI coding assistant), giving it the context it needs to work effectively with this codebase. However, they are equally useful for human developers — covering architecture, data model, click and conversion flows, cookie handling, consent logic, security considerations, coding standards, and more.
+
+### Building a Release ZIP
+
+The `build-release-zip.sh` script creates a clean distribution ZIP by removing development files (docs, CLAUDE.md, etc.), compiling `.mo` translation files, and packaging the result. It can build from local files (default) or from a specific git tag.
+
+```bash
+# Build from local files → zip in current directory
+./build-release-zip.sh
+
+# Build from local files → zip in /tmp
+./build-release-zip.sh --output /tmp
+
+# Build from a git tag → zip in current directory
+./build-release-zip.sh --tag v1.5.1
+
+# Build from a git tag and upload to an existing GitHub release
+./build-release-zip.sh --tag v1.5.1 --update
+
+# Build from a git tag, create a new GitHub release, and upload
+./build-release-zip.sh --tag v1.5.1 --create
+
+# Combine --output with --update/--create to save locally AND upload
+./build-release-zip.sh --tag v1.5.1 --output . --update
+```
+
+Requires `zip` and `msgfmt` (GNU gettext). `gh` ([GitHub CLI](https://cli.github.com/)) is required only with `--update` or `--create`.
+
+### Architecture Overview
+
+**Singleton bootstrap:** `kntnt-ad-attribution.php` loads `autoloader.php` (PSR-4 for `Kntnt\Ad_Attribution\*` → `classes/*.php`), then `Plugin::get_instance()` creates the singleton which instantiates all components and registers hooks. A PHP 8.3 version check aborts with an admin notice if the requirement is not met.
+
+**Component instantiation order in `Plugin::__construct()`:**
+
+1. `Updater` — GitHub-based update checker
+2. `Migrator` — database migration runner
+3. `Post_Type` — CPT registration
+4. `Cookie_Manager` — cookie read/write operations (stateless)
+5. `Consent` — three-state consent resolution
+6. `Bot_Detector` — User-Agent filtering
+7. `Click_ID_Store` — platform-specific click ID storage
+8. `Queue` — async job queue
+9. `Queue_Processor(Queue)` — queue job dispatcher
+10. `Click_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store)` — click processing & redirect
+11. `Conversion_Handler(Cookie_Manager, Click_ID_Store, Queue, Queue_Processor)` — conversion attribution
+12. `Cron(Click_ID_Store, Queue)` — scheduled cleanup tasks
+13. `Admin_Page(Queue)` — admin UI orchestration
+14. `Rest_Endpoint(Cookie_Manager, Consent)` — REST API routes
+
+**Data model:** Tracking URLs are stored as a custom post type `kntnt_ad_attr_url` (with meta `_hash`, `_target_post_id`, `_utm_source`, `_utm_medium`, `_utm_campaign`). Individual clicks are stored in `{prefix}kntnt_ad_attr_clicks` with per-click UTM fields. Conversions are stored in `{prefix}kntnt_ad_attr_conversions` linked to specific clicks via `click_id`, with fractional attribution values. Platform-specific click IDs are stored in `{prefix}kntnt_ad_attr_click_ids` with composite PK `(hash, platform)`. Async report jobs are stored in `{prefix}kntnt_ad_attr_queue` with auto-increment PK and status-based processing.
+
+**Lifecycle:** On activation, the plugin grants capabilities, runs migrations, registers rewrite rules, and schedules cron. On deactivation, it clears cron, transients, and rewrite rules but preserves all data. On uninstallation, it performs complete data removal — dropping all custom tables, deleting CPT posts, removing capabilities, and clearing options.
+
+**Migrator pattern:** Version-based migrations in `migrations/X.Y.Z.php`. Each file returns `function(\wpdb $wpdb): void`. The Migrator compares `kntnt_ad_attr_version` option with the plugin header version on `plugins_loaded` and runs pending files in order.
+
+**Daily cron job** (`kntnt_ad_attr_daily_cleanup`) performs six cleanup tasks: deleting expired click records and their linked conversions, removing orphaned conversions, cleaning up records for deleted tracking URLs, detecting tracking URLs whose target pages no longer exist (setting them to draft with an admin notice), cleaning up old click IDs, and purging completed/failed queue jobs.
+
+### File Structure
+
+```
+kntnt-ad-attribution/
+├── kntnt-ad-attribution.php      ← Main plugin file (version header, PHP check, bootstrap)
+├── autoloader.php                ← PSR-4 autoloader for Kntnt\Ad_Attribution namespace
+├── install.php                   ← Activation script (capability, migration, cron)
+├── uninstall.php                 ← Uninstall script (complete data removal)
+├── README.md                     ← This file
+├── CLAUDE.md                     ← AI-focused codebase guidance
+├── classes/
+│   ├── Plugin.php                ← Singleton, component wiring, hooks, path helpers
+│   ├── Updater.php               ← GitHub release update checker
+│   ├── Migrator.php              ← Database migration runner (version-based)
+│   ├── Post_Type.php             ← CPT registration, shared query helpers
+│   ├── Click_Handler.php         ← Ad click processing, redirect, parameter forwarding
+│   ├── Conversion_Handler.php    ← Conversion attribution, reporter enqueueing
+│   ├── Cookie_Manager.php        ← Cookie read/write/validate (stateless)
+│   ├── Consent.php               ← Three-state consent check logic
+│   ├── Bot_Detector.php          ← User-Agent filtering, robots.txt rule
+│   ├── Rest_Endpoint.php         ← REST API (set-cookie with rate limiting, search-posts)
+│   ├── Admin_Page.php            ← Tools page with tab navigation, URL CRUD, CSV export
+│   ├── Url_List_Table.php        ← WP_List_Table for the URLs tab
+│   ├── Campaign_List_Table.php   ← WP_List_Table for the Campaigns tab
+│   ├── Csv_Exporter.php          ← CSV export with locale-aware formatting
+│   ├── Utm_Options.php           ← Predefined UTM source/medium options (filterable)
+│   ├── Cron.php                  ← Daily cleanup job, target page warnings
+│   ├── Click_ID_Store.php        ← Platform-specific click ID storage
+│   ├── Queue.php                 ← Async job queue with retry logic
+│   └── Queue_Processor.php       ← Queue processing via cron
+├── migrations/
+│   ├── 1.0.0.php                 ← No-op (legacy stats table, superseded by 1.5.0)
+│   ├── 1.2.0.php                 ← Click ID and queue tables
+│   └── 1.5.0.php                 ← Clicks + conversions tables, drops stats
+├── js/
+│   ├── pending-consent.js        ← Client-side: pending consent, sessionStorage, REST call
+│   └── admin.js                  ← Admin: select2, page selector, UTM field auto-fill
+├── css/
+│   └── admin.css                 ← Admin: styling for tabs, page selector, list tables
+├── tests/                        ← Integration test scripts (gitignored, local only)
+├── docs/                         ← Technical specifications (see below)
+└── languages/
+    ├── kntnt-ad-attribution.pot          ← Translation template
+    └── kntnt-ad-attribution-sv_SE.po     ← Swedish translation source
+```
+
+### Technical Documentation
+
+The `docs/` directory contains detailed specifications for every aspect of the plugin. Read the relevant doc before implementing a feature:
+
+| Doc | Covers |
+|-----|--------|
+| `architecture.md` | Data model, CPT args, hash generation, target URL resolving |
+| `click-handling.md` | Click flow, rewrite rules, bot detection, click ID capture, redirect |
+| `cookies.md` | Cookie format, attributes, size limits, validation regex |
+| `conversion-handling.md` | Conversion flow, dedup, attribution formula, reporter enqueueing |
+| `rest-api.md` | REST endpoints (set-cookie, search-posts), rate limiting |
+| `client-script.md` | sessionStorage, pending consent, JS consent interface |
+| `admin-ui.md` | WP_List_Table tabs, SQL queries, CSV export |
+| `developer-hooks.md` | All filters/actions with implementation logic |
+| `lifecycle.md` | Activation, deactivation, uninstall, migration, cron |
+| `security.md` | Validation, nonces, capabilities, error handling, time zones |
+| `coding-standards.md` | Full coding standards reference |
+| `file-structure.md` | Project file organization, updates, translations |
+| `consent-example.md` | Complete consent integration example (Real Cookie Banner) |
+| `testing-strategy.md` | Test plan, frameworks, test inventory |
+
+### Naming Conventions
+
+All machine-readable names use `kntnt-ad-attr` (hyphens) / `kntnt_ad_attr` (underscores) as prefix. The PHP namespace is `Kntnt\Ad_Attribution`. The GitHub URL (`kntnt-ad-attribution`) is the only exception.
+
+| Context | Name |
+|---------|------|
+| Text domain | `kntnt-ad-attr` |
+| Post type | `kntnt_ad_attr_url` |
+| Custom tables | `{prefix}kntnt_ad_attr_clicks`, `{prefix}kntnt_ad_attr_conversions`, `{prefix}kntnt_ad_attr_click_ids`, `{prefix}kntnt_ad_attr_queue` |
+| Capability | `kntnt_ad_attr` |
+| DB version option | `kntnt_ad_attr_version` |
+| Cron hooks | `kntnt_ad_attr_daily_cleanup`, `kntnt_ad_attr_process_queue` |
+| REST namespace | `kntnt-ad-attribution/v1` |
+| REST CPT base | `kntnt-ad-attr-urls` |
+| All filters/actions | `kntnt_ad_attr_*` |
+| Namespace | `Kntnt\Ad_Attribution` |
+| Cookies | `_ad_clicks`, `_aah_pending`, `_ad_last_conv` |
+
+### Coding Standards
+
+The plugin follows WordPress coding standards as a baseline, with several intentional deviations to leverage modern PHP and improve readability. The full reference is in `docs/coding-standards.md`. Key points:
+
+**PHP 8.3 features required:** typed properties, readonly, match expressions, arrow functions, null-safe operator, named arguments, `str_contains()`/`str_starts_with()`, enums, first-class callable syntax, array spread.
+
+**Syntax and style:** `declare(strict_types=1)` in every PHP file. `[]` not `array()`. Natural conditions, not Yoda. Trailing commas in multi-line arrays. Early returns, small functions, descriptive names. PSR-4 autoloading: `Kntnt\Ad_Attribution\Click_Handler` → `classes/Click_Handler.php`.
+
+**WordPress deviations:** No Yoda conditions (strict types eliminate the risk). No `array()` syntax. Namespaces instead of function prefixes. PSR-4 file naming instead of `class-*.php`.
+
+**Documentation:** PHPDoc on every class, method, property, constant. `@since 1.0.0` for initial release. Inline comments explain **why**, not what. Written for senior developers. All identifiers and comments in English.
+
+**JavaScript:** ES6+, IIFE with `'use strict'`, `const` default, arrow functions, `fetch` over jQuery, `async`/`await`, template literals.
+
+**General:** All user-facing strings translatable via `__()` / `esc_html__()` with text domain `kntnt-ad-attr`. All SQL via `$wpdb->prepare()`. All admin URLs via `admin_url()`. All superglobals sanitized. Errors are silent toward visitors, logged via `error_log()`.
+
+### Running Tests
+
+The test suite has two levels: Level 1 (unit tests) and Level 2 (integration tests). The `run-tests.sh` script is the single entry point for running all tests. It checks prerequisites, installs dependencies (Composer and npm), runs the selected test levels, and prints a summary.
+
+```bash
+# Run all tests (unit + integration)
+bash run-tests.sh
+
+# Run only unit tests (no WordPress Playground needed)
+bash run-tests.sh --unit-only
+
+# Run only integration tests
+bash run-tests.sh --integration-only
+
+# Filter tests by name pattern
+bash run-tests.sh --filter "click"
+
+# Show full test output
+bash run-tests.sh --verbose
+```
+
+**Level 1 — Unit tests** use Pest with Brain Monkey for PHP and Vitest with happy-dom for JavaScript. They run without WordPress and test individual classes in isolation.
+
+**Level 2 — Integration tests** use Bash scripts with `curl` against a WordPress Playground instance. The runner starts Playground automatically on port 9400, mounts the plugin and test helper mu-plugins, runs all `tests/Integration/test-*.sh` scripts, and stops Playground when done.
+
+Requirements: PHP 8.3+, Node.js 20.18+, Composer, npm, curl, and jq (for integration tests).
+
+A comprehensive test strategy is documented in `docs/testing-strategy.md`, covering test levels, frameworks, directory structure, and a full test inventory.
+
+### Known Gotchas
+
+- `Plugin::get_plugin_data()` must pass `$translate = false` to WP's `get_plugin_data()` to avoid triggering `_load_textdomain_just_in_time` warnings when called before `init` (e.g. from Migrator on `plugins_loaded`).
+- The CPT label uses a static string (not `__()`) because it has `show_ui => false` and is never displayed.
+- `uninstall.php` runs without the namespace autoloader — use fully qualified function calls and raw `$wpdb`.
+- `Post_Type` registers `wp_untrash_post_status` at priority 20 to override ACF (which overrides the default untrash status for all post types).
+- The REST `set-cookie` endpoint has rate limiting: 10 requests per minute per IP via transient.
+- Select2 loaded from cdnjs has SRI (Subresource Integrity) hashes added via `script_loader_tag` / `style_loader_tag` filters.
+- Hash generation uses `random_bytes(32)` — the hash is an opaque identifier, not derived from UTM parameters.
+- The `kntnt_ad_attr_click` action fires for all non-bot clicks regardless of consent state, enabling companion plugins to capture platform-specific parameters even before consent is resolved.
+- Admin page is registered under Tools (`add_management_page`), not as a top-level menu item.
+- CSV export uses POST with its own nonce (`kntnt_ad_attr_export`) and reconstructs GET filter params from POST data for `Campaign_List_Table` compatibility.
+
+### Contributor FAQ
 
 **How can I contribute?**
 
-Contributions are welcome! Please feel free to fork the repository and submit a pull request on GitHub.
+Contributions are welcome! Fork the repository, make your changes, and submit a pull request on GitHub. Please read the coding standards in `docs/coding-standards.md` and follow the existing patterns in the codebase.
+
+**Where are the detailed specs?**
+
+All specifications live in the `docs/` directory. Read the relevant doc before implementing a feature — see the [Technical Documentation](#technical-documentation) table for a guide to which doc covers what.
+
+**How do I run the tests?**
+
+The integration tests require a local [DDEV](https://ddev.readthedocs.io/) environment with WordPress. Run them with `bash tests/<test-script>.sh` from the project root. See `docs/testing-strategy.md` for the full test plan.
+
+**How does the migration system work?**
+
+Version-based migration files live in `migrations/` and are named after the version they migrate to (e.g. `1.5.0.php`). Each file returns a callable that receives `$wpdb`. The Migrator runs pending files in order when the stored version in `wp_options` differs from the plugin header version.
+
+**What is `CLAUDE.md`?**
+
+It is a context file for [Claude Code](https://docs.anthropic.com/en/docs/claude-code), an AI coding assistant. It provides the AI with architecture, naming conventions, hook references, and coding standards so it can work effectively with the codebase. The information is equally useful for human developers.
+
+**How are releases distributed?**
+
+The plugin is distributed via GitHub Releases, not wordpress.org. The `Updater` class hooks into the WordPress plugin update system and checks for new GitHub releases automatically. Use `build-release-zip.sh` to create a distribution ZIP — see [Building a Release ZIP](#building-a-release-zip).
