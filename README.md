@@ -934,7 +934,7 @@ The plugin follows WordPress coding standards as a baseline, with several intent
 
 ### Running Tests
 
-The test suite has two levels: Level 1 (unit tests) and Level 2 (integration tests). The `run-tests.sh` script is the single entry point for running all tests. It checks prerequisites, installs dependencies (Composer and npm), runs the selected test levels, and prints a summary.
+The test suite has two levels: Level 1 (unit tests) and Level 2 (integration tests). The `run-tests.sh` script is the single entry point for running all tests. It detects the environment, installs dependencies (Composer and npm), runs the selected test levels, and prints a summary.
 
 ```bash
 # Run all tests (unit + integration)
@@ -957,7 +957,31 @@ bash run-tests.sh --verbose
 
 **Level 2 — Integration tests** use Bash scripts with `curl` against a WordPress Playground instance. The runner starts Playground automatically on port 9400, mounts the plugin and test helper mu-plugins, runs all `tests/Integration/test-*.sh` scripts, and stops Playground when done.
 
-Requirements: PHP 8.3+, Node.js 20.18+, Composer, npm, curl, and jq (for integration tests).
+#### Environment detection
+
+The script resolves tool paths automatically in three steps (highest priority first):
+
+1. **Explicit overrides** — set `PHP_BIN`, `COMPOSER_BIN`, `NODE_BIN`, or `NPM_BIN` as environment variables, or define them in `.env.testing` (see `.env.testing.example`). Environment variables take precedence over the file.
+
+2. **DDEV auto-detection** — if `.ddev/config.yaml` exists in any parent directory, the script uses `ddev here php` and `ddev here composer` for PHP tests. DDEV services are started automatically if needed. Node.js and npm always run on the host since `node_modules` contains platform-specific native binaries.
+
+3. **Local PATH fallback** — if no DDEV project is found, tools are resolved from PATH.
+
+WordPress Playground (integration tests) always runs on the host via the local `npx` in PATH, regardless of environment mode.
+
+```bash
+# Override a single tool
+PHP_BIN=/opt/php83/bin/php bash run-tests.sh
+
+# Use a .env.testing file for persistent overrides
+cp .env.testing.example .env.testing
+# Edit .env.testing, then:
+bash run-tests.sh
+```
+
+#### Requirements
+
+PHP 8.3+, Node.js 20.18+, Composer, npm, curl, and jq (for integration tests). With DDEV, only Node.js/npm and DDEV itself need to be installed locally — PHP and Composer run inside the container.
 
 A comprehensive test strategy is documented in `docs/testing-strategy.md`, covering test levels, frameworks, directory structure, and a full test inventory.
 
@@ -986,7 +1010,7 @@ All specifications live in the `docs/` directory. Read the relevant doc before i
 
 **How do I run the tests?**
 
-The integration tests require a local [DDEV](https://ddev.readthedocs.io/) environment with WordPress. Run them with `bash tests/<test-script>.sh` from the project root. See `docs/testing-strategy.md` for the full test plan.
+Run `bash run-tests.sh` from the plugin directory. The script auto-detects DDEV or local tools — see [Running Tests](#running-tests) for details. See `docs/testing-strategy.md` for the full test plan.
 
 **How does the migration system work?**
 

@@ -105,6 +105,16 @@ bash run-tests.sh --integration-only
 bash run-tests.sh --filter consent
 ```
 
+### Environment detection
+
+`run-tests.sh` resolves tool paths in three steps (highest priority first):
+
+1. **Explicit overrides** — `PHP_BIN`, `COMPOSER_BIN`, `NODE_BIN`, `NPM_BIN` as env vars or in `.env.testing` (see `.env.testing.example`). Env vars take precedence over the file.
+2. **DDEV auto-detection** — if `.ddev/config.yaml` exists in any parent directory, uses `ddev here php` and `ddev here composer`. Node/npm always run on the host (node_modules has platform-specific native binaries). DDEV services are started automatically if needed.
+3. **Local PATH fallback** — resolves tools from PATH if no DDEV project is found.
+
+WordPress Playground (integration tests) always runs on the host via local `npx`, regardless of mode.
+
 ### Running tests individually
 
 ```bash
@@ -121,7 +131,7 @@ bash tests/Integration/test-click-flow.sh
 
 ### Requirements
 
-PHP 8.3+, Node.js 20.18+, Composer 2, npm, curl, jq. Dependencies are installed automatically by `run-tests.sh`.
+PHP 8.3+, Node.js 20.18+, Composer 2, npm, curl, jq. With DDEV, only Node.js/npm and DDEV itself need to be installed locally. Dependencies are installed automatically by `run-tests.sh`.
 
 ### CI
 

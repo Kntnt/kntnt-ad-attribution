@@ -10,6 +10,11 @@
 #   bash run-tests.sh --integration-only  # Level 2 only
 #   bash run-tests.sh --filter <pattern>  # Filter tests by pattern
 #   bash run-tests.sh --verbose    # Show full test output
+#
+# Environment detection (in priority order):
+#   1. Explicit env vars or .env.testing overrides (PHP_BIN, COMPOSER_BIN, etc.)
+#   2. DDEV auto-detection (if .ddev/config.yaml found in parent dirs)
+#   3. Local PATH fallback
 
 set -euo pipefail
 
@@ -23,6 +28,15 @@ INTEGRATION_FAIL=0
 VERBOSE=false
 FILTER=""
 MODE="all"
+
+# Resolved tool paths (set by load_overrides / detect_ddev / resolve_local)
+PHP_BIN="${PHP_BIN:-}"
+COMPOSER_BIN="${COMPOSER_BIN:-}"
+NODE_BIN="${NODE_BIN:-}"
+NPM_BIN="${NPM_BIN:-}"
+NPX_BIN=""
+LOCAL_NPX=""
+ENV_SOURCE=""
 
 # ─── Parse arguments ───
 
@@ -52,66 +66,223 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# ─── Dependency checks ───
+# ─── Load overrides from env vars and .env.testing ───
 
-check_requirements() {
-    local errors=0
+load_overrides() {
 
-    # PHP version check
-    if ! command -v php >/dev/null 2>&1; then
-        echo "ERROR: PHP is required but not found." >&2
-        errors=$((errors + 1))
-    else
+    # Track which variables were explicitly set via environment
+    declare -gA EXPLICIT_VARS=()
+    for var in PHP_BIN COMPOSER_BIN NODE_BIN NPM_BIN; do
+        if [[ -n "${!var}" ]]; then
+            EXPLICIT_VARS[$var]=1
+        fi
+    done
+
+    # Read .env.testing if it exists (env vars take precedence)
+    local env_file="$SCRIPT_DIR/.env.testing"
+    if [[ -f "$env_file" ]]; then
+        while IFS= read -r line; do
+
+            # Skip blank lines and comments
+            [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+
+            # Match KEY=VALUE for known variables
+            if [[ "$line" =~ ^[[:space:]]*(PHP_BIN|COMPOSER_BIN|NODE_BIN|NPM_BIN)[[:space:]]*=[[:space:]]*(.*) ]]; then
+                local key="${BASH_REMATCH[1]}"
+                local val="${BASH_REMATCH[2]}"
+
+                # Trim surrounding quotes
+                val="${val#\"}" ; val="${val%\"}"
+                val="${val#\'}" ; val="${val%\'}"
+
+                # Only set if not already explicitly provided
+                if [[ -z "${EXPLICIT_VARS[$key]+x}" ]]; then
+                    declare -g "$key=$val"
+                    EXPLICIT_VARS[$key]=1
+                fi
+            fi
+        done < "$env_file"
+    fi
+}
+
+# ─── DDEV auto-detection ───
+
+detect_ddev() {
+
+    # Walk upward from SCRIPT_DIR looking for .ddev/config.yaml
+    local dir="$SCRIPT_DIR"
+    local ddev_root=""
+    while [[ "$dir" != "/" ]]; do
+        if [[ -f "$dir/.ddev/config.yaml" ]]; then
+            ddev_root="$dir"
+            break
+        fi
+        dir="$(dirname "$dir")"
+    done
+
+    if [[ -z "$ddev_root" ]]; then
+        return 1
+    fi
+
+    # Verify ddev command is available
+    if ! command -v ddev >/dev/null 2>&1; then
+        echo "WARNING: DDEV project found at $ddev_root but 'ddev' command not in PATH." >&2
+        echo "         Falling back to local tools." >&2
+        return 1
+    fi
+
+    # Get DDEV status
+    local ddev_json
+    ddev_json=$(cd "$ddev_root" && ddev describe -j 2>/dev/null) || {
+        echo "WARNING: 'ddev describe' failed. Falling back to local tools." >&2
+        return 1
+    }
+
+    # Check service statuses
+    local web_status db_status
+    web_status=$(echo "$ddev_json" | jq -r '.raw.services.web.status // "unknown"')
+    db_status=$(echo "$ddev_json" | jq -r '.raw.services.db.status // "unknown"')
+
+    if [[ "$web_status" != "running" || "$db_status" != "running" ]]; then
+        echo "DDEV project found but not running. Starting DDEV..."
+        (cd "$ddev_root" && ddev start) || {
+            echo "ERROR: 'ddev start' failed." >&2
+            exit 1
+        }
+
+        # Re-read status after start
+        ddev_json=$(cd "$ddev_root" && ddev describe -j 2>/dev/null) || {
+            echo "ERROR: 'ddev describe' failed after start." >&2
+            exit 1
+        }
+    fi
+
+    # Assign DDEV commands for PHP/Composer (need CWD mapping via "ddev here").
+    # Node/npm stay local — node_modules has host-native binaries (rollup etc.)
+    # that won't work inside the Linux container.
+    [[ -z "${EXPLICIT_VARS[PHP_BIN]+x}" ]]      && PHP_BIN="ddev here php"
+    [[ -z "${EXPLICIT_VARS[COMPOSER_BIN]+x}" ]]  && COMPOSER_BIN="ddev here composer"
+    [[ -z "${EXPLICIT_VARS[NODE_BIN]+x}" ]]      && NODE_BIN=$(command -v node 2>/dev/null || true)
+    [[ -z "${EXPLICIT_VARS[NPM_BIN]+x}" ]]       && NPM_BIN=$(command -v npm 2>/dev/null || true)
+
+    # Derive NPX from NPM
+    if [[ -n "$NPM_BIN" ]]; then
+        NPX_BIN="${NPM_BIN%npm}npx"
+    fi
+
+    # Extract version info for summary
+    DETECTED_PHP_VERSION=$(echo "$ddev_json" | jq -r '.raw.php_version // "unknown"')
+    DETECTED_NODE_VERSION=$(echo "$ddev_json" | jq -r '.raw.nodejs_version // "unknown"')
+    DETECTED_WP_URL=$(echo "$ddev_json" | jq -r '.raw.primary_url // ""')
+    DETECTED_PROJECT_NAME=$(echo "$ddev_json" | jq -r '.raw.name // "unknown"')
+
+    ENV_SOURCE="ddev"
+    return 0
+}
+
+# ─── Local PATH fallback ───
+
+resolve_local() {
+
+    # Resolve each tool from PATH if not explicitly set
+    [[ -z "$PHP_BIN" ]]      && PHP_BIN=$(command -v php 2>/dev/null || true)
+    [[ -z "$COMPOSER_BIN" ]] && COMPOSER_BIN=$(command -v composer 2>/dev/null || true)
+    [[ -z "$NODE_BIN" ]]     && NODE_BIN=$(command -v node 2>/dev/null || true)
+    [[ -z "$NPM_BIN" ]]      && NPM_BIN=$(command -v npm 2>/dev/null || true)
+
+    # Derive NPX from NPM
+    if [[ -n "$NPM_BIN" ]]; then
+        NPX_BIN="${NPM_BIN%npm}npx"
+    fi
+
+    # Verify PHP version >= 8.3
+    if [[ -n "$PHP_BIN" ]]; then
         local php_version
-        php_version=$(php -r 'echo PHP_MAJOR_VERSION . "." . PHP_MINOR_VERSION;')
+        php_version=$($PHP_BIN -r 'echo PHP_MAJOR_VERSION . "." . PHP_MINOR_VERSION;' 2>/dev/null) || php_version="0.0"
         if [[ "$(printf '%s\n' "8.3" "$php_version" | sort -V | head -1)" != "8.3" ]]; then
-            echo "ERROR: PHP 8.3+ required (found $php_version)" >&2
-            errors=$((errors + 1))
+            echo "ERROR: PHP 8.3+ required (found $php_version)." >&2
+            echo "" >&2
+            echo "Options:" >&2
+            echo "  - Set up DDEV for the project (zero-configuration)" >&2
+            echo "  - Set PHP_BIN to a PHP 8.3+ binary in .env.testing" >&2
+            exit 1
         fi
     fi
 
-    # Node.js version check
-    if ! command -v node >/dev/null 2>&1; then
-        echo "ERROR: Node.js is required but not found." >&2
-        errors=$((errors + 1))
-    else
-        local node_version
-        node_version=$(node --version | sed 's/^v//')
-        if [[ "$(printf '%s\n' "20.18" "$node_version" | sort -V | head -1)" != "20.18" ]]; then
-            echo "ERROR: Node.js 20.18+ required (found $node_version)" >&2
-            errors=$((errors + 1))
+    ENV_SOURCE="local"
+}
+
+# ─── Verify that all required tools are available ───
+
+verify_environment() {
+    local missing=()
+
+    # Check required tools
+    [[ -z "$PHP_BIN" ]]      && missing+=("PHP (set PHP_BIN)")
+    [[ -z "$COMPOSER_BIN" ]] && missing+=("Composer (set COMPOSER_BIN)")
+    [[ -z "$NODE_BIN" ]]     && missing+=("Node.js (set NODE_BIN)")
+    [[ -z "$NPM_BIN" ]]      && missing+=("npm (set NPM_BIN)")
+
+    # Integration tests need local npx (for Playground) plus curl and jq
+    if [[ "$MODE" != "unit" ]]; then
+        LOCAL_NPX=$(command -v npx 2>/dev/null || true)
+        if [[ -z "$LOCAL_NPX" ]]; then
+            missing+=("npx in host PATH (needed for WordPress Playground)")
+        fi
+
+        if ! command -v curl >/dev/null 2>&1; then
+            missing+=("curl")
+        fi
+
+        if ! command -v jq >/dev/null 2>&1; then
+            missing+=("jq")
         fi
     fi
 
-    # Composer check
-    if ! command -v composer >/dev/null 2>&1; then
-        echo "ERROR: Composer is required but not found." >&2
-        errors=$((errors + 1))
-    fi
-
-    # npm check
-    if ! command -v npm >/dev/null 2>&1; then
-        echo "ERROR: npm is required but not found." >&2
-        errors=$((errors + 1))
-    fi
-
-    # curl check
-    if ! command -v curl >/dev/null 2>&1; then
-        echo "ERROR: curl is required but not found." >&2
-        errors=$((errors + 1))
-    fi
-
-    # jq check (needed for integration tests)
-    if [[ "$MODE" != "unit" ]] && ! command -v jq >/dev/null 2>&1; then
-        echo "ERROR: jq is required for integration tests but not found." >&2
-        errors=$((errors + 1))
-    fi
-
-    if [[ $errors -gt 0 ]]; then
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        echo "ERROR: Missing required tool(s):" >&2
+        for tool in "${missing[@]}"; do
+            echo "  - $tool" >&2
+        done
         echo "" >&2
-        echo "Missing $errors required tool(s). See docs/testing-strategy.md for requirements." >&2
+        echo "Set the corresponding *_BIN variable via environment or .env.testing," >&2
+        echo "or install the tool in PATH. See .env.testing.example for details." >&2
+        echo "" >&2
+        echo "Tip: DDEV provides all tools with zero configuration." >&2
         exit 1
     fi
+
+    # Collect version info for the summary
+    local php_version node_version
+    if [[ "$ENV_SOURCE" == "ddev" ]]; then
+        php_version="${DETECTED_PHP_VERSION}"
+        node_version="${DETECTED_NODE_VERSION}"
+    else
+        php_version=$($PHP_BIN -r 'echo PHP_MAJOR_VERSION . "." . PHP_MINOR_VERSION;' 2>/dev/null || echo "?")
+        node_version=$($NODE_BIN --version 2>/dev/null | sed 's/^v//' || echo "?")
+    fi
+
+    # Print environment summary
+    echo ""
+    echo "═══ Test Environment ═══"
+    if [[ "$ENV_SOURCE" == "ddev" ]]; then
+        echo "  Source:      DDEV ($DETECTED_PROJECT_NAME)"
+    else
+        echo "  Source:      Local"
+    fi
+    echo "  PHP:         $PHP_BIN ($php_version)"
+    echo "  Composer:    $COMPOSER_BIN"
+    echo "  Node:        $NODE_BIN ($node_version)"
+    echo "  npm:         $NPM_BIN"
+    echo "  npx:         $NPX_BIN"
+    if [[ "$ENV_SOURCE" == "ddev" && -n "${DETECTED_WP_URL:-}" ]]; then
+        echo "  WP URL:      $DETECTED_WP_URL"
+    fi
+    if [[ "$MODE" != "unit" ]]; then
+        echo "  Playground:  $LOCAL_NPX (host)"
+    fi
+    echo "═════════════════════════"
+    echo ""
 }
 
 # ─── Install dependencies ───
@@ -119,12 +290,12 @@ check_requirements() {
 install_deps() {
     if [[ ! -d "$SCRIPT_DIR/vendor" ]]; then
         echo "Installing PHP dependencies..."
-        composer install --dev --working-dir="$SCRIPT_DIR" --quiet
+        $COMPOSER_BIN install --dev --quiet
     fi
 
     if [[ ! -d "$SCRIPT_DIR/node_modules" ]]; then
         echo "Installing Node.js dependencies..."
-        npm install --prefix "$SCRIPT_DIR" --silent
+        $NPM_BIN install --silent
     fi
 }
 
@@ -141,7 +312,7 @@ run_unit_php() {
         pest_args+=(--filter "$FILTER")
     fi
 
-    if "$SCRIPT_DIR/vendor/bin/pest" "${pest_args[@]}"; then
+    if $PHP_BIN vendor/bin/pest "${pest_args[@]}"; then
         UNIT_PHP_EXIT=0
     else
         UNIT_PHP_EXIT=$?
@@ -161,7 +332,7 @@ run_unit_js() {
         vitest_args+=(-t "$FILTER")
     fi
 
-    if npx --prefix "$SCRIPT_DIR" vitest "${vitest_args[@]}"; then
+    if $NPX_BIN vitest "${vitest_args[@]}"; then
         UNIT_JS_EXIT=0
     else
         UNIT_JS_EXIT=$?
@@ -176,7 +347,8 @@ start_playground() {
     echo ""
     echo "Starting WordPress Playground on port $PLAYGROUND_PORT..."
 
-    npx --prefix "$SCRIPT_DIR" @wp-playground/cli server \
+    # Playground always runs on the host (needs host ports and mount paths)
+    $LOCAL_NPX @wp-playground/cli server \
         --port="$PLAYGROUND_PORT" \
         --mount="$SCRIPT_DIR:/wordpress/wp-content/plugins/kntnt-ad-attribution" \
         --mount="$SCRIPT_DIR/tests/Integration/fake-consent-plugin:/wordpress/wp-content/mu-plugins/fake-consent-plugin" \
@@ -299,7 +471,9 @@ print_summary() {
 main() {
     cd "$SCRIPT_DIR"
 
-    check_requirements
+    load_overrides
+    detect_ddev || resolve_local
+    verify_environment
     install_deps
 
     # Ensure Playground is stopped on exit

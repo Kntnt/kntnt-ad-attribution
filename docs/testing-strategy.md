@@ -23,7 +23,7 @@ This document describes the test suite for the Kntnt Ad Attribution WordPress pl
 
 **Principles:**
 
-- **Low barrier to entry.** A developer needs only Bash, Node.js/npm, PHP/Composer, and curl. No Docker, no local WordPress installation, no MySQL.
+- **Low barrier to entry.** With DDEV, a developer only needs DDEV itself plus Node.js/npm. Without DDEV: Bash, Node.js/npm, PHP 8.3+/Composer, and curl. No local WordPress installation, no MySQL.
 - **Single entry point.** `bash run-tests.sh` installs all dependencies (if needed) and executes all tests across both levels.
 - **Reproducible.** WordPress Playground (`@wp-playground/cli`) provides an identical ephemeral WordPress environment for every developer.
 - **Comprehensive.** Every public method, every filter and action, every cookie manipulation, every database query path, and every JavaScript interaction has at least one test.
@@ -61,6 +61,18 @@ Level 2 tests exercise the plugin inside a real WordPress instance (running via 
 
 All other dependencies (Pest, Brain Monkey, Mockery, Vitest, happy-dom, `@wp-playground/cli`) are installed automatically by `run-tests.sh`.
 
+### Environment detection
+
+`run-tests.sh` resolves tool paths in three steps (highest priority first):
+
+1. **Explicit overrides:** Set `PHP_BIN`, `COMPOSER_BIN`, `NODE_BIN`, `NPM_BIN` as environment variables, or define them in `.env.testing` (see `.env.testing.example`). Environment variables take precedence over the file.
+
+2. **DDEV (recommended):** If the project has a DDEV configuration (`.ddev/config.yaml` in any parent directory), `run-tests.sh` detects it automatically and uses `ddev here php` and `ddev here composer` for PHP tests. Node.js/npm always run on the host since `node_modules` contains host-native binaries.
+
+3. **Local PATH fallback:** If no DDEV project is found, the script resolves tools from PATH.
+
+WordPress Playground (integration tests) always runs on the host via the local `npx` in PATH, even when DDEV is active.
+
 ---
 
 ## 4. Running Tests
@@ -80,6 +92,18 @@ bash run-tests.sh --unit-only          # Level 1 only (no Playground)
 bash run-tests.sh --integration-only   # Level 2 only
 bash run-tests.sh --filter consent     # Only tests matching pattern
 bash run-tests.sh --verbose            # Full output from each test
+```
+
+### Custom tool paths
+
+```bash
+# Explicit PHP override via environment variable
+PHP_BIN=/opt/php83/bin/php bash run-tests.sh
+
+# Via .env.testing file
+cp .env.testing.example .env.testing
+# Edit .env.testing, then:
+bash run-tests.sh
 ```
 
 ### Running individual test levels
@@ -116,7 +140,8 @@ GitHub Actions workflow (`.github/workflows/tests.yml`) runs all three levels on
 
 ```
 kntnt-ad-attribution/
-├── run-tests.sh                        # Single entry point
+├── run-tests.sh                        # Single entry point (env detection + test runner)
+├── .env.testing.example                # Override template for tool paths
 ├── composer.json                       # PHP dev dependencies
 ├── package.json                        # JS dev dependencies
 ├── phpunit.xml                         # Pest/PHPUnit configuration
