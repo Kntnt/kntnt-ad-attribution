@@ -31,10 +31,13 @@ RELEASE_ACTION=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --tag)
+      [[ $# -lt 2 ]] && { echo "Error: --tag requires a value." >&2; exit 1; }
       TAG="$2"
       shift 2
       ;;
     --output)
+      [[ $# -lt 2 ]] && { echo "Error: --output requires a value." >&2; exit 1; }
+      [[ -d "$2" ]] || { echo "Error: Directory '$2' does not exist." >&2; exit 1; }
       OUTPUT_DIR=$(cd "$2" && pwd)
       shift 2
       ;;
