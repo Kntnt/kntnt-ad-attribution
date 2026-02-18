@@ -126,10 +126,24 @@ wp i18n make-mo languages/
 ```
 
 > [!NOTE]
-> The repository does not include compiled `.mo` translation files. You must run `wp i18n make-mo languages/` after cloning to generate them from the `.po` source files. This requires [WP-CLI](https://wp-cli.org/) to be installed.
+> The repository does not include compiled `.mo` translation files. You must compile them from the `.po` source files using either `wp i18n make-mo` ([WP-CLI](https://wp-cli.org/)) or `msgfmt` ([GNU gettext](https://www.gnu.org/software/gettext/)).
 
 > [!TIP]
 > The repository includes `CLAUDE.md` and a `docs/` directory with detailed technical documentation. These files are primarily written for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (an AI coding assistant), giving it the context it needs to work effectively with this codebase. However, they are equally useful for human developers — covering architecture, data model, click and conversion flows, cookie handling, consent logic, security considerations, coding standards, and more.
+
+### Building a Release ZIP
+
+The `build-release-zip.sh` script creates a clean distribution ZIP from the latest GitHub release. It downloads the source archive, removes development files (docs, CLAUDE.md, etc.), compiles `.mo` translation files, and packages the result.
+
+```bash
+# Save the ZIP locally
+./build-release-zip.sh --output .
+
+# Upload the ZIP as a GitHub release asset
+./build-release-zip.sh --upload
+```
+
+Requires `gh` ([GitHub CLI](https://cli.github.com/)), `msgfmt` (GNU gettext), `unzip`, and `zip`.
 
 ### Permissions
 
