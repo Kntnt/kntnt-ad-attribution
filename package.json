@@ -4,7 +4,7 @@
     "description": "Test dependencies for Kntnt Ad Attribution.",
     "devDependencies": {
         "vitest": "^2.0",
-        "happy-dom": "^15.0",
+        "happy-dom": "^20.0",
         "@vitest/coverage-v8": "^2.0",
         "@wp-playground/cli": "^0.9"
     },
