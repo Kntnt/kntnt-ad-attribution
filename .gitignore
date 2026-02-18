@@ -21,8 +21,11 @@ Desktop.ini
 # Claude Code
 .claude/
 
-# Tests (local only, not distributed)
-tests/
+# Testing
+.env.testing
+/test-results/
+/coverage/
+.phpunit.cache/
 
 # VS Code
 .vscode/
@@ -48,11 +51,13 @@ auto-save-list/
 Session.vim
 .netrwhist
 
-# Node (if used for build tools)
+# Node
 node_modules/
+package-lock.json
 
 # Composer
 vendor/
+composer.lock
 
 # PHP
 *.phar

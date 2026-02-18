@@ -123,7 +123,7 @@ if [[ "$ACTION" == "output" ]]; then
 else
   # Delete existing asset with the same name (if any) before uploading.
   if gh release view "$TAG" --repo "$REPO" --json assets --jq ".assets[].name" | grep -qx "$ZIP_NAME"; then
-    echo "Deleting existing $ZIP_NAME from release $TAG…"
+    echo "Deleting existing $ZIP_NAME from release ${TAG}…"
     gh release delete-asset "$TAG" "$ZIP_NAME" --repo "$REPO" --yes
   fi
 
