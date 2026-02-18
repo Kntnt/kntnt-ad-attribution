@@ -133,17 +133,29 @@ wp i18n make-mo languages/
 
 ### Building a Release ZIP
 
-The `build-release-zip.sh` script creates a clean distribution ZIP from the latest GitHub release. It downloads the source archive, removes development files (docs, CLAUDE.md, etc.), compiles `.mo` translation files, and packages the result.
+The `build-release-zip.sh` script creates a clean distribution ZIP by removing development files (docs, CLAUDE.md, etc.), compiling `.mo` translation files, and packaging the result. It can build from local files (default) or from a specific git tag.
 
 ```bash
-# Save the ZIP locally
-./build-release-zip.sh --output .
+# Build from local files → zip in current directory
+./build-release-zip.sh
 
-# Upload the ZIP as a GitHub release asset
-./build-release-zip.sh --upload
+# Build from local files → zip in /tmp
+./build-release-zip.sh --output /tmp
+
+# Build from a git tag → zip in current directory
+./build-release-zip.sh --tag v1.5.1
+
+# Build from a git tag and upload to an existing GitHub release
+./build-release-zip.sh --tag v1.5.1 --update
+
+# Build from a git tag, create a new GitHub release, and upload
+./build-release-zip.sh --tag v1.5.1 --create
+
+# Combine --output with --update/--create to save locally AND upload
+./build-release-zip.sh --tag v1.5.1 --output . --update
 ```
 
-Requires `gh` ([GitHub CLI](https://cli.github.com/)), `msgfmt` (GNU gettext), `unzip`, and `zip`.
+Requires `zip` and `msgfmt` (GNU gettext). `gh` ([GitHub CLI](https://cli.github.com/)) is required only with `--update` or `--create`.
 
 ### Permissions
 
