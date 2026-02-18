@@ -43,7 +43,7 @@ Migration files are located in the `migrations/` directory, named after the vers
 
 ```
 migrations/
-├── 1.0.0.php    ← initial: creates the stats table
+├── 1.0.0.php    ← no-op (originally created stats table, superseded by 1.5.0)
 ├── 1.2.0.php    ← click ID and queue tables
 └── 1.5.0.php    ← clicks + conversions tables, drops stats
 ```

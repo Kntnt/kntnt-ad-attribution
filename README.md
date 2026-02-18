@@ -91,7 +91,7 @@ This plugin is designed with data minimization and data locality as core princip
 
 **Click counting does not require consent.** The plugin always logs that a click occurred on a tracking URL (recording a click record), regardless of consent status. This is analogous to server access logs and does not constitute personal data processing, since no individual is identified or identifiable from the click record alone.
 
-**Hashing is used for URL generation, not for pseudonymization of personal data.** The SHA-256 hashes in this plugin are derived from the ad's UTM parameters (source, medium, campaign, etc.) and serve as opaque identifiers for tracking URLs. They are not hashes of personal data such as email addresses or phone numbers. This is a fundamental difference from Enhanced Conversions, where personal data is hashed and sent to Google.
+**Hashing is used for URL generation, not for pseudonymization of personal data.** The SHA-256 hashes in this plugin are generated from random bytes (`random_bytes(32)`) and serve as opaque identifiers for tracking URLs. They are not derived from any personal data or UTM parameters — they are purely random identifiers. This is a fundamental difference from Enhanced Conversions, where personal data is hashed and sent to Google.
 
 **The `_aah_pending` cookie is a borderline case.** This temporary cookie (maximum 60 seconds) contains only an ad hash and serves as a technical transport mechanism for deferred consent scenarios. It contains no personal data in itself. Whether it should be classified as "necessary" or "marketing" is a judgment call that depends on your interpretation; the plugin's consent configuration section presents both options. See [Cookie Consent Configuration](#cookie-consent-configuration).
 
@@ -456,7 +456,7 @@ Accepted values: `'cookie'` (temporary `_aah_pending` cookie, 60 seconds) or `'f
 
 **`kntnt_ad_attr_is_bot`**
 
-Controls bot detection. Default: `false`. The plugin registers its own callback that checks the User-Agent against a list of known bot signatures (Googlebot, Bingbot, facebookexternalhit, etc.) and treats empty User-Agents as bots. Bots are redirected to the target page without logging the click or setting a cookie.
+Controls bot detection. Default: `false`. The plugin registers its own callback that checks the User-Agent (case-insensitive substring match) against these signatures: `bot` (catches Googlebot, Bingbot, LinkedInBot, AdsBot-Google, etc.), `crawl`, `spider`, `slurp`, `facebookexternalhit`, `Mediapartners-Google`, `Yahoo`, `curl`, `wget`, `python-requests`, `HeadlessChrome`, `Lighthouse`, `GTmetrix`. Empty User-Agents are also treated as bots. Bots are redirected to the target page without logging the click or setting a cookie. The plugin also adds `Disallow: /<prefix>/` to the virtual `robots.txt`.
 
 ```php
 // Add custom bot detection logic
@@ -630,12 +630,12 @@ Parameters:
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `$attributions` | `array<string, float>` | Hash => fractional attribution value (sums to 1.0). |
-| `$context` | `array` | Associative array with keys: `timestamp` (ISO 8601 UTC), `ip` (visitor IP), `user_agent` (visitor user-agent string). |
+| `$context` | `array` | Associative array with keys: `timestamp` (ISO 8601 UTC), `ip` (visitor IP), `user_agent` (visitor user-agent string), `page_url` (URL of the page where conversion occurred). |
 
 ```php
 add_action( 'kntnt_ad_attr_conversion_recorded', function ( array $attributions, array $context ): void {
     // $attributions = [ 'a1b2c3…' => 0.7, 'd4e5f6…' => 0.3 ]
-    // $context = [ 'timestamp' => '2025-02-15T14:30:00+00:00', 'ip' => '…', 'user_agent' => '…' ]
+    // $context = [ 'timestamp' => '2025-02-15T14:30:00+00:00', 'ip' => '…', 'user_agent' => '…', 'page_url' => '…' ]
 }, 10, 2 );
 ```
 

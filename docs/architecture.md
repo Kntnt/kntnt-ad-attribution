@@ -12,9 +12,11 @@ All machine-readable names use `kntnt-ad-attr` (hyphens) / `kntnt_ad_attr` (unde
 | Capability | `kntnt_ad_attr` |
 | DB version option | `kntnt_ad_attr_version` |
 | Cron hooks | `kntnt_ad_attr_daily_cleanup`, `kntnt_ad_attr_process_queue` |
-| REST base | `kntnt-ad-attr-urls` |
+| REST namespace | `kntnt-ad-attribution/v1` |
+| REST CPT base | `kntnt-ad-attr-urls` |
 | All filters/actions | `kntnt_ad_attr_*` |
 | Namespace | `Kntnt\Ad_Attribution` |
+| Cookies | `_ad_clicks`, `_aah_pending`, `_ad_last_conv` |
 
 ## Data Model
 

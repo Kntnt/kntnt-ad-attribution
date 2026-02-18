@@ -25,10 +25,10 @@ Tracking URLs are displayed and managed via a custom `WP_List_Table` subclass (n
 
 **Columns:**
 
-- Hash (truncated, e.g., first 12 characters)
-- Tracking URL (full)
+- Checkbox (bulk actions)
+- Tracking URL (full URL, click to copy to clipboard)
 - Target URL (resolved via `get_permalink()`)
-- Source, medium, campaign
+- Source, Medium, Campaign (from postmeta)
 
 **Row actions:** Trash (or Restore / Delete Permanently for trashed URLs).
 
@@ -45,7 +45,7 @@ The hash is generated automatically on save.
 GET /wp-json/kntnt-ad-attribution/v1/search-posts?search=<search term>
 ```
 
-The endpoint searches published posts (all public post types except `kntnt_ad_attr_url`) via `WP_Query` and returns:
+The endpoint searches published posts (all public post types except `kntnt_ad_attr_url`) using a multi-strategy lookup: exact post ID, URL resolution, slug LIKE matching, and title search via `WP_Query` (see [rest-api.md](rest-api.md) for details). It returns:
 
 ```json
 [

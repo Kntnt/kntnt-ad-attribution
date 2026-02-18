@@ -4,56 +4,76 @@
 
 ```
 kntnt-ad-attribution/
-├── kntnt-ad-attribution.php      ← Main plugin file
-├── autoloader.php                ← PSR-4 autoloader
-├── install.php                   ← Activation script
-├── uninstall.php                 ← Uninstall script
+├── kntnt-ad-attribution.php      ← Main plugin file (version header, PHP check, bootstrap)
+├── autoloader.php                ← PSR-4 autoloader for Kntnt\Ad_Attribution namespace
+├── install.php                   ← Activation script (capability, migration, cron)
+├── uninstall.php                 ← Uninstall script (complete data removal)
+├── README.md                     ← User-facing documentation
+├── CLAUDE.md                     ← AI-focused codebase guidance
 ├── classes/
-│   ├── Plugin.php                ← Singleton, hooks, options
-│   ├── Updater.php               ← GitHub update checker
-│   ├── Migrator.php              ← Database migration runner
-│   ├── Click_Handler.php         ← Ad click processing
-│   ├── Conversion_Handler.php    ← Conversion attribution
-│   ├── Cookie_Manager.php        ← Cookie read/write/validate
-│   ├── Consent.php               ← Consent check logic
-│   ├── Bot_Detector.php          ← User-Agent filtering
-│   ├── Rest_Endpoint.php         ← REST API (set-cookie, search-posts)
-│   ├── Admin_Page.php            ← Tools page with tab navigation
+│   ├── Plugin.php                ← Singleton, component wiring, hooks, path helpers
+│   ├── Updater.php               ← GitHub release update checker
+│   ├── Migrator.php              ← Database migration runner (version-based)
+│   ├── Post_Type.php             ← CPT registration, shared query helpers (v1.5.1)
+│   ├── Click_Handler.php         ← Ad click processing, redirect, parameter forwarding
+│   ├── Conversion_Handler.php    ← Conversion attribution, reporter enqueueing
+│   ├── Cookie_Manager.php        ← Cookie read/write/validate (stateless)
+│   ├── Consent.php               ← Three-state consent check logic
+│   ├── Bot_Detector.php          ← User-Agent filtering, robots.txt rule
+│   ├── Rest_Endpoint.php         ← REST API (set-cookie with rate limiting, search-posts)
+│   ├── Admin_Page.php            ← Tools page with tab navigation, URL CRUD, CSV export
 │   ├── Url_List_Table.php        ← WP_List_Table for the URLs tab
 │   ├── Campaign_List_Table.php   ← WP_List_Table for the Campaigns tab
-│   ├── Post_Type.php             ← CPT registration (no admin UI)
-│   ├── Csv_Exporter.php          ← CSV export handler
-│   ├── Utm_Options.php           ← Predefined UTM source/medium options
-│   ├── Cron.php                  ← Daily cleanup job
-│   ├── Click_ID_Store.php        ← Click ID storage (v1.2.0)
-│   ├── Queue.php                 ← Async job queue (v1.2.0)
+│   ├── Csv_Exporter.php          ← CSV export with locale-aware formatting
+│   ├── Utm_Options.php           ← Predefined UTM source/medium options (filterable)
+│   ├── Cron.php                  ← Daily cleanup job, target page warnings
+│   ├── Click_ID_Store.php        ← Platform-specific click ID storage (v1.2.0)
+│   ├── Queue.php                 ← Async job queue with retry logic (v1.2.0)
 │   └── Queue_Processor.php       ← Queue processing via cron (v1.2.0)
 ├── migrations/
-│   ├── 1.0.0.php                 ← Initial table creation (stats)
+│   ├── 1.0.0.php                 ← No-op (legacy stats table, superseded by 1.5.0)
 │   ├── 1.2.0.php                 ← Click ID and queue tables
 │   └── 1.5.0.php                 ← Clicks + conversions tables, drops stats
 ├── js/
-│   ├── pending-consent.js        ← Client-side consent/cookie script
-│   └── admin.js                  ← Admin: select2 initialization, page selector
-├── tests/
-│   ├── test-v150-required-fields.sh      ← Required Source/Medium/Campaign validation
-│   ├── test-v150-click-recording.sh      ← Individual click recording in clicks table
-│   ├── test-v150-last-click-attribution.sh ← Last-click attribution model
-│   ├── test-v150-campaigns-aggregation.sh ← Campaigns tab aggregation queries
-│   └── test-v150-csv-export.sh           ← CSV export with per-click fields
+│   ├── pending-consent.js        ← Client-side: pending consent, sessionStorage, REST call
+│   └── admin.js                  ← Admin: select2, page selector, UTM field auto-fill
 ├── css/
-│   └── admin.css                 ← Admin: styling for page selector and tabs
+│   └── admin.css                 ← Admin: styling for tabs, page selector, list tables
+├── tests/                        ← Integration test scripts (gitignored, local only)
+│   ├── test-v150-required-fields.sh
+│   ├── test-v150-click-recording.sh
+│   ├── test-v150-last-click-attribution.sh
+│   ├── test-v150-campaigns-aggregation.sh
+│   └── test-v150-csv-export.sh
+├── docs/                         ← Technical specifications
+│   ├── architecture.md
+│   ├── click-handling.md
+│   ├── cookies.md
+│   ├── conversion-handling.md
+│   ├── rest-api.md
+│   ├── client-script.md
+│   ├── admin-ui.md
+│   ├── developer-hooks.md
+│   ├── lifecycle.md
+│   ├── security.md
+│   ├── coding-standards.md
+│   ├── file-structure.md
+│   └── consent-example.md
 └── languages/
-    ├── kntnt-ad-attribution.pot
-    └── kntnt-ad-attribution-sv_SE.po
+    ├── kntnt-ad-attribution.pot          ← Translation template
+    └── kntnt-ad-attribution-sv_SE.po     ← Swedish translation source
 ```
 
 Classes follow PSR-4: `Kntnt\Ad_Attribution\Click_Handler` → `classes/Click_Handler.php`.
 
 ## Updates from GitHub
 
-The plugin is distributed via GitHub Releases, not wordpress.org. An Updater class hooks into `pre_set_site_transient_update_plugins` and compares the installed version against the latest GitHub release tag. If a new version exists and the release contains a `.zip` asset, the update is presented in WordPress admin.
+The plugin is distributed via GitHub Releases, not wordpress.org. The `Updater` class hooks into `pre_set_site_transient_update_plugins` and compares the installed version against the latest GitHub release tag. If a new version exists and the release contains a `.zip` asset, the update is presented in WordPress admin. The update mechanism uses the standard WordPress plugin update UI — no custom update screen.
 
 ## Translations
 
-The plugin supports translation via `load_plugin_textdomain`. Translation files (`.pot`, `.po`) are located in the `/languages` directory. Compiled `.mo` files are generated with `wp i18n make-mo languages/` (requires WP-CLI). The repository does not include `.mo` files.
+The plugin supports translation via `load_plugin_textdomain` with text domain `kntnt-ad-attr`. Translation files (`.pot`, `.po`) are located in the `/languages` directory. Compiled `.mo` files are generated with `wp i18n make-mo languages/` (requires WP-CLI). The repository does not include `.mo` files — they must be generated after cloning.
+
+## Distribution
+
+GitHub Releases include a pre-built `.zip` file that can be installed directly via WordPress admin. The `.zip` excludes development files (`tests/`, `docs/`, `.github/`, etc.) and includes compiled `.mo` files.

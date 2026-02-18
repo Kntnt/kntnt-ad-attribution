@@ -14,6 +14,8 @@ Create a service in Real Cookie Banner with identifier `kntnt-ad-attribution` an
 
 ## PHP Hook
 
+The `kntnt_ad_attr_has_consent` filter must distinguish three states: consent granted (`true`), consent denied (`false`), and no decision yet (`null`). Returning `false` when the visitor hasn't decided will silently prevent the deferred transport mechanism from activating.
+
 ```php
 add_filter( 'kntnt_ad_attr_has_consent', function(): ?bool {
 
@@ -27,35 +29,75 @@ add_filter( 'kntnt_ad_attr_has_consent', function(): ?bool {
         return null; // Service not configured
     }
 
-    return $consent['cookieOptIn'] === true ? true : false;
+    // consentGiven is true only after the visitor has made an explicit choice.
+    // Without this check, cookieOptIn: false would be returned both when the
+    // visitor has actively denied AND when they simply haven't interacted
+    // with the banner yet.
+    if ( ! $consent['consentGiven'] ) {
+        return null; // Visitor has not made a decision yet
+    }
+
+    return $consent['cookieOptIn'] === true;
 
 } );
 ```
 
+## PHP: Server-Side Cookie Deletion on Opt-Out
+
+The `_ad_clicks` cookie is set with the `HttpOnly` flag, preventing consent plugins from deleting it via client-side JavaScript. Use Real Cookie Banner's server-side opt-out hook:
+
+```php
+add_action( 'RCB/OptOut/ByHttpCookie', function ( string $name, string $host ): void {
+    if ( $name === '_ad_clicks' ) {
+        setcookie( '_ad_clicks', '', [
+            'expires'  => 1,
+            'path'     => '/',
+            'secure'   => true,
+            'httponly'  => true,
+            'samesite' => 'Lax',
+        ] );
+    }
+}, 10, 2 );
+```
+
 ## JavaScript Consent Interface
 
+Override `window.kntntAdAttributionGetConsent` **before `DOMContentLoaded`** to connect to Real Cookie Banner's JavaScript API:
+
 ```javascript
-window.kntntAdAttributionGetConsent = function( callback ) {
+( function() {
+    'use strict';
 
-    // Check initial state
-    const initialConsent = window.consentApi?.consent?.['kntnt-ad-attribution'];
-    if ( initialConsent === true ) {
-        callback( 'yes' );
-        return;
-    }
-    if ( initialConsent === false ) {
-        callback( 'no' );
-        return;
-    }
+    window.kntntAdAttributionGetConsent = function( callback ) {
 
-    // No decision yet — listen for future changes
-    document.addEventListener( 'RCBConsentChange', function( e ) {
-        if ( e.detail?.consent?.['kntnt-ad-attribution'] ) {
-            callback( 'yes' );
-        } else {
-            callback( 'no' );
+        var api = window.consentApi;
+        if ( ! api || typeof api.consent !== 'function' ) {
+            return; // RCB not loaded; fall back to plugin default.
         }
-    } );
 
-};
+        var handled = false;
+
+        function respond( answer ) {
+            if ( handled ) {
+                return;
+            }
+            handled = true;
+            callback( answer );
+        }
+
+        // consent() returns a Promise that resolves when consent IS given
+        // and rejects when consent is denied.
+        api.consent( 'kntnt-ad-attribution' ).then( function() {
+            respond( 'yes' );
+        } ).catch( function() {
+            respond( 'no' );
+        } );
+
+    };
+
+} )();
 ```
+
+Real Cookie Banner's `consentApi.consent()` method returns a Promise — it is a function, not a property object. The Promise resolves when the visitor grants consent (immediately if already consented) and rejects when the visitor denies consent. If the visitor hasn't decided yet, the Promise stays pending until a decision is made.
+
+**Note:** The JavaScript example in this file uses the Promise-based API from Real Cookie Banner, which is the recommended approach. An alternative pattern using `consentApi.consent` as a property object and the `RCBConsentChange` event is shown in the README — both work, but the Promise-based pattern is simpler and handles the pending state automatically.

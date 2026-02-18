@@ -1,6 +1,8 @@
 # REST API
 
-Internal endpoint — consumed by the plugin's own client-side script. The contract may change between versions.
+Internal endpoints — consumed by the plugin's own client-side script and admin UI. The contract may change between versions.
+
+Namespace: `kntnt-ad-attribution/v1`.
 
 ## Set Cookie
 
@@ -18,9 +20,11 @@ POST /wp-json/kntnt-ad-attribution/v1/set-cookie
 
 Content-Type: `application/json`. Header: `X-WP-Nonce: <nonce>`.
 
-**Validation:** Each hash is validated against `/^[a-f0-9]{64}$/` and against the database (must exist as a registered tracking URL). Invalid/unknown hashes are silently ignored.
+**Rate limiting:** 10 requests per minute per IP address. Tracked via a WordPress transient (`kntnt_ad_attr_rate_{$ip_hash}`). Exceeding the limit returns HTTP 429 with `{ "code": "rate_limit_exceeded" }`.
 
-**Consent check:** The endpoint checks `kntnt_ad_attr_has_consent`. If consent is missing, `200` is returned with `{ "success": false }` without setting a cookie.
+**Validation:** Each hash is validated against `/^[a-f0-9]{64}$/` and against the database via `Post_Type::get_valid_hashes()` (must exist as a published tracking URL). Invalid/unknown hashes are silently ignored.
+
+**Consent check:** The endpoint calls `Consent::check()`. If consent is not `true` (granted), HTTP 200 is returned with `{ "success": false }` without setting a cookie.
 
 **Response on successful request:**
 
@@ -41,9 +45,9 @@ Content-Type: application/json
 
 This means the REST endpoint and the click handler use the same `Cookie_Manager` class to read, merge, and write the cookie.
 
-**Permission:** `permission_callback` is set to `'__return_true'` — all visitors must be able to call the endpoint (CSRF protection is handled via nonce).
+**Permission:** `permission_callback` is set to `'__return_true'` — all visitors must be able to call the endpoint (CSRF protection is handled via nonce, abuse protection via rate limiting).
 
-**Protection:** Nonce validation, hash validation against database, consent check, cookie limit (max 50 hashes), no database side effects.
+**Protection:** Nonce validation, rate limiting, hash validation against database, consent check, cookie limit (max 50 hashes), no write side effects to database.
 
 ## Search Posts
 

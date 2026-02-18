@@ -106,7 +106,7 @@ Bots are redirected to the target URL, but the click is **not** logged and no co
 
 Bot detection is controlled by the filter `kntnt_ad_attr_is_bot` (default `false`). The plugin registers its own callback with User-Agent matching:
 
-Signatures matched (case-insensitive): `bot`, `crawl`, `spider`, `slurp`, `facebookexternalhit`, `LinkedInBot`, `Mediapartners-Google`, `AdsBot-Google`, `Googlebot`, `Bingbot`, `Yahoo`, `curl`, `wget`, `python-requests`, `HeadlessChrome`, `Lighthouse`, `GTmetrix`. An empty User-Agent is treated as a bot.
+Signatures matched (case-insensitive substring match against User-Agent): `bot` (catches Googlebot, Bingbot, LinkedInBot, AdsBot-Google, etc.), `crawl`, `spider`, `slurp`, `facebookexternalhit`, `Mediapartners-Google`, `Yahoo`, `curl`, `wget`, `python-requests`, `HeadlessChrome`, `Lighthouse`, `GTmetrix`. An empty User-Agent is also treated as a bot. The filter `kntnt_ad_attr_is_bot` allows supplementing or replacing the built-in detection.
 
 The plugin automatically adds `Disallow: /<prefix>/` to WordPress's virtual `robots.txt` via the `robots_txt` filter. Sites with a physical `robots.txt` need to add the line manually.
 
