@@ -1,0 +1,28 @@
+{
+    "landingPage": "/wp-admin/",
+    "preferredVersions": {
+        "php": "8.3",
+        "wp": "latest"
+    },
+    "steps": [
+        {
+            "step": "login",
+            "username": "admin",
+            "password": "password"
+        },
+        {
+            "step": "writeFile",
+            "path": "/wordpress/wp-content/mu-plugins/fake-consent.php",
+            "data": "<?php require_once __DIR__ . '/fake-consent-plugin/fake-consent.php';"
+        },
+        {
+            "step": "writeFile",
+            "path": "/wordpress/wp-content/mu-plugins/test-helpers.php",
+            "data": "<?php require_once __DIR__ . '/test-helpers-plugin/test-helpers.php';"
+        },
+        {
+            "step": "activatePlugin",
+            "pluginPath": "kntnt-ad-attribution/kntnt-ad-attribution.php"
+        }
+    ]
+}

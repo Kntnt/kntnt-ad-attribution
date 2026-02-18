@@ -26,6 +26,8 @@ Desktop.ini
 /test-results/
 /coverage/
 .phpunit.cache/
+tests/pest_stderr.txt
+tests/results.xml
 
 # VS Code
 .vscode/

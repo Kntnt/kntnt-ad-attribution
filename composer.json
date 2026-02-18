@@ -1,0 +1,30 @@
+{
+    "name": "kntnt/kntnt-ad-attribution",
+    "description": "WordPress plugin for ad click attribution with first-party cookies.",
+    "type": "wordpress-plugin",
+    "license": "GPL-2.0-or-later",
+    "require-dev": {
+        "pestphp/pest": "^3.0",
+        "brain/monkey": "^2.6",
+        "mockery/mockery": "^1.6",
+        "dg/bypass-finals": "^1.7"
+    },
+    "autoload": {
+        "psr-4": {
+            "Kntnt\\Ad_Attribution\\": "classes/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Tests\\": "tests/"
+        },
+        "files": [
+            "tests/Helpers/WpStubs.php"
+        ]
+    },
+    "config": {
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    }
+}

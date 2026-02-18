@@ -81,15 +81,60 @@ See `docs/developer-hooks.md` for full documentation.
 
 ## Tests
 
-Integration test scripts live in `tests/` (gitignored, local only — not included in releases). They use `ddev wp`, `ddev mysql`, and `curl` to create fixtures, fire requests, and assert on the results. Run from the project root:
+The test suite has three levels. See `docs/testing-strategy.md` for full details.
+
+| Level | Framework | Tests | What it covers |
+|-------|-----------|-------|----------------|
+| PHP unit | Pest + Brain Monkey + Mockery | 219 | Individual class methods in isolation |
+| JS unit | Vitest + happy-dom | 28 | `pending-consent.js` and `admin.js` |
+| Integration | Bash + curl + WordPress Playground | 14 suites | End-to-end flows: click, conversion, admin, REST, cron |
+
+### Running tests
 
 ```bash
-bash tests/test-v150-required-fields.sh
-bash tests/test-v150-click-recording.sh
-bash tests/test-v150-last-click-attribution.sh
-bash tests/test-v150-campaigns-aggregation.sh
-bash tests/test-v150-csv-export.sh
+# All tests (unit + integration)
+bash run-tests.sh
+
+# Unit tests only (no Playground, fast)
+bash run-tests.sh --unit-only
+
+# Integration tests only
+bash run-tests.sh --integration-only
+
+# Filter by pattern
+bash run-tests.sh --filter consent
 ```
+
+### Running tests individually
+
+```bash
+# PHP unit tests (requires PHP 8.3 in PATH, or use ddev)
+ddev here ./vendor/bin/pest
+./vendor/bin/pest --filter CookieManager
+
+# JS unit tests
+npx vitest run
+
+# Single integration test (requires Playground running on port 9400)
+bash tests/Integration/test-click-flow.sh
+```
+
+### Requirements
+
+PHP 8.3+, Node.js 20.18+, Composer 2, npm, curl, jq. Dependencies are installed automatically by `run-tests.sh`.
+
+### CI
+
+GitHub Actions workflow (`.github/workflows/tests.yml`) runs all three levels on push/PR to `main`. PHP coverage via pcov; JS coverage via v8.
+
+### Integration test architecture
+
+Integration tests run against a disposable WordPress Playground instance (WASM-based SQLite, no MySQL needed). Two mu-plugins provide test infrastructure:
+
+- `tests/Integration/fake-consent-plugin/` — simulates consent states via WP option
+- `tests/Integration/test-helpers-plugin/` — REST endpoints for fixtures, DB queries, cookie manipulation
+
+**Known WASM PHP gotcha:** Playground reuses the PHP process between requests. Manual `$_COOKIE`/`$_GET`/`$_POST` modifications persist across requests. The `test-clear-cookies` endpoint and `clear_cookies` fixture helper reset this state between tests.
 
 ## Specifications
 
@@ -110,6 +155,7 @@ All specs are in `docs/`. Read the relevant doc before implementing a feature:
 | `coding-standards.md` | Full coding standards reference |
 | `file-structure.md` | Project file organization, updates, translations |
 | `consent-example.md` | Complete consent integration example (Real Cookie Banner) |
+| `testing-strategy.md` | Test suite architecture, specifications, implementation plan |
 
 ## Coding Standards
 

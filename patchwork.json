@@ -1,0 +1,10 @@
+{
+    "redefinable-internals": [
+        "error_log",
+        "setcookie",
+        "header",
+        "time",
+        "gmdate",
+        "exit"
+    ]
+}

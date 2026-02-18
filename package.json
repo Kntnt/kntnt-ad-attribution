@@ -1,0 +1,16 @@
+{
+    "name": "kntnt-ad-attribution",
+    "private": true,
+    "description": "Test dependencies for Kntnt Ad Attribution.",
+    "devDependencies": {
+        "vitest": "^2.0",
+        "happy-dom": "^15.0",
+        "@vitest/coverage-v8": "^2.0",
+        "@wp-playground/cli": "^0.9"
+    },
+    "scripts": {
+        "test": "vitest run",
+        "test:watch": "vitest",
+        "test:coverage": "vitest run --coverage"
+    }
+}
