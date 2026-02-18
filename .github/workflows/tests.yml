@@ -24,7 +24,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: vendor
-          key: composer-${{ hashFiles('composer.lock', 'composer.json') }}
+          key: composer-${{ hashFiles('composer.json') }}
           restore-keys: composer-
 
       - name: Install Composer dependencies
@@ -43,10 +43,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install --silent
 
       - name: Run Vitest
         run: npx vitest run --coverage
@@ -67,7 +66,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
 
       - name: Install jq
         run: sudo apt-get install -yq jq
@@ -76,13 +74,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: vendor
-          key: composer-${{ hashFiles('composer.lock', 'composer.json') }}
+          key: composer-${{ hashFiles('composer.json') }}
           restore-keys: composer-
 
       - name: Install dependencies
         run: |
           composer install --dev --prefer-dist --no-progress
-          npm ci
+          npm install --silent
 
       - name: Run integration tests
         run: bash run-tests.sh --integration-only
