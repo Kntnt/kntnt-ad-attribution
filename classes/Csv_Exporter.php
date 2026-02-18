@@ -80,8 +80,7 @@ final class Csv_Exporter {
 		], $delimiter );
 
 		// Build tracking URL prefix once.
-		/** @var string $prefix The URL path prefix for tracking URLs. */
-		$prefix = apply_filters( 'kntnt_ad_attr_url_prefix', 'ad' );
+		$prefix = Plugin::get_url_prefix();
 
 		// Data rows.
 		foreach ( $items as $item ) {

@@ -333,48 +333,18 @@ final class Plugin {
 	}
 
 	/**
-	 * Gets plugin option data from WordPress options table.
+	 * Returns the filterable URL prefix for tracking URLs.
 	 *
-	 * Can retrieve the entire option array or a specific key within it.
-	 * Option name is automatically generated from plugin slug.
+	 * Caches the result so the `kntnt_ad_attr_url_prefix` filter fires
+	 * only once per request.
 	 *
-	 * @param string|null $key Specific option key to retrieve, or null for entire option.
-	 *
-	 * @return mixed Option value or null if not found.
-	 * @since 1.0.0
+	 * @return string The URL path prefix (default: 'ad').
+	 * @since 1.5.1
 	 */
-	public static function get_option( ?string $key = null ): mixed {
-		$option_name = str_replace( '-', '_', self::get_slug() );
-		$option      = \get_option( $option_name, [] );
-
-		if ( $key !== null ) {
-			return $option[ $key ] ?? null;
-		}
-		return $option;
-	}
-
-	/**
-	 * Sets plugin option data in WordPress options table.
-	 *
-	 * Can set the entire option or update a specific key within the option array.
-	 * Creates the option if it doesn't exist.
-	 *
-	 * @param mixed       $value The value to set.
-	 * @param string|null $key   Specific option key to update, or null to replace entire option.
-	 *
-	 * @return bool True on success, false on failure.
-	 * @since 1.0.0
-	 */
-	public static function set_option( mixed $value, ?string $key = null ): bool {
-		$option_name = str_replace( '-', '_', self::get_slug() );
-
-		if ( $key !== null ) {
-			$option         = \get_option( $option_name, [] );
-			$option[ $key ] = $value;
-			return update_option( $option_name, $option );
-		}
-
-		return update_option( $option_name, $value );
+	public static function get_url_prefix(): string {
+		/** @var string $prefix The URL path prefix for tracking URLs. */
+		static $prefix;
+		return $prefix ??= apply_filters( 'kntnt_ad_attr_url_prefix', 'ad' );
 	}
 
 	/**

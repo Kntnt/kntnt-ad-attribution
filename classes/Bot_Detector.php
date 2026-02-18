@@ -34,16 +34,12 @@ final class Bot_Detector {
 	 * @since 1.0.0
 	 */
 	private const BOT_SIGNATURES = [
-		'bot',
+		'bot',       // Catches LinkedInBot, AdsBot-Google, Googlebot, Bingbot, etc.
 		'crawl',
 		'spider',
 		'slurp',
 		'facebookexternalhit',
-		'LinkedInBot',
 		'Mediapartners-Google',
-		'AdsBot-Google',
-		'Googlebot',
-		'Bingbot',
 		'Yahoo',
 		'curl',
 		'wget',
@@ -123,9 +119,7 @@ final class Bot_Detector {
 	 */
 	public function add_disallow_rule( string $output, bool $public ): string {
 		if ( $public ) {
-			/** @var string $prefix The URL path prefix for tracking URLs. */
-			$prefix = apply_filters( 'kntnt_ad_attr_url_prefix', 'ad' );
-			$output .= "\nDisallow: /{$prefix}/\n";
+			$output .= "\nDisallow: /" . Plugin::get_url_prefix() . "/\n";
 		}
 		return $output;
 	}

@@ -1,9 +1,11 @@
 <?php
 /**
- * Migration: 1.0.0 — Initial table creation.
+ * Migration: 1.0.0 — Initial table creation (no-op).
  *
- * Creates the kntnt_ad_attr_stats table for storing click and conversion
- * statistics with daily granularity.
+ * This migration originally created the kntnt_ad_attr_stats table. On fresh
+ * installs (stored version 0.0.0) migration 1.5.0 immediately drops the stats
+ * table in the same batch, so creating it here is unnecessary work. The
+ * callable signature is preserved for the Migrator's version-comparison loop.
  *
  * @package Kntnt\Ad_Attribution
  * @since   1.0.0
@@ -17,22 +19,6 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 return function ( \wpdb $wpdb ): void {
-
-	$table   = $wpdb->prefix . 'kntnt_ad_attr_stats';
-	$charset = $wpdb->get_charset_collate();
-
-	// Daily aggregated statistics per tracking URL hash.
-	// The composite primary key (hash, date) enables ON DUPLICATE KEY UPDATE
-	// for atomic click/conversion increments without separate upsert logic.
-	$sql = "CREATE TABLE {$table} (
-		hash        CHAR(64)       NOT NULL,
-		date        DATE           NOT NULL,
-		clicks      INT UNSIGNED   NOT NULL DEFAULT 0,
-		conversions DECIMAL(10,4)  NOT NULL DEFAULT 0,
-		PRIMARY KEY (hash, date),
-		INDEX idx_date (date)
-	) {$charset};";
-
-	require_once ABSPATH . 'wp-admin/includes/upgrade.php';
-	dbDelta( $sql );
+	// Intentionally empty — the stats table was superseded by clicks +
+	// conversions tables in migration 1.5.0.
 };

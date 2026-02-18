@@ -128,7 +128,10 @@ final class Cron {
 	/**
 	 * Deletes conversion records whose click no longer exists.
 	 *
-	 * Acts as a cascade-delete cleanup for orphaned conversion rows.
+	 * Defensive safety net: under normal operation, cleanup_clicks() and
+	 * permanently_delete_url() already remove conversions before deleting
+	 * their parent clicks. This method catches any orphans that slip
+	 * through (e.g. due to interrupted transactions or manual DB edits).
 	 *
 	 * @return void
 	 * @since 1.5.0

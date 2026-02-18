@@ -106,9 +106,7 @@ final class Campaign_List_Table extends WP_List_Table {
 	 * @since 1.0.0
 	 */
 	protected function column_tracking_url( object $item ): string {
-		/** @var string $prefix The URL path prefix for tracking URLs. */
-		$prefix       = apply_filters( 'kntnt_ad_attr_url_prefix', 'ad' );
-		$tracking_url = home_url( $prefix . '/' . $item->hash );
+		$tracking_url = home_url( Plugin::get_url_prefix() . '/' . $item->hash );
 
 		return '<code class="kntnt-ad-attr-copy" role="button" tabindex="0" data-clipboard-text="'
 			. esc_attr( $tracking_url ) . '">' . esc_html( $tracking_url ) . '</code>';
@@ -199,15 +197,54 @@ final class Campaign_List_Table extends WP_List_Table {
 	}
 
 	/**
-	 * Builds the shared FROM/WHERE/GROUP BY portion of the tab query.
+	 * Builds UTM filter and search WHERE clauses from current filter params.
 	 *
-	 * Groups by hash only (Source/Medium/Campaign come from postmeta and are
-	 * fixed per tracking URL). Used by fetch_items() and fetch_all_items().
+	 * @param array $params Filter parameters from get_filter_params().
+	 *
+	 * @return string SQL WHERE clauses (each prefixed with AND).
+	 * @since 1.5.1
+	 */
+	private function build_filter_clauses( array $params ): string {
+		global $wpdb;
+
+		$filter_map = [
+			'utm_source'   => 'pm_src.meta_value',
+			'utm_medium'   => 'pm_med.meta_value',
+			'utm_campaign' => 'pm_camp.meta_value',
+		];
+
+		$clauses = '';
+		foreach ( $filter_map as $filter_key => $column ) {
+			if ( $params[ $filter_key ] !== '' ) {
+				$clauses .= $wpdb->prepare( " AND {$column} = %s", $params[ $filter_key ] );
+			}
+		}
+
+		// Free-text search — matches tracking URL (post_title) or hash.
+		if ( $params['search'] !== '' ) {
+			$like     = '%' . $wpdb->esc_like( $params['search'] ) . '%';
+			$clauses .= $wpdb->prepare(
+				' AND (p.post_title LIKE %s OR pm_hash.meta_value LIKE %s)',
+				$like,
+				$like,
+			);
+		}
+
+		return $clauses;
+	}
+
+	/**
+	 * Builds the shared FROM + JOINs + base WHERE + filter clauses.
+	 *
+	 * The `$include_target` flag controls whether the pm_target JOIN is
+	 * included — get_totals() omits it since it doesn't need the column.
+	 *
+	 * @param bool $include_target Whether to JOIN pm_target (default: true).
 	 *
 	 * @return array{0: string, 1: array} SQL fragment and bound parameters.
-	 * @since 1.0.0
+	 * @since 1.5.1
 	 */
-	private function build_base_query(): array {
+	private function build_from_where( bool $include_target = true ): array {
 		global $wpdb;
 
 		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
@@ -217,9 +254,15 @@ final class Campaign_List_Table extends WP_List_Table {
 			INNER JOIN {$wpdb->postmeta} pm_hash
 				ON pm_hash.meta_key = '_hash' AND pm_hash.meta_value = c.hash
 			INNER JOIN {$wpdb->posts} p
-				ON p.ID = pm_hash.post_id AND p.post_type = %s AND p.post_status = 'publish'
+				ON p.ID = pm_hash.post_id AND p.post_type = %s AND p.post_status = 'publish'";
+
+		if ( $include_target ) {
+			$from_where .= "
 			INNER JOIN {$wpdb->postmeta} pm_target
-				ON pm_target.post_id = p.ID AND pm_target.meta_key = '_target_post_id'
+				ON pm_target.post_id = p.ID AND pm_target.meta_key = '_target_post_id'";
+		}
+
+		$from_where .= "
 			LEFT JOIN {$wpdb->postmeta} pm_src
 				ON pm_src.post_id = p.ID AND pm_src.meta_key = '_utm_source'
 			LEFT JOIN {$wpdb->postmeta} pm_med
@@ -238,34 +281,26 @@ final class Campaign_List_Table extends WP_List_Table {
 			$params['date_end'] . ' 23:59:59',
 		];
 
-		// Dynamic WHERE clauses for UTM filters.
-		$filter_map = [
-			'utm_source'   => 'pm_src.meta_value',
-			'utm_medium'   => 'pm_med.meta_value',
-			'utm_campaign' => 'pm_camp.meta_value',
-		];
+		$from_where .= $this->build_filter_clauses( $params );
 
-		$where_clauses = '';
-		foreach ( $filter_map as $filter_key => $column ) {
-			if ( $params[ $filter_key ] !== '' ) {
-				$where_clauses .= $wpdb->prepare( " AND {$column} = %s", $params[ $filter_key ] );
-			}
-		}
+		return [ $from_where, $query_params ];
+	}
 
-		// Free-text search — matches tracking URL (post_title) or hash.
-		if ( $params['search'] !== '' ) {
-			$like           = '%' . $wpdb->esc_like( $params['search'] ) . '%';
-			$where_clauses .= $wpdb->prepare(
-				' AND (p.post_title LIKE %s OR pm_hash.meta_value LIKE %s)',
-				$like,
-				$like,
-			);
-		}
+	/**
+	 * Builds the tab query with GROUP BY for the list table view.
+	 *
+	 * Groups by hash and postmeta-level UTM dimensions.
+	 *
+	 * @return array{0: string, 1: array} SQL fragment and bound parameters.
+	 * @since 1.0.0
+	 */
+	private function build_base_query(): array {
+		[ $from_where, $params ] = $this->build_from_where();
 
 		$group_by = ' GROUP BY c.hash, pm_target.meta_value,
 			pm_src.meta_value, pm_med.meta_value, pm_camp.meta_value';
 
-		return [ $from_where . $where_clauses . $group_by, $query_params ];
+		return [ $from_where . $group_by, $params ];
 	}
 
 	/**
@@ -278,65 +313,13 @@ final class Campaign_List_Table extends WP_List_Table {
 	 * @since 1.5.0
 	 */
 	private function build_csv_query(): array {
-		global $wpdb;
+		[ $from_where, $params ] = $this->build_from_where();
 
-		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
-		$conv_table   = $wpdb->prefix . 'kntnt_ad_attr_conversions';
-
-		$from_where = "FROM {$clicks_table} c
-			INNER JOIN {$wpdb->postmeta} pm_hash
-				ON pm_hash.meta_key = '_hash' AND pm_hash.meta_value = c.hash
-			INNER JOIN {$wpdb->posts} p
-				ON p.ID = pm_hash.post_id AND p.post_type = %s AND p.post_status = 'publish'
-			INNER JOIN {$wpdb->postmeta} pm_target
-				ON pm_target.post_id = p.ID AND pm_target.meta_key = '_target_post_id'
-			LEFT JOIN {$wpdb->postmeta} pm_src
-				ON pm_src.post_id = p.ID AND pm_src.meta_key = '_utm_source'
-			LEFT JOIN {$wpdb->postmeta} pm_med
-				ON pm_med.post_id = p.ID AND pm_med.meta_key = '_utm_medium'
-			LEFT JOIN {$wpdb->postmeta} pm_camp
-				ON pm_camp.post_id = p.ID AND pm_camp.meta_key = '_utm_campaign'
-			LEFT JOIN {$conv_table} cv
-				ON cv.click_id = c.id
-			WHERE c.clicked_at BETWEEN %s AND %s";
-
-		$params = $this->get_filter_params();
-
-		$query_params = [
-			Post_Type::SLUG,
-			$params['date_start'] . ' 00:00:00',
-			$params['date_end'] . ' 23:59:59',
-		];
-
-		// Dynamic WHERE clauses for UTM filters.
-		$filter_map = [
-			'utm_source'   => 'pm_src.meta_value',
-			'utm_medium'   => 'pm_med.meta_value',
-			'utm_campaign' => 'pm_camp.meta_value',
-		];
-
-		$where_clauses = '';
-		foreach ( $filter_map as $filter_key => $column ) {
-			if ( $params[ $filter_key ] !== '' ) {
-				$where_clauses .= $wpdb->prepare( " AND {$column} = %s", $params[ $filter_key ] );
-			}
-		}
-
-		if ( $params['search'] !== '' ) {
-			$like           = '%' . $wpdb->esc_like( $params['search'] ) . '%';
-			$where_clauses .= $wpdb->prepare(
-				' AND (p.post_title LIKE %s OR pm_hash.meta_value LIKE %s)',
-				$like,
-				$like,
-			);
-		}
-
-		// Group by per-click fields too for CSV granularity.
 		$group_by = ' GROUP BY c.hash, pm_target.meta_value,
 			pm_src.meta_value, pm_med.meta_value, pm_camp.meta_value,
 			c.utm_content, c.utm_term, c.utm_id, c.utm_source_platform';
 
-		return [ $from_where . $where_clauses . $group_by, $query_params ];
+		return [ $from_where . $group_by, $params ];
 	}
 
 	/**
@@ -498,7 +481,7 @@ final class Campaign_List_Table extends WP_List_Table {
 		// UTM dropdowns.
 		foreach ( $utm_filters as $meta_suffix => $label ) {
 			$meta_key = '_' . $meta_suffix;
-			$values   = $this->get_distinct_meta_values( $meta_key );
+			$values   = Post_Type::get_distinct_meta_values( $meta_key );
 			$current  = $params[ $meta_suffix ];
 
 			echo '<select name="' . esc_attr( $meta_suffix ) . '">';
@@ -520,37 +503,10 @@ final class Campaign_List_Table extends WP_List_Table {
 	}
 
 	/**
-	 * Retrieves distinct meta values for a given key from published tracking URLs.
-	 *
-	 * @param string $meta_key The meta key to query (e.g. '_utm_source').
-	 *
-	 * @return string[] Sorted list of distinct values.
-	 * @since 1.0.0
-	 */
-	private function get_distinct_meta_values( string $meta_key ): array {
-		global $wpdb;
-
-		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-		$values = $wpdb->get_col( $wpdb->prepare(
-			"SELECT DISTINCT pm.meta_value
-			 FROM {$wpdb->postmeta} pm
-			 INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
-			 WHERE pm.meta_key = %s
-			   AND p.post_type = %s
-			   AND p.post_status = 'publish'
-			   AND pm.meta_value != ''
-			 ORDER BY pm.meta_value ASC",
-			$meta_key,
-			Post_Type::SLUG,
-		) );
-
-		return $values ?: [];
-	}
-
-	/**
 	 * Returns aggregated totals for the current filter set.
 	 *
-	 * Queries the clicks and conversions tables without GROUP BY.
+	 * Queries the clicks and conversions tables without GROUP BY. Omits the
+	 * pm_target JOIN since totals don't need the target post ID column.
 	 *
 	 * @return object|null Object with total_clicks and total_conversions, or null.
 	 * @since 1.0.0
@@ -562,59 +518,13 @@ final class Campaign_List_Table extends WP_List_Table {
 
 		global $wpdb;
 
-		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
-		$conv_table   = $wpdb->prefix . 'kntnt_ad_attr_conversions';
-		$params       = $this->get_filter_params();
-
-		$from_where = "FROM {$clicks_table} c
-			INNER JOIN {$wpdb->postmeta} pm_hash
-				ON pm_hash.meta_key = '_hash' AND pm_hash.meta_value = c.hash
-			INNER JOIN {$wpdb->posts} p
-				ON p.ID = pm_hash.post_id AND p.post_type = %s AND p.post_status = 'publish'
-			LEFT JOIN {$wpdb->postmeta} pm_src
-				ON pm_src.post_id = p.ID AND pm_src.meta_key = '_utm_source'
-			LEFT JOIN {$wpdb->postmeta} pm_med
-				ON pm_med.post_id = p.ID AND pm_med.meta_key = '_utm_medium'
-			LEFT JOIN {$wpdb->postmeta} pm_camp
-				ON pm_camp.post_id = p.ID AND pm_camp.meta_key = '_utm_campaign'
-			LEFT JOIN {$conv_table} cv
-				ON cv.click_id = c.id
-			WHERE c.clicked_at BETWEEN %s AND %s";
-
-		$query_params = [
-			Post_Type::SLUG,
-			$params['date_start'] . ' 00:00:00',
-			$params['date_end'] . ' 23:59:59',
-		];
-
-		// Dynamic WHERE clauses for UTM filters.
-		$filter_map = [
-			'utm_source'   => 'pm_src.meta_value',
-			'utm_medium'   => 'pm_med.meta_value',
-			'utm_campaign' => 'pm_camp.meta_value',
-		];
-
-		$where_clauses = '';
-		foreach ( $filter_map as $filter_key => $column ) {
-			if ( $params[ $filter_key ] !== '' ) {
-				$where_clauses .= $wpdb->prepare( " AND {$column} = %s", $params[ $filter_key ] );
-			}
-		}
-
-		if ( $params['search'] !== '' ) {
-			$like           = '%' . $wpdb->esc_like( $params['search'] ) . '%';
-			$where_clauses .= $wpdb->prepare(
-				' AND (p.post_title LIKE %s OR pm_hash.meta_value LIKE %s)',
-				$like,
-				$like,
-			);
-		}
+		[ $from_where, $query_params ] = $this->build_from_where( include_target: false );
 
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 		$this->totals = $wpdb->get_row( $wpdb->prepare(
 			"SELECT COUNT(DISTINCT c.id) AS total_clicks,
 				COALESCE(SUM(cv.fractional_conversion), 0) AS total_conversions
-			{$from_where}{$where_clauses}",
+			{$from_where}",
 			...$query_params,
 		) );
 

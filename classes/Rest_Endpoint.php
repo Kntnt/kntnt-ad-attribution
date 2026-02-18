@@ -286,7 +286,7 @@ final class Rest_Endpoint {
 		);
 
 		// Verify hashes exist as published tracking URLs.
-		$hashes = $this->get_valid_hashes( $hashes );
+		$hashes = Post_Type::get_valid_hashes( $hashes );
 
 		if ( empty( $hashes ) ) {
 			return new WP_REST_Response( [ 'success' => false ] );
@@ -305,36 +305,6 @@ final class Rest_Endpoint {
 		$this->cookie_manager->set_clicks_cookie( $entries );
 
 		return new WP_REST_Response( [ 'success' => true ] );
-	}
-
-	/**
-	 * Returns hashes that exist as published tracking URLs in the database.
-	 *
-	 * @param string[] $hashes SHA-256 hashes to check.
-	 *
-	 * @return string[] Subset of input hashes that have published tracking URL posts.
-	 * @since 1.0.0
-	 */
-	private function get_valid_hashes( array $hashes ): array {
-		global $wpdb;
-
-		if ( empty( $hashes ) ) {
-			return [];
-		}
-
-		$placeholders = implode( ',', array_fill( 0, count( $hashes ), '%s' ) );
-		$args         = array_merge( $hashes, [ Post_Type::SLUG ] );
-
-		return $wpdb->get_col( $wpdb->prepare(
-			"SELECT DISTINCT pm.meta_value
-			 FROM {$wpdb->postmeta} pm
-			 JOIN {$wpdb->posts} p ON p.ID = pm.post_id
-			 WHERE pm.meta_key = '_hash'
-			   AND pm.meta_value IN ({$placeholders})
-			   AND p.post_type = %s
-			   AND p.post_status = 'publish'",
-			...$args,
-		) );
 	}
 
 }

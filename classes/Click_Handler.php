@@ -96,8 +96,7 @@ final class Click_Handler {
 	 * @since 1.0.0
 	 */
 	public function add_rewrite_rule(): void {
-		/** @var string $prefix The URL path prefix for tracking URLs. */
-		$prefix = apply_filters( 'kntnt_ad_attr_url_prefix', 'ad' );
+		$prefix = Plugin::get_url_prefix();
 
 		add_rewrite_rule(
 			'^' . preg_quote( $prefix, '/' ) . '/([a-f0-9]{64})/?$',
@@ -138,7 +137,9 @@ final class Click_Handler {
 			return;
 		}
 
-		// Step 2: Validate hash format.
+		// Step 2: Validate hash format. The rewrite rule regex already constrains
+		// the hash to 64 hex chars, but we re-validate here as defense-in-depth
+		// in case the rewrite rule is bypassed or modified by another plugin.
 		if ( ! $this->cookie_manager->validate_hash( $hash ) ) {
 			$this->send_404();
 		}
@@ -201,8 +202,7 @@ final class Click_Handler {
 
 		// Step 8: Redirect loop guard — ensure target doesn't point back
 		// to a tracking URL.
-		/** @var string $prefix The URL path prefix for tracking URLs. */
-		$prefix      = apply_filters( 'kntnt_ad_attr_url_prefix', 'ad' );
+		$prefix      = Plugin::get_url_prefix();
 		$target_path = wp_parse_url( $target_url, PHP_URL_PATH ) ?? '';
 
 		if ( str_starts_with( ltrim( $target_path, '/' ), $prefix . '/' ) ) {
@@ -335,7 +335,6 @@ final class Click_Handler {
 		$transport = apply_filters( 'kntnt_ad_attr_pending_transport', 'cookie' );
 
 		match ( $transport ) {
-			'cookie'   => $this->cookie_manager->set_transport_cookie( $hash ),
 			'fragment' => $target_url .= '#_aah=' . $hash,
 			default    => $this->cookie_manager->set_transport_cookie( $hash ),
 		};

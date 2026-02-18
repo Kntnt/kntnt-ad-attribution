@@ -73,4 +73,67 @@ final class Post_Type {
 		return $new_status;
 	}
 
+	/**
+	 * Returns hashes that exist as published tracking URLs in the database.
+	 *
+	 * Shared by Conversion_Handler (cookie validation) and Rest_Endpoint
+	 * (set-cookie validation) to avoid duplicating the same query.
+	 *
+	 * @param string[] $hashes SHA-256 hashes to check.
+	 *
+	 * @return string[] Subset of input hashes that have published tracking URL posts.
+	 * @since 1.5.1
+	 */
+	public static function get_valid_hashes( array $hashes ): array {
+		global $wpdb;
+
+		if ( empty( $hashes ) ) {
+			return [];
+		}
+
+		$placeholders = implode( ',', array_fill( 0, count( $hashes ), '%s' ) );
+		$args         = array_merge( $hashes, [ self::SLUG ] );
+
+		return $wpdb->get_col( $wpdb->prepare(
+			"SELECT DISTINCT pm.meta_value
+			 FROM {$wpdb->postmeta} pm
+			 JOIN {$wpdb->posts} p ON p.ID = pm.post_id
+			 WHERE pm.meta_key = '_hash'
+			   AND pm.meta_value IN ({$placeholders})
+			   AND p.post_type = %s
+			   AND p.post_status = 'publish'",
+			...$args,
+		) );
+	}
+
+	/**
+	 * Retrieves distinct meta values for a given key from published tracking URLs.
+	 *
+	 * Shared by Url_List_Table and Campaign_List_Table for filter dropdowns.
+	 *
+	 * @param string $meta_key The meta key to query (e.g. '_utm_source').
+	 *
+	 * @return string[] Sorted list of distinct non-empty values.
+	 * @since 1.5.1
+	 */
+	public static function get_distinct_meta_values( string $meta_key ): array {
+		global $wpdb;
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+		$values = $wpdb->get_col( $wpdb->prepare(
+			"SELECT DISTINCT pm.meta_value
+			 FROM {$wpdb->postmeta} pm
+			 INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
+			 WHERE pm.meta_key = %s
+			   AND p.post_type = %s
+			   AND p.post_status = 'publish'
+			   AND pm.meta_value != ''
+			 ORDER BY pm.meta_value ASC",
+			$meta_key,
+			self::SLUG,
+		) );
+
+		return $values ?: [];
+	}
+
 }

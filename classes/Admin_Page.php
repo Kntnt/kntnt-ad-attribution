@@ -203,55 +203,48 @@ final class Admin_Page {
 			Plugin::get_version(),
 		);
 
-		// Admin JS — always loaded (click-to-copy on list view, select2 on form).
-		wp_enqueue_script(
-			'kntnt-ad-attr-admin',
-			Plugin::get_plugin_url() . 'js/admin.js',
-			[],
-			Plugin::get_version(),
-			true,
-		);
+		// Select2 is only needed on the add view. Determine deps upfront
+		// so the admin script can be registered once with the correct deps.
+		$action  = sanitize_text_field( wp_unslash( $_GET['action'] ?? '' ) );
+		$is_form = $action === 'add';
 
-		// Select2 — only needed on the add view.
-		$action = sanitize_text_field( wp_unslash( $_GET['action'] ?? '' ) );
-		if ( $action !== 'add' ) {
-			return;
+		if ( $is_form ) {
+			wp_enqueue_style(
+				'select2',
+				'https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/css/select2.min.css',
+				[],
+				'4.0.13',
+			);
+
+			wp_enqueue_script(
+				'select2',
+				'https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/js/select2.min.js',
+				[ 'jquery' ],
+				'4.0.13',
+				true,
+			);
+
+			// Add SRI integrity attributes to CDN-loaded Select2 assets.
+			add_filter( 'script_loader_tag', [ $this, 'add_sri_attributes' ], 10, 2 );
+			add_filter( 'style_loader_tag', [ $this, 'add_sri_attributes' ], 10, 2 );
 		}
 
-		wp_enqueue_style(
-			'select2',
-			'https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/css/select2.min.css',
-			[],
-			'4.0.13',
-		);
-
-		wp_enqueue_script(
-			'select2',
-			'https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/js/select2.min.js',
-			[ 'jquery' ],
-			'4.0.13',
-			true,
-		);
-
-		// Add SRI integrity attributes to CDN-loaded Select2 assets.
-		add_filter( 'script_loader_tag', [ $this, 'add_sri_attributes' ], 10, 2 );
-		add_filter( 'style_loader_tag', [ $this, 'add_sri_attributes' ], 10, 2 );
-
-		// Re-register admin JS with select2 dependency for the form view.
-		wp_deregister_script( 'kntnt-ad-attr-admin' );
+		// Admin JS — click-to-copy on list view, select2 init on form.
 		wp_enqueue_script(
 			'kntnt-ad-attr-admin',
 			Plugin::get_plugin_url() . 'js/admin.js',
-			[ 'jquery', 'select2' ],
+			$is_form ? [ 'jquery', 'select2' ] : [],
 			Plugin::get_version(),
 			true,
 		);
 
-		wp_localize_script( 'kntnt-ad-attr-admin', 'kntntAdAttrAdmin', [
-			'searchUrl'  => rest_url( 'kntnt-ad-attribution/v1/search-posts' ),
-			'nonce'      => wp_create_nonce( 'wp_rest' ),
-			'utmSources' => Utm_Options::get_options()['sources'],
-		] );
+		if ( $is_form ) {
+			wp_localize_script( 'kntnt-ad-attr-admin', 'kntntAdAttrAdmin', [
+				'searchUrl'  => rest_url( 'kntnt-ad-attribution/v1/search-posts' ),
+				'nonce'      => wp_create_nonce( 'wp_rest' ),
+				'utmSources' => Utm_Options::get_options()['sources'],
+			] );
+		}
 	}
 
 	/**
@@ -264,8 +257,10 @@ final class Admin_Page {
 	 * @since 1.0.0
 	 */
 	public function render_page(): void {
-		Plugin::authorize();
 
+		// Capability check is handled by add_management_page() — no need
+		// for an explicit authorize() call here. Form handlers retain their
+		// own authorize() calls as they process input.
 		$tab    = sanitize_text_field( wp_unslash( $_GET['tab'] ?? 'urls' ) );
 		$action = sanitize_text_field( wp_unslash( $_GET['action'] ?? '' ) );
 
@@ -522,23 +517,14 @@ final class Admin_Page {
 		echo '</td></tr>';
 
 		// Campaign — plain text input (required).
-		$text_fields = [
-			'utm_campaign' => [ __( 'Campaign', 'kntnt-ad-attr' ), true ],
-		];
-
-		foreach ( $text_fields as $field_name => [ $label, $required ] ) {
-			$req_mark = $required ? ' <span class="required">*</span>' : '';
-			$req_attr = $required ? ' required' : '';
-
-			echo '<tr>';
-			echo '<th scope="row"><label for="kntnt-ad-attr-' . esc_attr( $field_name ) . '">'
-				. esc_html( $label ) . $req_mark . '</label></th>';
-			echo '<td><input type="text" id="kntnt-ad-attr-' . esc_attr( $field_name ) . '"'
-				. ' name="kntnt_ad_attr_' . esc_attr( $field_name ) . '"'
-				. ' value=""'
-				. ' class="regular-text"' . $req_attr . '></td>';
-			echo '</tr>';
-		}
+		echo '<tr>';
+		echo '<th scope="row"><label for="kntnt-ad-attr-utm_campaign">'
+			. esc_html__( 'Campaign', 'kntnt-ad-attr' ) . ' <span class="required">*</span></label></th>';
+		echo '<td><input type="text" id="kntnt-ad-attr-utm_campaign"'
+			. ' name="kntnt_ad_attr_utm_campaign"'
+			. ' value=""'
+			. ' class="regular-text" required></td>';
+		echo '</tr>';
 
 		echo '</table>';
 
@@ -676,9 +662,7 @@ final class Admin_Page {
 		} while ( $this->hash_exists( $hash ) );
 
 		// Build the tracking URL.
-		/** @var string $prefix The URL path prefix for tracking URLs. */
-		$prefix       = apply_filters( 'kntnt_ad_attr_url_prefix', 'ad' );
-		$tracking_url = home_url( $prefix . '/' . $hash );
+		$tracking_url = home_url( Plugin::get_url_prefix() . '/' . $hash );
 
 		// Create the CPT post.
 		$post_id = wp_insert_post( [

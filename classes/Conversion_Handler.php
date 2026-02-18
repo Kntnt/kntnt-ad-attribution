@@ -235,7 +235,7 @@ final class Conversion_Handler {
 	 * @since 1.0.0
 	 */
 	private function filter_valid_entries( array $entries ): array {
-		$valid_hashes = $this->get_valid_hashes( array_keys( $entries ) );
+		$valid_hashes = Post_Type::get_valid_hashes( array_keys( $entries ) );
 
 		return array_intersect_key( $entries, array_flip( $valid_hashes ) );
 	}
@@ -305,39 +305,6 @@ final class Conversion_Handler {
 		}
 
 		return $result;
-	}
-
-	/**
-	 * Returns hashes that exist as published tracking URLs in the database.
-	 *
-	 * @param string[] $hashes SHA-256 hashes to check.
-	 *
-	 * @return string[] Subset of input hashes that have published tracking URL posts.
-	 * @since 1.0.0
-	 */
-	private function get_valid_hashes( array $hashes ): array {
-		global $wpdb;
-
-		if ( empty( $hashes ) ) {
-			return [];
-		}
-
-		$placeholders = implode( ',', array_fill( 0, count( $hashes ), '%s' ) );
-
-		// Build prepare arguments: meta_key placeholder is not needed since it's
-		// a known constant, but we pass the hashes and post type through prepare.
-		$args = array_merge( $hashes, [ Post_Type::SLUG ] );
-
-		return $wpdb->get_col( $wpdb->prepare(
-			"SELECT DISTINCT pm.meta_value
-			 FROM {$wpdb->postmeta} pm
-			 JOIN {$wpdb->posts} p ON p.ID = pm.post_id
-			 WHERE pm.meta_key = '_hash'
-			   AND pm.meta_value IN ({$placeholders})
-			   AND p.post_type = %s
-			   AND p.post_status = 'publish'",
-			...$args,
-		) );
 	}
 
 }

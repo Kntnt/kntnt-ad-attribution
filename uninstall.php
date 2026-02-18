@@ -30,7 +30,6 @@ if ( isset( $wp_roles ) ) {
 // Drop custom tables (conversions before clicks due to referential dependency).
 $wpdb->query( "DROP TABLE IF EXISTS {$wpdb->prefix}kntnt_ad_attr_conversions" );
 $wpdb->query( "DROP TABLE IF EXISTS {$wpdb->prefix}kntnt_ad_attr_clicks" );
-$wpdb->query( "DROP TABLE IF EXISTS {$wpdb->prefix}kntnt_ad_attr_stats" );
 $wpdb->query( "DROP TABLE IF EXISTS {$wpdb->prefix}kntnt_ad_attr_click_ids" );
 $wpdb->query( "DROP TABLE IF EXISTS {$wpdb->prefix}kntnt_ad_attr_queue" );
 

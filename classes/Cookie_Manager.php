@@ -115,7 +115,7 @@ final class Cookie_Manager {
 	 * @return string Cookie value in `hash:timestamp,hash:timestamp,...` format.
 	 * @since 1.0.0
 	 */
-	public function serialize( array $entries ): string {
+	private function serialize( array $entries ): string {
 		$pairs = [];
 		foreach ( $entries as $hash => $timestamp ) {
 			$pairs[] = $hash . ':' . $timestamp;

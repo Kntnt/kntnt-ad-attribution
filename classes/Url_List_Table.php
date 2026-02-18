@@ -422,7 +422,7 @@ final class Url_List_Table extends WP_List_Table {
 
 		foreach ( $filters as $meta_suffix => $label ) {
 			$meta_key = '_' . $meta_suffix;
-			$values   = $this->get_distinct_meta_values( $meta_key );
+			$values   = Post_Type::get_distinct_meta_values( $meta_key );
 			$current  = sanitize_text_field( wp_unslash( $_GET[ $meta_suffix ] ?? '' ) );
 
 			echo '<select name="' . esc_attr( $meta_suffix ) . '">';
@@ -441,34 +441,6 @@ final class Url_List_Table extends WP_List_Table {
 		submit_button( __( 'Filter', 'kntnt-ad-attr' ), '', 'filter_action', false );
 
 		echo '</div>';
-	}
-
-	/**
-	 * Retrieves distinct meta values for a given key from published tracking URLs.
-	 *
-	 * @param string $meta_key The meta key to query (e.g. '_utm_source').
-	 *
-	 * @return string[] Sorted list of distinct values.
-	 * @since 1.0.0
-	 */
-	private function get_distinct_meta_values( string $meta_key ): array {
-		global $wpdb;
-
-		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-		$values = $wpdb->get_col( $wpdb->prepare(
-			"SELECT DISTINCT pm.meta_value
-			 FROM {$wpdb->postmeta} pm
-			 INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
-			 WHERE pm.meta_key = %s
-			   AND p.post_type = %s
-			   AND p.post_status = 'publish'
-			   AND pm.meta_value != ''
-			 ORDER BY pm.meta_value ASC",
-			$meta_key,
-			Post_Type::SLUG,
-		) );
-
-		return $values ?: [];
 	}
 
 }
