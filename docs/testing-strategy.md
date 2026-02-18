@@ -67,7 +67,7 @@ All other dependencies (Pest, Brain Monkey, Mockery, Vitest, happy-dom, `@wp-pla
 
 1. **Explicit overrides:** Set `PHP_BIN`, `COMPOSER_BIN`, `NODE_BIN`, `NPM_BIN` as environment variables, or define them in `.env.testing` (see `.env.testing.example`). Environment variables take precedence over the file.
 
-2. **DDEV (recommended):** If the project has a DDEV configuration (`.ddev/config.yaml` in any parent directory), `run-tests.sh` detects it automatically and uses `ddev here php` and `ddev here composer` for PHP tests. Node.js/npm always run on the host since `node_modules` contains host-native binaries.
+2. **DDEV (recommended):** If the project has a DDEV configuration (`.ddev/config.yaml` in any parent directory), `run-tests.sh` detects it automatically and uses `ddev php` and `ddev composer` for PHP tests. Node.js/npm always run on the host since `node_modules` contains host-native binaries.
 
 3. **Local PATH fallback:** If no DDEV project is found, the script resolves tools from PATH.
 
@@ -112,7 +112,7 @@ bash run-tests.sh
 # PHP unit tests (requires PHP 8.3 in PATH, or use ddev)
 ./vendor/bin/pest
 ./vendor/bin/pest --filter CookieManager
-ddev here ./vendor/bin/pest              # via DDEV
+ddev php vendor/bin/pest                  # via DDEV
 
 # JS unit tests
 npx vitest run

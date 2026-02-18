@@ -110,7 +110,7 @@ bash run-tests.sh --filter consent
 `run-tests.sh` resolves tool paths in three steps (highest priority first):
 
 1. **Explicit overrides** — `PHP_BIN`, `COMPOSER_BIN`, `NODE_BIN`, `NPM_BIN` as env vars or in `.env.testing` (see `.env.testing.example`). Env vars take precedence over the file.
-2. **DDEV auto-detection** — if `.ddev/config.yaml` exists in any parent directory, uses `ddev here php` and `ddev here composer`. Node/npm always run on the host (node_modules has platform-specific native binaries). DDEV services are started automatically if needed.
+2. **DDEV auto-detection** — if `.ddev/config.yaml` exists in any parent directory, uses `ddev php` and `ddev composer`. Node/npm always run on the host (node_modules has platform-specific native binaries). DDEV services are started automatically if needed.
 3. **Local PATH fallback** — resolves tools from PATH if no DDEV project is found.
 
 WordPress Playground (integration tests) always runs on the host via local `npx`, regardless of mode.
@@ -119,7 +119,7 @@ WordPress Playground (integration tests) always runs on the host via local `npx`
 
 ```bash
 # PHP unit tests (requires PHP 8.3 in PATH, or use ddev)
-ddev here ./vendor/bin/pest
+ddev php vendor/bin/pest
 ./vendor/bin/pest --filter CookieManager
 
 # JS unit tests

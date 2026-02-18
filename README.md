@@ -963,7 +963,7 @@ The script resolves tool paths automatically in three steps (highest priority fi
 
 1. **Explicit overrides** — set `PHP_BIN`, `COMPOSER_BIN`, `NODE_BIN`, or `NPM_BIN` as environment variables, or define them in `.env.testing` (see `.env.testing.example`). Environment variables take precedence over the file.
 
-2. **DDEV auto-detection** — if `.ddev/config.yaml` exists in any parent directory, the script uses `ddev here php` and `ddev here composer` for PHP tests. DDEV services are started automatically if needed. Node.js and npm always run on the host since `node_modules` contains platform-specific native binaries.
+2. **DDEV auto-detection** — if `.ddev/config.yaml` exists in any parent directory, the script uses `ddev php` and `ddev composer` for PHP tests. DDEV services are started automatically if needed. Node.js and npm always run on the host since `node_modules` contains platform-specific native binaries.
 
 3. **Local PATH fallback** — if no DDEV project is found, tools are resolved from PATH.
 

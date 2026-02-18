@@ -37,6 +37,7 @@ NPM_BIN="${NPM_BIN:-}"
 NPX_BIN=""
 LOCAL_NPX=""
 ENV_SOURCE=""
+DDEV_PLUGIN_DIR=""
 
 # ─── Parse arguments ───
 
@@ -157,11 +158,17 @@ detect_ddev() {
         }
     fi
 
-    # Assign DDEV commands for PHP/Composer (need CWD mapping via "ddev here").
+    # Compute the container path for the plugin directory.
+    # DDEV maps the project root to /var/www/html; strip the host prefix
+    # to get the relative path, then prepend the container root.
+    local rel_path="${SCRIPT_DIR#"$ddev_root"/}"
+    DDEV_PLUGIN_DIR="/var/www/html/$rel_path"
+
+    # Assign DDEV commands for PHP/Composer.
     # Node/npm stay local — node_modules has host-native binaries (rollup etc.)
     # that won't work inside the Linux container.
-    [[ -z "${EXPLICIT_VARS[PHP_BIN]+x}" ]]      && PHP_BIN="ddev here php"
-    [[ -z "${EXPLICIT_VARS[COMPOSER_BIN]+x}" ]]  && COMPOSER_BIN="ddev here composer"
+    [[ -z "${EXPLICIT_VARS[PHP_BIN]+x}" ]]      && PHP_BIN="ddev php"
+    [[ -z "${EXPLICIT_VARS[COMPOSER_BIN]+x}" ]]  && COMPOSER_BIN="ddev composer"
     [[ -z "${EXPLICIT_VARS[NODE_BIN]+x}" ]]      && NODE_BIN=$(command -v node 2>/dev/null || true)
     [[ -z "${EXPLICIT_VARS[NPM_BIN]+x}" ]]       && NPM_BIN=$(command -v npm 2>/dev/null || true)
 
@@ -290,7 +297,11 @@ verify_environment() {
 install_deps() {
     if [[ ! -d "$SCRIPT_DIR/vendor" ]]; then
         echo "Installing PHP dependencies..."
-        $COMPOSER_BIN install --dev --quiet
+        if [[ -n "$DDEV_PLUGIN_DIR" ]]; then
+            $COMPOSER_BIN install --dev --quiet --working-dir="$DDEV_PLUGIN_DIR"
+        else
+            $COMPOSER_BIN install --dev --quiet
+        fi
     fi
 
     if [[ ! -d "$SCRIPT_DIR/node_modules" ]]; then
@@ -312,7 +323,15 @@ run_unit_php() {
         pest_args+=(--filter "$FILTER")
     fi
 
-    if $PHP_BIN vendor/bin/pest "${pest_args[@]}"; then
+    # In DDEV mode, ddev php runs from /var/www/html (the DDEV project root),
+    # not the plugin dir. Use absolute paths for the Pest binary and config.
+    local pest_path="vendor/bin/pest"
+    if [[ -n "$DDEV_PLUGIN_DIR" ]]; then
+        pest_path="$DDEV_PLUGIN_DIR/vendor/bin/pest"
+        pest_args+=(--configuration "$DDEV_PLUGIN_DIR/phpunit.xml")
+    fi
+
+    if $PHP_BIN "$pest_path" "${pest_args[@]}"; then
         UNIT_PHP_EXIT=0
     else
         UNIT_PHP_EXIT=$?
