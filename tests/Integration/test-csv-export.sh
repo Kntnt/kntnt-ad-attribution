@@ -30,7 +30,7 @@ simulate_click "$HASH" "Mozilla/5.0 Chrome/120" "utm_content=banner-csv" > /dev/
 # --- Extract nonce from campaigns page ---
 
 campaigns_html=$(curl -sf -b "${ADMIN_COOKIE}" \
-    "${WP_BASE_URL}/wp-admin/tools.php?page=kntnt-ad-attribution&tab=campaigns")
+    "${WP_BASE_URL}/wp-admin/tools.php?page=kntnt-ad-attribution")
 
 # Extract the export nonce from the form.
 export_nonce=$(echo "$campaigns_html" | grep -oP 'name="kntnt_ad_attr_export_nonce"\s+value="\K[^"]+' || true)
@@ -64,8 +64,8 @@ trap "rm -f '$EXPORT_RESPONSE' '$EXPORT_HEADERS'" EXIT
 curl -sf -b "${ADMIN_COOKIE}" \
     -D "$EXPORT_HEADERS" \
     -o "$EXPORT_RESPONSE" \
-    "${WP_BASE_URL}/wp-admin/tools.php?page=kntnt-ad-attribution&tab=campaigns" \
-    -d "kntnt_ad_attr_action=export_csv&kntnt_ad_attr_export_nonce=${export_nonce}&_wp_http_referer=%2Fwp-admin%2Ftools.php%3Fpage%3Dkntnt-ad-attribution%26tab%3Dcampaigns&date_start=2020-01-01&date_end=2027-12-31"
+    "${WP_BASE_URL}/wp-admin/tools.php?page=kntnt-ad-attribution" \
+    -d "kntnt_ad_attr_action=export_csv&kntnt_ad_attr_export_nonce=${export_nonce}&_wp_http_referer=%2Fwp-admin%2Ftools.php%3Fpage%3Dkntnt-ad-attribution&date_start=2020-01-01&date_end=2027-12-31"
 
 # --- Content-Type is text/csv ---
 

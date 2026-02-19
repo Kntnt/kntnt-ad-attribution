@@ -15,7 +15,7 @@ echo "=== Test: Migration ==="
 
 result=$(get_option "kntnt_ad_attr_version")
 version=$(echo "$result" | jq -r '.value')
-assert_equals "1.5.0" "$version" "Version option matches plugin header (1.5.0)"
+assert_equals "1.6.0" "$version" "Version option matches plugin header (1.6.0)"
 
 # --- Clicks table column types (using sqlite_master CREATE TABLE SQL) ---
 
