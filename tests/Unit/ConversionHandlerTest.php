@@ -42,18 +42,18 @@ function setup_conversion_path(): array {
     $hash2 = TestFactory::hash('conv-new');
     $now   = 1700000000;
 
-    // No recent conversion — bypass dedup.
-    $_COOKIE['_ad_last_conv'] = '0';
-
     // Fixed timestamps.
     Functions\when('time')->justReturn($now);
     Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
 
     // Cookie returns two entries. hash2 is more recent.
-    $cm->shouldReceive('parse')->once()->andReturn([
+    $cm->shouldReceive('parse')->with('_ad_clicks')->once()->andReturn([
         $hash1 => $now - 7200,
         $hash2 => $now - 3600,
     ]);
+
+    // Dedup cookie empty — dedup disabled by default (0).
+    $cm->shouldReceive('parse')->with('_ad_last_conv')->andReturn([]);
 
     // All hashes are valid (redefine static method via Patchwork).
     \Patchwork\redefine(
@@ -73,9 +73,6 @@ function setup_conversion_path(): array {
     $wpdb->shouldReceive('prepare')->andReturn('SQL');
     $wpdb->shouldReceive('get_var')->andReturn('42');
     $wpdb->shouldReceive('insert')->once()->andReturn(true);
-
-    // setcookie for dedup.
-    Functions\expect('setcookie')->once();
 
     // $_SERVER for context.
     $_SERVER['REMOTE_ADDR']    = '127.0.0.1';
@@ -111,70 +108,10 @@ describe('Conversion_Handler::handle_conversion()', function () {
         unset($_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], $_SERVER['REQUEST_URI']);
     });
 
-    it('returns early when recent conversion exists (dedup)', function () {
-        [$handler, $cm] = make_conversion_handler();
-
-        $now = 1700000000;
-        Functions\when('time')->justReturn($now);
-
-        // Last conversion was 1 day ago — within default 30-day dedup window.
-        $_COOKIE['_ad_last_conv'] = (string) ($now - DAY_IN_SECONDS);
-
-        // parse() should never be called if dedup kicks in.
-        $cm->shouldNotReceive('parse');
-
-        $handler->handle_conversion();
-
-        expect(true)->toBeTrue();
-    });
-
-    it('allows conversion when last conversion is older than dedup window', function () {
-        [$handler, $cm] = make_conversion_handler();
-
-        $now = 1700000000;
-        Functions\when('time')->justReturn($now);
-
-        // Last conversion 31 days ago — outside default 30-day window.
-        $_COOKIE['_ad_last_conv'] = (string) ($now - 31 * DAY_IN_SECONDS);
-
-        // Processing continues — parse() is called but returns empty.
-        $cm->shouldReceive('parse')->once()->andReturn([]);
-
-        $handler->handle_conversion();
-
-        expect(true)->toBeTrue();
-    });
-
-    it('caps dedup window to cookie lifetime', function () {
-        [$handler, $cm] = make_conversion_handler();
-
-        $now = 1700000000;
-        Functions\when('time')->justReturn($now);
-
-        // Last conversion 91 days ago. With dedup_days=100, lifetime=90,
-        // effective dedup = min(100,90) = 90. Since 91 > 90, proceeds.
-        $_COOKIE['_ad_last_conv'] = (string) ($now - 91 * DAY_IN_SECONDS);
-
-        Filters\expectApplied('kntnt_ad_attr_cookie_lifetime')->once()->andReturn(90);
-        Filters\expectApplied('kntnt_ad_attr_dedup_days')->once()->andReturn(100);
-
-        // If capping works, parse() is called (91 > 90).
-        // If not (dedup=100), parse() would not be called (91 < 100).
-        $cm->shouldReceive('parse')->once()->andReturn([]);
-
-        $handler->handle_conversion();
-
-        expect(true)->toBeTrue();
-    });
-
     it('returns early for empty _ad_clicks cookie', function () {
         [$handler, $cm] = make_conversion_handler();
 
-        $now = 1700000000;
-        Functions\when('time')->justReturn($now);
-        $_COOKIE['_ad_last_conv'] = '0';
-
-        $cm->shouldReceive('parse')->once()->andReturn([]);
+        $cm->shouldReceive('parse')->with('_ad_clicks')->once()->andReturn([]);
 
         $handler->handle_conversion();
 
@@ -188,9 +125,8 @@ describe('Conversion_Handler::handle_conversion()', function () {
 
         $now = 1700000000;
         Functions\when('time')->justReturn($now);
-        $_COOKIE['_ad_last_conv'] = '0';
 
-        $cm->shouldReceive('parse')->once()->andReturn([$hash => $now]);
+        $cm->shouldReceive('parse')->with('_ad_clicks')->once()->andReturn([$hash => $now]);
 
         // No hashes are valid.
         \Patchwork\redefine(
@@ -199,6 +135,173 @@ describe('Conversion_Handler::handle_conversion()', function () {
         );
 
         // No DB operations should happen.
+        $handler->handle_conversion();
+
+        expect(true)->toBeTrue();
+    });
+
+    it('does not deduplicate when dedup_seconds is 0 (default)', function () {
+        [$handler, $cm] = make_conversion_handler();
+        $hash = TestFactory::hash('no-dedup');
+        $now  = 1700000000;
+
+        Functions\when('time')->justReturn($now);
+        Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
+
+        $cm->shouldReceive('parse')->with('_ad_clicks')->once()->andReturn([$hash => $now]);
+
+        \Patchwork\redefine(
+            'Kntnt\Ad_Attribution\Post_Type::get_valid_hashes',
+            fn (array $hashes) => $hashes,
+        );
+
+        // dedup_seconds = 0 → parse('_ad_last_conv') should NOT be called.
+        $cm->shouldNotReceive('parse')->with('_ad_last_conv');
+        $cm->shouldNotReceive('set_dedup_cookie');
+
+        $wpdb = TestFactory::wpdb();
+        $GLOBALS['wpdb'] = $wpdb;
+        $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
+        $wpdb->shouldReceive('prepare')->andReturn('SQL');
+        $wpdb->shouldReceive('get_var')->andReturn('42');
+        $wpdb->shouldReceive('insert')->once()->andReturn(true);
+        $wpdb->shouldReceive('query')->with('COMMIT')->once();
+
+        $_SERVER['REMOTE_ADDR']    = '127.0.0.1';
+        $_SERVER['HTTP_USER_AGENT'] = 'TestAgent';
+        $_SERVER['REQUEST_URI']    = '/';
+
+        $handler->handle_conversion();
+
+        expect(true)->toBeTrue();
+    });
+
+    it('deduplicates per-hash when dedup_seconds > 0', function () {
+        [$handler, $cm] = make_conversion_handler();
+        $hash_a = TestFactory::hash('hash-a');
+        $hash_b = TestFactory::hash('hash-b');
+        $now    = 1700000000;
+
+        Functions\when('time')->justReturn($now);
+        Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
+
+        // Both hashes in clicks cookie (hash_b is more recent).
+        $cm->shouldReceive('parse')->with('_ad_clicks')->once()->andReturn([
+            $hash_a => $now - 7200,
+            $hash_b => $now - 3600,
+        ]);
+
+        \Patchwork\redefine(
+            'Kntnt\Ad_Attribution\Post_Type::get_valid_hashes',
+            fn (array $hashes) => $hashes,
+        );
+
+        // Enable dedup at 1 hour.
+        Filters\expectApplied('kntnt_ad_attr_dedup_seconds')->once()->andReturn(3600);
+
+        // hash_a was converted 1800s ago (within window), hash_b not in dedup cookie.
+        $cm->shouldReceive('parse')->with('_ad_last_conv')->once()->andReturn([
+            $hash_a => $now - 1800,
+        ]);
+
+        $wpdb = TestFactory::wpdb();
+        $GLOBALS['wpdb'] = $wpdb;
+        $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
+        $wpdb->shouldReceive('prepare')->andReturn('SQL');
+        $wpdb->shouldReceive('get_var')->andReturn('42');
+
+        // Only hash_b should be inserted (hash_a is deduped).
+        $wpdb->shouldReceive('insert')->once()->andReturn(true);
+        $wpdb->shouldReceive('query')->with('COMMIT')->once();
+
+        // Dedup cookie should be written with hash_b.
+        $cm->shouldReceive('set_dedup_cookie')
+            ->once()
+            ->withArgs(function (array $entries, int $lifetime) use ($hash_a, $hash_b, $now) {
+                // Should contain both old (hash_a) and newly attributed (hash_b).
+                expect($entries)->toHaveKey($hash_a);
+                expect($entries)->toHaveKey($hash_b);
+                expect($entries[$hash_b])->toBe($now);
+                expect($lifetime)->toBe(3600);
+                return true;
+            });
+
+        $_SERVER['REMOTE_ADDR']    = '127.0.0.1';
+        $_SERVER['HTTP_USER_AGENT'] = 'TestAgent';
+        $_SERVER['REQUEST_URI']    = '/';
+
+        $handler->handle_conversion();
+
+        expect(true)->toBeTrue();
+    });
+
+    it('returns early when all hashes are deduped', function () {
+        [$handler, $cm] = make_conversion_handler();
+        $hash = TestFactory::hash('all-deduped');
+        $now  = 1700000000;
+
+        Functions\when('time')->justReturn($now);
+
+        $cm->shouldReceive('parse')->with('_ad_clicks')->once()->andReturn([$hash => $now]);
+
+        \Patchwork\redefine(
+            'Kntnt\Ad_Attribution\Post_Type::get_valid_hashes',
+            fn (array $hashes) => $hashes,
+        );
+
+        // Enable dedup.
+        Filters\expectApplied('kntnt_ad_attr_dedup_seconds')->once()->andReturn(3600);
+
+        // Hash recently converted.
+        $cm->shouldReceive('parse')->with('_ad_last_conv')->once()->andReturn([
+            $hash => $now - 100,
+        ]);
+
+        // No DB operations should happen.
+        $handler->handle_conversion();
+
+        expect(true)->toBeTrue();
+    });
+
+    it('caps dedup_seconds to cookie lifetime', function () {
+        [$handler, $cm] = make_conversion_handler();
+        $hash = TestFactory::hash('capped');
+        $now  = 1700000000;
+
+        Functions\when('time')->justReturn($now);
+        Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
+
+        $cm->shouldReceive('parse')->with('_ad_clicks')->once()->andReturn([$hash => $now]);
+
+        \Patchwork\redefine(
+            'Kntnt\Ad_Attribution\Post_Type::get_valid_hashes',
+            fn (array $hashes) => $hashes,
+        );
+
+        // Cookie lifetime = 1 day, dedup_seconds = 200000 (> 86400).
+        Filters\expectApplied('kntnt_ad_attr_cookie_lifetime')->once()->andReturn(1);
+        Filters\expectApplied('kntnt_ad_attr_dedup_seconds')->once()->andReturn(200000);
+
+        // Hash converted 90000s ago. Capped dedup = min(200000, 86400) = 86400.
+        // 90000 > 86400 → not deduped.
+        $cm->shouldReceive('parse')->with('_ad_last_conv')->once()->andReturn([
+            $hash => $now - 90000,
+        ]);
+
+        $wpdb = TestFactory::wpdb();
+        $GLOBALS['wpdb'] = $wpdb;
+        $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
+        $wpdb->shouldReceive('prepare')->andReturn('SQL');
+        $wpdb->shouldReceive('get_var')->andReturn('42');
+        $wpdb->shouldReceive('insert')->once()->andReturn(true);
+        $wpdb->shouldReceive('query')->with('COMMIT')->once();
+
+        $cm->shouldReceive('set_dedup_cookie')->once();
+
+        $_SERVER['REMOTE_ADDR']    = '127.0.0.1';
+        $_SERVER['HTTP_USER_AGENT'] = 'TestAgent';
+        $_SERVER['REQUEST_URI']    = '/';
+
         $handler->handle_conversion();
 
         expect(true)->toBeTrue();
@@ -213,9 +316,8 @@ describe('Conversion_Handler::handle_conversion()', function () {
 
         Functions\when('time')->justReturn($now);
         Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
-        $_COOKIE['_ad_last_conv'] = '0';
 
-        $cm->shouldReceive('parse')->once()->andReturn([
+        $cm->shouldReceive('parse')->with('_ad_clicks')->once()->andReturn([
             $valid   => $now - 3600,
             $invalid => $now - 7200,
         ]);
@@ -237,8 +339,6 @@ describe('Conversion_Handler::handle_conversion()', function () {
         $wpdb->shouldReceive('insert')->once()->andReturn(true);
         $wpdb->shouldReceive('query')->with('COMMIT')->once();
 
-        Functions\expect('setcookie')->once();
-
         $_SERVER['REMOTE_ADDR']    = '127.0.0.1';
         $_SERVER['HTTP_USER_AGENT'] = 'TestAgent';
         $_SERVER['REQUEST_URI']    = '/';
@@ -257,10 +357,9 @@ describe('Conversion_Handler::handle_conversion()', function () {
 
         Functions\when('time')->justReturn($now);
         Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
-        $_COOKIE['_ad_last_conv'] = '0';
 
         // hash_new is more recent.
-        $cm->shouldReceive('parse')->once()->andReturn([
+        $cm->shouldReceive('parse')->with('_ad_clicks')->once()->andReturn([
             $hash_old => $now - 7200,
             $hash_new => $now - 3600,
         ]);
@@ -288,8 +387,6 @@ describe('Conversion_Handler::handle_conversion()', function () {
 
         $wpdb->shouldReceive('query')->with('COMMIT')->once();
 
-        Functions\expect('setcookie')->once();
-
         $_SERVER['REMOTE_ADDR']    = '127.0.0.1';
         $_SERVER['HTTP_USER_AGENT'] = 'TestAgent';
         $_SERVER['REQUEST_URI']    = '/';
@@ -308,9 +405,8 @@ describe('Conversion_Handler::handle_conversion()', function () {
 
         Functions\when('time')->justReturn($now);
         Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
-        $_COOKIE['_ad_last_conv'] = '0';
 
-        $cm->shouldReceive('parse')->once()->andReturn([
+        $cm->shouldReceive('parse')->with('_ad_clicks')->once()->andReturn([
             $hash1 => $now - 7200,
             $hash2 => $now - 3600,
         ]);
@@ -344,8 +440,6 @@ describe('Conversion_Handler::handle_conversion()', function () {
 
         $wpdb->shouldReceive('query')->with('COMMIT')->once();
 
-        Functions\expect('setcookie')->once();
-
         $_SERVER['REMOTE_ADDR']    = '127.0.0.1';
         $_SERVER['HTTP_USER_AGENT'] = 'TestAgent';
         $_SERVER['REQUEST_URI']    = '/';
@@ -362,9 +456,8 @@ describe('Conversion_Handler::handle_conversion()', function () {
 
         Functions\when('time')->justReturn($now);
         Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
-        $_COOKIE['_ad_last_conv'] = '0';
 
-        $cm->shouldReceive('parse')->once()->andReturn([$hash => $now]);
+        $cm->shouldReceive('parse')->with('_ad_clicks')->once()->andReturn([$hash => $now]);
 
         \Patchwork\redefine(
             'Kntnt\Ad_Attribution\Post_Type::get_valid_hashes',
@@ -380,8 +473,6 @@ describe('Conversion_Handler::handle_conversion()', function () {
         $wpdb->shouldReceive('get_var')->andReturn('42');
         $wpdb->shouldReceive('insert')->once()->andReturn(true)->ordered();
         $wpdb->shouldReceive('query')->with('COMMIT')->once()->ordered();
-
-        Functions\expect('setcookie')->once();
 
         $_SERVER['REMOTE_ADDR']    = '127.0.0.1';
         $_SERVER['HTTP_USER_AGENT'] = 'TestAgent';
@@ -399,9 +490,8 @@ describe('Conversion_Handler::handle_conversion()', function () {
 
         Functions\when('time')->justReturn($now);
         Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
-        $_COOKIE['_ad_last_conv'] = '0';
 
-        $cm->shouldReceive('parse')->once()->andReturn([$hash => $now]);
+        $cm->shouldReceive('parse')->with('_ad_clicks')->once()->andReturn([$hash => $now]);
 
         \Patchwork\redefine(
             'Kntnt\Ad_Attribution\Post_Type::get_valid_hashes',
@@ -422,53 +512,8 @@ describe('Conversion_Handler::handle_conversion()', function () {
         // error_log called on failure.
         Functions\expect('error_log')->once();
 
-        // setcookie should NOT be called after rollback.
-        Functions\expect('setcookie')->never();
-
-        $handler->handle_conversion();
-
-        expect(true)->toBeTrue();
-    });
-
-    it('sets _ad_last_conv dedup cookie after successful attribution', function () {
-        [$handler, $cm, $cis, $q, $qp] = make_conversion_handler();
-        $hash = TestFactory::hash('dedup-cookie');
-        $now  = 1700000000;
-
-        Functions\when('time')->justReturn($now);
-        Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
-        $_COOKIE['_ad_last_conv'] = '0';
-
-        $cm->shouldReceive('parse')->once()->andReturn([$hash => $now]);
-
-        \Patchwork\redefine(
-            'Kntnt\Ad_Attribution\Post_Type::get_valid_hashes',
-            fn (array $hashes) => $hashes,
-        );
-
-        $wpdb = TestFactory::wpdb();
-        $GLOBALS['wpdb'] = $wpdb;
-        $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
-        $wpdb->shouldReceive('prepare')->andReturn('SQL');
-        $wpdb->shouldReceive('get_var')->andReturn('42');
-        $wpdb->shouldReceive('insert')->once()->andReturn(true);
-        $wpdb->shouldReceive('query')->with('COMMIT')->once();
-
-        // Verify setcookie args.
-        Functions\expect('setcookie')
-            ->once()
-            ->withArgs(function ($name, $value, $options) use ($now) {
-                expect($name)->toBe('_ad_last_conv');
-                expect($value)->toBe((string) $now);
-                expect($options['secure'])->toBeTrue();
-                expect($options['httponly'])->toBeTrue();
-                expect($options['samesite'])->toBe('Lax');
-                return true;
-            });
-
-        $_SERVER['REMOTE_ADDR']    = '127.0.0.1';
-        $_SERVER['HTTP_USER_AGENT'] = 'TestAgent';
-        $_SERVER['REQUEST_URI']    = '/';
+        // set_dedup_cookie should NOT be called after rollback.
+        $cm->shouldNotReceive('set_dedup_cookie');
 
         $handler->handle_conversion();
 
@@ -482,9 +527,8 @@ describe('Conversion_Handler::handle_conversion()', function () {
 
         Functions\when('time')->justReturn($now);
         Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
-        $_COOKIE['_ad_last_conv'] = '0';
 
-        $cm->shouldReceive('parse')->once()->andReturn([$hash => $now]);
+        $cm->shouldReceive('parse')->with('_ad_clicks')->once()->andReturn([$hash => $now]);
 
         \Patchwork\redefine(
             'Kntnt\Ad_Attribution\Post_Type::get_valid_hashes',
@@ -498,7 +542,6 @@ describe('Conversion_Handler::handle_conversion()', function () {
         $wpdb->shouldReceive('get_var')->andReturn('42');
         $wpdb->shouldReceive('insert')->once()->andReturn(true);
         $wpdb->shouldReceive('query')->with('COMMIT')->once();
-        Functions\expect('setcookie')->once();
 
         $_SERVER['REMOTE_ADDR']     = '10.0.0.1';
         $_SERVER['HTTP_USER_AGENT'] = 'ConversionBot';
@@ -524,9 +567,8 @@ describe('Conversion_Handler::handle_conversion()', function () {
 
         Functions\when('time')->justReturn($now);
         Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
-        $_COOKIE['_ad_last_conv'] = '0';
 
-        $cm->shouldReceive('parse')->once()->andReturn([$hash => $now]);
+        $cm->shouldReceive('parse')->with('_ad_clicks')->once()->andReturn([$hash => $now]);
 
         \Patchwork\redefine(
             'Kntnt\Ad_Attribution\Post_Type::get_valid_hashes',
@@ -540,7 +582,6 @@ describe('Conversion_Handler::handle_conversion()', function () {
         $wpdb->shouldReceive('get_var')->andReturn('42');
         $wpdb->shouldReceive('insert')->once()->andReturn(true);
         $wpdb->shouldReceive('query')->with('COMMIT')->once();
-        Functions\expect('setcookie')->once();
 
         $_SERVER['REMOTE_ADDR']    = '127.0.0.1';
         $_SERVER['HTTP_USER_AGENT'] = 'TestAgent';
@@ -562,9 +603,8 @@ describe('Conversion_Handler::handle_conversion()', function () {
 
         Functions\when('time')->justReturn($now);
         Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
-        $_COOKIE['_ad_last_conv'] = '0';
 
-        $cm->shouldReceive('parse')->once()->andReturn([$hash => $now]);
+        $cm->shouldReceive('parse')->with('_ad_clicks')->once()->andReturn([$hash => $now]);
 
         \Patchwork\redefine(
             'Kntnt\Ad_Attribution\Post_Type::get_valid_hashes',
@@ -578,7 +618,6 @@ describe('Conversion_Handler::handle_conversion()', function () {
         $wpdb->shouldReceive('get_var')->andReturn('42');
         $wpdb->shouldReceive('insert')->once()->andReturn(true);
         $wpdb->shouldReceive('query')->with('COMMIT')->once();
-        Functions\expect('setcookie')->once();
 
         // get_campaign_data needs DB queries.
         $wpdb->shouldReceive('get_results')->andReturn([]);
@@ -624,9 +663,8 @@ describe('Conversion_Handler::handle_conversion()', function () {
 
         Functions\when('time')->justReturn($now);
         Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
-        $_COOKIE['_ad_last_conv'] = '0';
 
-        $cm->shouldReceive('parse')->once()->andReturn([$hash => $now]);
+        $cm->shouldReceive('parse')->with('_ad_clicks')->once()->andReturn([$hash => $now]);
 
         \Patchwork\redefine(
             'Kntnt\Ad_Attribution\Post_Type::get_valid_hashes',
@@ -640,7 +678,6 @@ describe('Conversion_Handler::handle_conversion()', function () {
         $wpdb->shouldReceive('get_var')->andReturn('42');
         $wpdb->shouldReceive('insert')->once()->andReturn(true);
         $wpdb->shouldReceive('query')->with('COMMIT')->once();
-        Functions\expect('setcookie')->once();
         $wpdb->shouldReceive('get_results')->andReturn([]);
 
         $_SERVER['REMOTE_ADDR']    = '127.0.0.1';
@@ -684,9 +721,8 @@ describe('Conversion_Handler::handle_conversion()', function () {
 
         Functions\when('time')->justReturn($now);
         Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
-        $_COOKIE['_ad_last_conv'] = '0';
 
-        $cm->shouldReceive('parse')->once()->andReturn([$hash => $now]);
+        $cm->shouldReceive('parse')->with('_ad_clicks')->once()->andReturn([$hash => $now]);
 
         \Patchwork\redefine(
             'Kntnt\Ad_Attribution\Post_Type::get_valid_hashes',
@@ -700,7 +736,6 @@ describe('Conversion_Handler::handle_conversion()', function () {
         $wpdb->shouldReceive('get_var')->andReturn('42');
         $wpdb->shouldReceive('insert')->once()->andReturn(true);
         $wpdb->shouldReceive('query')->with('COMMIT')->once();
-        Functions\expect('setcookie')->once();
         $wpdb->shouldReceive('get_results')->andReturn([]);
 
         $_SERVER['REMOTE_ADDR']    = '127.0.0.1';

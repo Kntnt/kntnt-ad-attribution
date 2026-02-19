@@ -47,13 +47,12 @@ assert_equals "admin-test" "$(echo "$meta" | jq -r '.meta_value')" "utm_campaign
 # ─── List view shows created URL ───
 
 admin_page=$(curl -sf -b "${ADMIN_COOKIE}" \
-    "${WP_BASE_URL}/wp-admin/tools.php?page=kntnt-ad-attribution&tab=urls")
+    "${WP_BASE_URL}/wp-admin/tools.php?page=kntnt-ad-attribution")
 assert_contains "$admin_page" "$HASH" "List view shows the tracking URL hash"
 
-# ─── Default tabs rendered ───
+# ─── Merged view with Create button ───
 
-assert_contains "$admin_page" "URLs" "Admin page has URLs tab"
-assert_contains "$admin_page" "Campaigns" "Admin page has Campaigns tab"
+assert_contains "$admin_page" "Create Tracking URL" "Admin page shows Create Tracking URL button"
 
 # ─── Trash URL via test helper ---
 

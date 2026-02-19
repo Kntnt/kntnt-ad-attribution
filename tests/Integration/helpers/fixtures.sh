@@ -207,7 +207,10 @@ get_option() {
 }
 
 # Trigger conversion with specific cookie values.
-# Usage: trigger_conversion <ad_clicks_cookie_value> [last_conv_timestamp]
+# Usage: trigger_conversion <ad_clicks_cookie_value> [last_conv_cookie_value]
+# The last_conv parameter should use hash:timestamp format (same as _ad_clicks)
+# when dedup is enabled (kntnt_ad_attr_dedup_seconds > 0). Ignored when dedup
+# is disabled (default).
 # Returns: JSON with success and set_cookies
 trigger_conversion() {
     local ad_clicks="${1:-}"

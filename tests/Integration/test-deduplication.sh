@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Integration test: Conversion deduplication.
 #
-# Verifies that a second conversion within the dedup window is skipped.
+# Verifies that dedup_seconds=0 (default) allows repeated conversions
+# for the same hash, since per-hash deduplication is disabled by default.
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -34,16 +35,15 @@ conv_count=$(query_db "SELECT COUNT(*) AS cnt FROM wp_kntnt_ad_attr_conversions 
 cnt1=$(echo "$conv_count" | jq -r '.cnt')
 assert_greater_than "0" "$cnt1" "First conversion recorded"
 
-# --- Second conversion within dedup window is skipped ---
+# --- Second conversion also succeeds (dedup disabled by default) ---
 
-# The first conversion sets _ad_last_conv. We simulate this by passing
-# a recent timestamp as last_conv.
-now=$(date +%s)
-trigger_conversion "$ad_clicks" "$now" > /dev/null
+# kntnt_ad_attr_dedup_seconds defaults to 0, meaning no deduplication.
+# Both conversions for the same hash should be recorded.
+trigger_conversion "$ad_clicks" > /dev/null
 
 conv_count2=$(query_db "SELECT COUNT(*) AS cnt FROM wp_kntnt_ad_attr_conversions AS c JOIN wp_kntnt_ad_attr_clicks AS cl ON c.click_id = cl.id WHERE cl.hash='${HASH}'")
 cnt2=$(echo "$conv_count2" | jq -r '.cnt')
-assert_equals "$cnt1" "$cnt2" "Second conversion within dedup window skipped (count unchanged)"
+assert_greater_than "$cnt1" "$cnt2" "Second conversion recorded (dedup disabled by default)"
 
 # --- Cleanup ---
 

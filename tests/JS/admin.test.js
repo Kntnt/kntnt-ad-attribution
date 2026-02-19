@@ -245,7 +245,7 @@ describe('admin.js', () => {
             window.kntntAdAttrAdmin = {
                 searchUrl: 'https://example.com/search',
                 nonce: 'nonce',
-                utmSources: { google: 'cpc', facebook: 'cpm' },
+                utmSources: { google: 'cpc', meta: 'paid-social' },
             };
 
             loadScript();

@@ -5,30 +5,38 @@ Conversions are triggered via the action hook `kntnt_ad_attr_conversion` from th
 ## Flow
 
 ```
-1. Read the _ad_last_conv cookie
-2. If the cookie exists and is younger than dedup_days → ignore, exit
-3. Read the _ad_clicks cookie
-4. Validate and extract hash:timestamp pairs
-5. Filter out hashes that do not exist as published tracking URLs (CPT with post_status = publish)
-6. If no valid hashes remain → exit (no attribution, _ad_last_conv is NOT set)
-7. Apply attribution model (default: last-click) via kntnt_ad_attr_attribution filter
-8. Look up click records and write conversion rows to the database (in a transaction)
-9. Set/update the _ad_last_conv cookie
-10. Trigger kntnt_ad_attr_conversion_recorded with attributions and context (timestamp, IP, user-agent)
-11. Look up click IDs and campaign data for attributed hashes
-12. Call registered reporters' enqueue callbacks, insert payloads into queue
-13. Schedule queue processing
+1. Read the _ad_clicks cookie
+2. Validate and extract hash:timestamp pairs
+3. Filter out hashes that do not exist as published tracking URLs (CPT with post_status = publish)
+4. If no valid hashes remain → exit (no attribution)
+5. Per-hash deduplication (only when kntnt_ad_attr_dedup_seconds > 0):
+   a. Read _ad_last_conv cookie (hash:timestamp pairs)
+   b. Remove hashes whose last conversion is within the dedup window
+   c. If no hashes remain → exit
+6. Apply attribution model (default: last-click) via kntnt_ad_attr_attribution filter
+7. Look up click records and write conversion rows to the database (in a transaction)
+8. Write per-hash dedup cookie (only when dedup is enabled and hashes were attributed)
+9. Trigger kntnt_ad_attr_conversion_recorded with attributions and context (timestamp, IP, user-agent)
+10. Look up click IDs and campaign data for attributed hashes
+11. Call registered reporters' enqueue callbacks, insert payloads into queue
+12. Schedule queue processing
 ```
 
 ## Deduplication
 
-If `_ad_last_conv` exists and the timestamp is younger than `kntnt_ad_attr_dedup_days` (default 30 days), the conversion is ignored. The dedup period is automatically capped to the cookie lifetime:
+Per-hash deduplication is controlled by the `kntnt_ad_attr_dedup_seconds` filter (default: `0`, meaning deduplication is disabled). When enabled, each hash is independently checked against its last conversion timestamp in the `_ad_last_conv` cookie. A conversion for hash A does not block a conversion for hash B.
+
+The dedup period is automatically capped to the cookie lifetime:
 
 ```php
-$lifetime   = apply_filters( 'kntnt_ad_attr_cookie_lifetime', 90 );
-$dedup_days = apply_filters( 'kntnt_ad_attr_dedup_days', 30 );
-$dedup_days = min( $dedup_days, $lifetime );
+$lifetime      = (int) apply_filters( 'kntnt_ad_attr_cookie_lifetime', 90 );
+$dedup_seconds = (int) apply_filters( 'kntnt_ad_attr_dedup_seconds', 0 );
+$dedup_seconds = min( $dedup_seconds, $lifetime * DAY_IN_SECONDS );
 ```
+
+When `$dedup_seconds` is 0 (default), the `_ad_last_conv` cookie is neither read nor written, and all conversions are recorded regardless of previous conversions for the same hash.
+
+When `$dedup_seconds > 0`, after a successful conversion, the attributed hashes are merged into the `_ad_last_conv` cookie with the current timestamp. On the next conversion, hashes whose `_ad_last_conv` timestamp is within the dedup window are skipped.
 
 ## Attribution Logic
 

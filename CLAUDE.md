@@ -55,11 +55,13 @@ All machine-readable names use `kntnt-ad-attr` (hyphens) / `kntnt_ad_attr` (unde
 
 **Data model:** Tracking URLs are stored as CPT `kntnt_ad_attr_url` (with meta `_hash`, `_target_post_id`, `_utm_source`, `_utm_medium`, `_utm_campaign`). Individual clicks are stored in `{prefix}kntnt_ad_attr_clicks` with per-click UTM fields (`utm_content`, `utm_term`, `utm_id`, `utm_source_platform`). Conversions are stored in `{prefix}kntnt_ad_attr_conversions` linked to specific clicks via `click_id`, with fractional attribution values. Platform-specific click IDs are stored in `{prefix}kntnt_ad_attr_click_ids` with composite PK `(hash, platform)`. Async report jobs are stored in `{prefix}kntnt_ad_attr_queue` with auto-increment PK and status-based processing.
 
-**Shared utility methods (v1.5.1):** `Post_Type::get_valid_hashes(array $hashes)` returns hashes with published tracking URL posts (used by both `Conversion_Handler` and `Rest_Endpoint`). `Post_Type::get_distinct_meta_values(string $meta_key)` returns sorted distinct meta values for filter dropdowns (used by both `Url_List_Table` and `Campaign_List_Table`).
+**Shared utility methods (v1.5.1):** `Post_Type::get_valid_hashes(array $hashes)` returns hashes with published tracking URL posts (used by both `Conversion_Handler` and `Rest_Endpoint`). `Post_Type::get_distinct_meta_values(string $meta_key)` returns sorted distinct meta values for filter dropdowns (used by `Campaign_List_Table`).
 
 **Adapter infrastructure (v1.2.0):** Click_ID_Store, Queue, and Queue_Processor are instantiated in Plugin constructor and injected into Click_Handler (Click_ID_Store), Conversion_Handler (Click_ID_Store, Queue, Queue_Processor), Cron (Click_ID_Store, Queue), and Admin_Page (Queue). Two new filters: `kntnt_ad_attr_click_id_capturers` and `kntnt_ad_attr_conversion_reporters`. Queue processing via `kntnt_ad_attr_process_queue` cron hook. If no adapters are registered, zero overhead.
 
-**Admin tab extensibility (v1.3.0):** The tab list is filterable via `kntnt_ad_attr_admin_tabs`. Unrecognized tab slugs dispatch to the `kntnt_ad_attr_admin_tab_{$tab}` action, allowing add-on plugins to register custom admin tabs.
+**Merged admin view (v1.6.0):** The admin page is a single merged view (no tabs). Add-on plugins can still register custom views via `kntnt_ad_attr_admin_tabs` filter; when `?tab=<slug>` is passed, the `kntnt_ad_attr_admin_tab_{$tab}` action fires for rendering.
+
+**Per-hash deduplication (v1.6.0):** Conversion deduplication is per-hash (not global) and disabled by default. Controlled by `kntnt_ad_attr_dedup_seconds` filter (default: 0). When enabled, the `_ad_last_conv` cookie stores `hash:timestamp` pairs (same format as `_ad_clicks`).
 
 **Query parameter forwarding (v1.3.0):** Click_Handler merges incoming query parameters (e.g. `gclid`, `fbclid`) into the redirect target URL. Target URL parameters take precedence on collision. The merged set is filterable via `kntnt_ad_attr_redirect_query_params`.
 
@@ -73,7 +75,7 @@ All machine-readable names use `kntnt-ad-attr` (hyphens) / `kntnt_ad_attr` (unde
 
 ## Hook Reference (Quick)
 
-**Filters (16):** `kntnt_ad_attr_has_consent`, `kntnt_ad_attr_default_consent`, `kntnt_ad_attr_redirect_method`, `kntnt_ad_attr_url_prefix`, `kntnt_ad_attr_cookie_lifetime`, `kntnt_ad_attr_dedup_days`, `kntnt_ad_attr_pending_transport`, `kntnt_ad_attr_is_bot`, `kntnt_ad_attr_attribution`, `kntnt_ad_attr_click_retention_days`, `kntnt_ad_attr_utm_options`, `kntnt_ad_attr_admin_tabs`, `kntnt_ad_attr_redirect_query_params`, `kntnt_ad_attr_click_id_capturers`, `kntnt_ad_attr_conversion_reporters`, `wp_untrash_post_status` (priority 20, for CPT only).
+**Filters (16):** `kntnt_ad_attr_has_consent`, `kntnt_ad_attr_default_consent`, `kntnt_ad_attr_redirect_method`, `kntnt_ad_attr_url_prefix`, `kntnt_ad_attr_cookie_lifetime`, `kntnt_ad_attr_dedup_seconds`, `kntnt_ad_attr_pending_transport`, `kntnt_ad_attr_is_bot`, `kntnt_ad_attr_attribution`, `kntnt_ad_attr_click_retention_days`, `kntnt_ad_attr_utm_options`, `kntnt_ad_attr_admin_tabs`, `kntnt_ad_attr_redirect_query_params`, `kntnt_ad_attr_click_id_capturers`, `kntnt_ad_attr_conversion_reporters`, `wp_untrash_post_status` (priority 20, for CPT only).
 
 **Actions (5):** `kntnt_ad_attr_click` (hash, target_url, campaign_data — fires for all non-bot clicks), `kntnt_ad_attr_conversion` (trigger from form plugin), `kntnt_ad_attr_conversion_recorded` (attributions, context — fires after DB write), `kntnt_ad_attr_admin_tab_{$tab}` (custom tab rendering), `kntnt_ad_attr_daily_cleanup` (cron).
 
@@ -85,7 +87,7 @@ The test suite has three levels. See `docs/testing-strategy.md` for full details
 
 | Level | Framework | Tests | What it covers |
 |-------|-----------|-------|----------------|
-| PHP unit | Pest + Brain Monkey + Mockery | 219 | Individual class methods in isolation |
+| PHP unit | Pest + Brain Monkey + Mockery | 225 | Individual class methods in isolation |
 | JS unit | Vitest + happy-dom | 28 | `pending-consent.js` and `admin.js` |
 | Integration | Bash + curl + WordPress Playground | 14 suites | End-to-end flows: click, conversion, admin, REST, cron |
 
@@ -158,7 +160,7 @@ All specs are in `docs/`. Read the relevant doc before implementing a feature:
 | `conversion-handling.md` | Conversion flow, dedup, attribution formula, reporter enqueueing |
 | `rest-api.md` | REST endpoints (set-cookie, search-posts), rate limiting |
 | `client-script.md` | sessionStorage, pending consent, JS consent interface |
-| `admin-ui.md` | WP_List_Table tabs, SQL queries, CSV export |
+| `admin-ui.md` | Merged admin view, WP_List_Table, SQL queries, CSV export |
 | `developer-hooks.md` | All filters/actions with implementation logic |
 | `lifecycle.md` | Activation, deactivation, uninstall, migration, cron |
 | `security.md` | Validation, nonces, capabilities, error handling, time zones |

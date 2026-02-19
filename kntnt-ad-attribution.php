@@ -3,7 +3,7 @@
  * Plugin Name:       Kntnt Ad Attribution
  * Plugin URI:        https://github.com/Kntnt/kntnt-ad-attribution
  * Description:       Provides internal lead attribution for ad campaigns using first-party cookies and filterable last-click attribution.
- * Version:           1.5.0
+ * Version:           1.6.0
  * Author:            Kntnt Sweden AB
  * Author URI:        https://www.kntnt.com/
  * License:           GPL-2.0-or-later

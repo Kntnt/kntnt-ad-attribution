@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Integration test: Campaign aggregation report.
 #
-# Verifies that the campaigns tab aggregates clicks correctly,
+# Verifies that the campaign view aggregates clicks correctly,
 # includes conversion data, and supports UTM filtering.
 
 set -euo pipefail
@@ -43,10 +43,10 @@ if [[ -n "$ad_clicks" ]]; then
     trigger_conversion "$ad_clicks" > /dev/null
 fi
 
-# --- Campaigns tab shows aggregated data ---
+# --- Campaign view shows aggregated data ---
 
 campaigns_page=$(curl -sf -b "${ADMIN_COOKIE}" \
-    "${WP_BASE_URL}/wp-admin/tools.php?page=kntnt-ad-attribution&tab=campaigns")
+    "${WP_BASE_URL}/wp-admin/tools.php?page=kntnt-ad-attribution")
 
 # Should contain the tracking URL hash (or the URL itself) somewhere.
 assert_contains "$campaigns_page" "google" "Campaigns page shows google source"
@@ -55,7 +55,7 @@ assert_contains "$campaigns_page" "facebook" "Campaigns page shows facebook sour
 # --- UTM filter works ---
 
 filtered_page=$(curl -sf -b "${ADMIN_COOKIE}" \
-    "${WP_BASE_URL}/wp-admin/tools.php?page=kntnt-ad-attribution&tab=campaigns&utm_source=google")
+    "${WP_BASE_URL}/wp-admin/tools.php?page=kntnt-ad-attribution&utm_source=google")
 
 assert_contains "$filtered_page" "google" "Filtered campaigns page shows google"
 

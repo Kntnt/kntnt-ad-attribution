@@ -39,9 +39,9 @@ URL prefix for tracking URLs. Default: `'ad'`.
 
 Cookie lifetime in days. Default: `90`. Affects the `_ad_clicks` cookie and the attribution formula's N value.
 
-**`kntnt_ad_attr_dedup_days`**
+**`kntnt_ad_attr_dedup_seconds`**
 
-Deduplication window in days. Default: `30`. Automatically capped to max `cookie_lifetime`.
+Per-hash deduplication window in seconds. Default: `0` (deduplication disabled). When non-zero, each hash is independently checked against its last conversion timestamp. Automatically capped to `cookie_lifetime × DAY_IN_SECONDS`.
 
 **`kntnt_ad_attr_pending_transport`**
 
@@ -83,7 +83,7 @@ Predefined UTM source and medium options for the admin form dropdowns. Sources m
 
 ```php
 add_filter( 'kntnt_ad_attr_utm_options', function ( array $options ): array {
-    $options['sources']['snapchat'] = 'paid_social';
+    $options['sources']['snapchat'] = 'paid-social';
     $options['mediums'][] = 'native';
     return $options;
 } );
@@ -91,7 +91,7 @@ add_filter( 'kntnt_ad_attr_utm_options', function ( array $options ): array {
 
 **`kntnt_ad_attr_admin_tabs`**
 
-Filters the admin page tab list. Add-on plugins can register custom tabs by appending slug → label entries to the array. Unrecognized tab slugs dispatch to the `kntnt_ad_attr_admin_tab_{$tab}` action for rendering.
+Filters the admin page tab list. The core no longer uses tabs (the admin page is a single merged view), but add-on plugins can still register custom views by appending slug → label entries. When `?tab=<slug>` is passed, the `kntnt_ad_attr_admin_tab_{$tab}` action fires for rendering.
 
 ```php
 add_filter( 'kntnt_ad_attr_admin_tabs', function ( array $tabs ): array {
@@ -99,8 +99,6 @@ add_filter( 'kntnt_ad_attr_admin_tabs', function ( array $tabs ): array {
     return $tabs;
 } );
 ```
-
-Default tabs: `[ 'urls' => 'URLs', 'campaigns' => 'Campaigns' ]`.
 
 **`kntnt_ad_attr_redirect_query_params`**
 

@@ -46,12 +46,18 @@ describe('Utm_Options::get_options()', function () {
         $options = Utm_Options::get_options();
 
         expect($options['sources'])->toHaveKeys([
+            'bing',
+            'event',
             'google',
-            'meta',
             'linkedin',
-            'microsoft',
-            'tiktok',
+            'meta',
+            'newsletter',
             'pinterest',
+            'qr-code',
+            'snapchat',
+            'tiktok',
+            'x',
+            'youtube',
         ]);
     });
 
@@ -64,11 +70,17 @@ describe('Utm_Options::get_options()', function () {
         $options = Utm_Options::get_options();
 
         expect($options['mediums'])->toContain(
+            'affiliate',
             'cpc',
-            'paid_social',
             'display',
+            'email',
+            'offline',
+            'organic',
+            'paid-social',
+            'print',
+            'sms',
+            'social',
             'video',
-            'shopping',
         );
     });
 
@@ -76,9 +88,9 @@ describe('Utm_Options::get_options()', function () {
         $custom_options = [
             'sources' => [
                 'google'   => 'cpc',
-                'snapchat' => 'paid_social',
+                'snapchat' => 'paid-social',
             ],
-            'mediums' => ['cpc', 'paid_social'],
+            'mediums' => ['cpc', 'paid-social'],
         ];
 
         Functions\expect('apply_filters')
@@ -89,7 +101,7 @@ describe('Utm_Options::get_options()', function () {
         $options = Utm_Options::get_options();
 
         expect($options['sources'])->toHaveKey('snapchat');
-        expect($options['sources']['snapchat'])->toBe('paid_social');
+        expect($options['sources']['snapchat'])->toBe('paid-social');
     });
 
 });

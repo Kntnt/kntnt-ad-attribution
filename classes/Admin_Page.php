@@ -2,9 +2,9 @@
 /**
  * Admin page for tracking URL management.
  *
- * Registers a page under Tools, renders tab navigation (URLs / Campaigns),
- * handles form submission for creating and trashing tracking URLs,
- * and enqueues page-specific assets.
+ * Registers a page under Tools, renders a single merged view with
+ * Campaign_List_Table, handles form submission for creating and
+ * managing tracking URLs, and enqueues page-specific assets.
  *
  * @package Kntnt\Ad_Attribution
  * @since   1.0.0
@@ -15,7 +15,7 @@ declare( strict_types = 1 );
 namespace Kntnt\Ad_Attribution;
 
 /**
- * Orchestrates the admin interface: menu, tabs, forms, and assets.
+ * Orchestrates the admin interface: menu, forms, and assets.
  *
  * Form submissions are processed in the `load-` hook (before any output)
  * so that redirects can be sent safely.
@@ -102,22 +102,17 @@ final class Admin_Page {
 		// Process form submissions before any output.
 		$this->handle_form_submission();
 
-		// Register per-page Screen Option for the active tab.
-		$tab = sanitize_text_field( wp_unslash( $_GET['tab'] ?? 'urls' ) );
+		// Register per-page Screen Option.
+		$action = sanitize_text_field( wp_unslash( $_GET['action'] ?? '' ) );
 
-		match ( $tab ) {
-			'campaigns' => add_screen_option( 'per_page', [
-				'label'   => __( 'Campaigns per page', 'kntnt-ad-attr' ),
+		// Only show screen options on the list view (not the add form).
+		if ( $action !== 'add' ) {
+			add_screen_option( 'per_page', [
+				'label'   => __( 'Items per page', 'kntnt-ad-attr' ),
 				'default' => 20,
 				'option'  => Campaign_List_Table::PER_PAGE_OPTION,
-			] ),
-			'urls' => add_screen_option( 'per_page', [
-				'label'   => __( 'URLs per page', 'kntnt-ad-attr' ),
-				'default' => 20,
-				'option'  => Url_List_Table::PER_PAGE_OPTION,
-			] ),
-			default => null,
-		};
+			] );
+		}
 	}
 
 	/**
@@ -135,7 +130,7 @@ final class Admin_Page {
 	 * @since 1.0.0
 	 */
 	public function save_screen_option( mixed $status, string $option, mixed $value ): mixed {
-		if ( $option === Url_List_Table::PER_PAGE_OPTION || $option === Campaign_List_Table::PER_PAGE_OPTION ) {
+		if ( $option === Campaign_List_Table::PER_PAGE_OPTION ) {
 			return (int) $value;
 		}
 		return $status;
@@ -250,35 +245,31 @@ final class Admin_Page {
 	/**
 	 * Renders the main admin page.
 	 *
-	 * Verifies capability, outputs the page wrapper, tab navigation,
-	 * admin notices, and dispatches to the active tab's renderer.
+	 * Single merged view: page title, optional form, or Campaign_List_Table
+	 * with bulk actions, filters, and CSV export.
 	 *
 	 * @return void
 	 * @since 1.0.0
 	 */
 	public function render_page(): void {
-
-		// Capability check is handled by add_management_page() — no need
-		// for an explicit authorize() call here. Form handlers retain their
-		// own authorize() calls as they process input.
-		$tab    = sanitize_text_field( wp_unslash( $_GET['tab'] ?? 'urls' ) );
 		$action = sanitize_text_field( wp_unslash( $_GET['action'] ?? '' ) );
 
 		echo '<div class="wrap">';
 		echo '<h1>' . esc_html__( 'Ad Attribution', 'kntnt-ad-attr' ) . '</h1>';
 
-		$this->render_tabs( $tab );
 		$this->render_admin_notices();
 
-		echo '<div class="kntnt-ad-attr-tab-content">';
+		if ( $action === 'add' ) {
+			$this->render_form();
+		} else {
+			$this->render_main_view();
+		}
 
-		match ( $tab ) {
-			'urls'      => $this->render_urls_tab( $action ),
-			'campaigns' => $this->render_campaigns_tab(),
-			default     => do_action( "kntnt_ad_attr_admin_tab_{$tab}" ), /** @since 1.3.0 */
-		};
-
-		echo '</div>';
+		// Custom tab support for add-on plugins (v1.3.0 compatibility).
+		$tab = sanitize_text_field( wp_unslash( $_GET['tab'] ?? '' ) );
+		if ( $tab !== '' && $tab !== 'urls' && $tab !== 'campaigns' ) {
+			do_action( "kntnt_ad_attr_admin_tab_{$tab}" );
+		}
 
 		// Show queue status only when reporters are registered.
 		$reporters = apply_filters( 'kntnt_ad_attr_conversion_reporters', [] );
@@ -287,6 +278,70 @@ final class Admin_Page {
 		}
 
 		echo '</div>';
+	}
+
+	/**
+	 * Renders the main list view with Campaign_List_Table.
+	 *
+	 * Includes "Create Tracking URL" button, views, search, filters,
+	 * bulk action form, and CSV export button.
+	 *
+	 * @return void
+	 * @since 1.6.0
+	 */
+	private function render_main_view(): void {
+		$table = new Campaign_List_Table();
+		$table->prepare_items();
+
+		$is_trash = sanitize_text_field( wp_unslash( $_GET['post_status'] ?? '' ) ) === 'trash';
+
+		// "Create Tracking URL" button — only when not in trash.
+		if ( ! $is_trash ) {
+			$add_url = admin_url( sprintf(
+				'tools.php?page=%s&action=add',
+				Plugin::get_slug(),
+			) );
+
+			echo '<a href="' . esc_url( $add_url ) . '" class="page-title-action">'
+				. esc_html__( 'Create Tracking URL', 'kntnt-ad-attr' ) . '</a>';
+		}
+
+		echo '<hr class="wp-header-end">';
+
+		$table->views();
+
+		// Filter and list form — uses GET so filters are reflected in the URL.
+		echo '<form method="get" class="kntnt-ad-attr-campaigns">';
+		echo '<input type="hidden" name="page" value="' . esc_attr( Plugin::get_slug() ) . '">';
+
+		// Preserve post_status through search and pagination.
+		if ( $is_trash ) {
+			echo '<input type="hidden" name="post_status" value="trash">';
+		}
+
+		$table->search_box( __( 'Search', 'kntnt-ad-attr' ), 'kntnt-ad-attr-search' );
+		$table->display();
+		echo '</form>';
+
+		// CSV export button — only on publish view with reporters registered.
+		if ( ! $is_trash ) {
+			$reporters = apply_filters( 'kntnt_ad_attr_conversion_reporters', [] );
+			if ( ! empty( $reporters ) ) {
+				$params = $table->get_filter_params();
+
+				echo '<form method="post" class="kntnt-ad-attr-export">';
+				wp_nonce_field( 'kntnt_ad_attr_export', 'kntnt_ad_attr_export_nonce' );
+				echo '<input type="hidden" name="kntnt_ad_attr_action" value="export_csv">';
+
+				// Pass current filter values so the export matches the displayed data.
+				foreach ( $params as $key => $value ) {
+					echo '<input type="hidden" name="' . esc_attr( $key ) . '" value="' . esc_attr( $value ) . '">';
+				}
+
+				submit_button( __( 'Export CSV', 'kntnt-ad-attr' ), 'secondary', 'export_csv', false );
+				echo '</form>';
+			}
+		}
 	}
 
 	/**
@@ -330,141 +385,10 @@ final class Admin_Page {
 	}
 
 	/**
-	 * Renders the tab navigation bar.
-	 *
-	 * @param string $active_tab The currently active tab slug.
-	 *
-	 * @return void
-	 * @since 1.0.0
-	 */
-	private function render_tabs( string $active_tab ): void {
-		/** @since 1.3.0 */
-		$tabs = apply_filters( 'kntnt_ad_attr_admin_tabs', [
-			'urls'      => __( 'URLs', 'kntnt-ad-attr' ),
-			'campaigns' => __( 'Campaigns', 'kntnt-ad-attr' ),
-		] );
-
-		$base_url = admin_url( 'tools.php?page=' . Plugin::get_slug() );
-
-		echo '<nav class="nav-tab-wrapper">';
-		foreach ( $tabs as $slug => $label ) {
-			$url   = add_query_arg( 'tab', $slug, $base_url );
-			$class = ( $active_tab === $slug ) ? 'nav-tab nav-tab-active' : 'nav-tab';
-			printf(
-				'<a href="%s" class="%s">%s</a>',
-				esc_url( $url ),
-				esc_attr( $class ),
-				esc_html( $label ),
-			);
-		}
-		echo '</nav>';
-	}
-
-	/**
-	 * Routes the URLs tab to the appropriate view.
-	 *
-	 * @param string $action The current action: 'add' or empty for list.
-	 *
-	 * @return void
-	 * @since 1.0.0
-	 */
-	private function render_urls_tab( string $action ): void {
-		match ( $action ) {
-			'add'   => $this->render_form(),
-			default => $this->render_list_view(),
-		};
-	}
-
-	/**
-	 * Renders the list view with "Add New" button, search box, and table.
-	 *
-	 * @return void
-	 * @since 1.0.0
-	 */
-	private function render_list_view(): void {
-		$table = new Url_List_Table();
-		$table->prepare_items();
-
-		$is_trash = sanitize_text_field( wp_unslash( $_GET['post_status'] ?? '' ) ) === 'trash';
-
-		// "Add New" button on its own line, mirroring WordPress core list tables.
-		if ( ! $is_trash ) {
-			$add_url = admin_url( sprintf(
-				'tools.php?page=%s&tab=urls&action=add',
-				Plugin::get_slug(),
-			) );
-
-			echo '<a href="' . esc_url( $add_url ) . '" class="page-title-action">'
-				. esc_html__( 'Add New', 'kntnt-ad-attr' ) . '</a>';
-		}
-
-		echo '<hr class="wp-header-end">';
-
-		$table->views();
-
-		// Search box inside a form so it submits with GET.
-		echo '<form method="get">';
-		echo '<input type="hidden" name="page" value="' . esc_attr( Plugin::get_slug() ) . '">';
-		echo '<input type="hidden" name="tab" value="urls">';
-
-		// Preserve post_status through search and pagination.
-		if ( $is_trash ) {
-			echo '<input type="hidden" name="post_status" value="trash">';
-		}
-
-		// Preserve active filters through search.
-		foreach ( [ 'utm_source', 'utm_medium', 'utm_campaign' ] as $filter ) {
-			$value = sanitize_text_field( wp_unslash( $_GET[ $filter ] ?? '' ) );
-			if ( $value !== '' ) {
-				echo '<input type="hidden" name="' . esc_attr( $filter ) . '" value="' . esc_attr( $value ) . '">';
-			}
-		}
-
-		$table->search_box( __( 'Search URLs', 'kntnt-ad-attr' ), 'kntnt-ad-attr-search' );
-		$table->display();
-		echo '</form>';
-	}
-
-	/**
-	 * Renders the Campaigns tab with statistics table, filters, and CSV export.
-	 *
-	 * @return void
-	 * @since 1.0.0
-	 */
-	private function render_campaigns_tab(): void {
-		$table = new Campaign_List_Table();
-		$table->prepare_items();
-
-		// Filter form — uses GET so filters are reflected in the URL.
-		echo '<form method="get" class="kntnt-ad-attr-campaigns">';
-		echo '<input type="hidden" name="page" value="' . esc_attr( Plugin::get_slug() ) . '">';
-		echo '<input type="hidden" name="tab" value="campaigns">';
-
-		$table->search_box( __( 'Search', 'kntnt-ad-attr' ), 'kntnt-ad-attr-search' );
-		$table->display();
-		echo '</form>';
-
-		// CSV export button — POST form with nonce.
-		$params = $table->get_filter_params();
-
-		echo '<form method="post" class="kntnt-ad-attr-export">';
-		wp_nonce_field( 'kntnt_ad_attr_export', 'kntnt_ad_attr_export_nonce' );
-		echo '<input type="hidden" name="kntnt_ad_attr_action" value="export_csv">';
-
-		// Pass current filter values so the export matches the displayed data.
-		foreach ( $params as $key => $value ) {
-			echo '<input type="hidden" name="' . esc_attr( $key ) . '" value="' . esc_attr( $value ) . '">';
-		}
-
-		submit_button( __( 'Export CSV', 'kntnt-ad-attr' ), 'secondary', 'export_csv', false );
-		echo '</form>';
-	}
-
-	/**
 	 * Renders the add form for a tracking URL.
 	 *
 	 * UTM source and medium are rendered as Select2 tag dropdowns with
-	 * predefined options. Campaign, content, and term remain text inputs.
+	 * predefined options. Campaign remains a text input.
 	 *
 	 * @return void
 	 * @since 1.0.0
@@ -686,7 +610,7 @@ final class Admin_Page {
 
 		// Redirect to the list view with a success message.
 		wp_safe_redirect( admin_url( sprintf(
-			'tools.php?page=%s&tab=urls&message=created',
+			'tools.php?page=%s&message=created',
 			Plugin::get_slug(),
 		) ) );
 		exit;
@@ -709,7 +633,7 @@ final class Admin_Page {
 		wp_trash_post( $post_id );
 
 		wp_safe_redirect( admin_url( sprintf(
-			'tools.php?page=%s&tab=urls&message=trashed',
+			'tools.php?page=%s&message=trashed',
 			Plugin::get_slug(),
 		) ) );
 		exit;
@@ -730,7 +654,7 @@ final class Admin_Page {
 		wp_untrash_post( $post_id );
 
 		wp_safe_redirect( admin_url( sprintf(
-			'tools.php?page=%s&tab=urls&message=restored',
+			'tools.php?page=%s&message=restored',
 			Plugin::get_slug(),
 		) ) );
 		exit;
@@ -751,7 +675,7 @@ final class Admin_Page {
 		$this->permanently_delete_url( $post_id );
 
 		wp_safe_redirect( admin_url( sprintf(
-			'tools.php?page=%s&tab=urls&post_status=trash&message=deleted',
+			'tools.php?page=%s&post_status=trash&message=deleted',
 			Plugin::get_slug(),
 		) ) );
 		exit;
@@ -828,7 +752,6 @@ final class Admin_Page {
 
 		$redirect_args = [
 			'page'    => Plugin::get_slug(),
-			'tab'     => 'urls',
 			'message' => $message_key,
 			'count'   => $count,
 		];

@@ -5,26 +5,6 @@
  * @since   1.0.0
  */
 
-/* Tab spacing */
-.kntnt-ad-attr-tab-content {
-	margin-top: 15px;
-}
-
-/* URLs table column widths */
-.wp-list-table .column-tracking_url {
-	width: 35%;
-}
-
-.wp-list-table .column-target_url {
-	width: 25%;
-}
-
-.wp-list-table .column-utm_source,
-.wp-list-table .column-utm_medium,
-.wp-list-table .column-utm_campaign {
-	width: 12%;
-}
-
 /* Click-to-copy tracking URL */
 .kntnt-ad-attr-copy {
 	cursor: pointer;
@@ -84,7 +64,11 @@
 	width: 400px;
 }
 
-/* Campaigns table column widths */
+/* Campaign table column widths */
+.kntnt-ad-attr-campaigns .column-cb {
+	width: 2.2em;
+}
+
 .kntnt-ad-attr-campaigns .column-tracking_url {
 	width: 18%;
 }

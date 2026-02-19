@@ -87,7 +87,7 @@ final class Conversion_Handler {
 	/**
 	 * Processes a conversion through the attribution flow.
 	 *
-	 * Steps: deduplication check → cookie parse → hash validation →
+	 * Steps: cookie parse → hash validation → per-hash deduplication →
 	 * attribution calculation → conversions DB write → dedup cookie →
 	 * recorded hook → reporter enqueueing.
 	 *
@@ -97,34 +97,46 @@ final class Conversion_Handler {
 	public function handle_conversion(): void {
 		global $wpdb;
 
-		// Step 1–2: Deduplication — skip if a conversion was recorded recently.
-		$last_conv = (int) ( $_COOKIE['_ad_last_conv'] ?? 0 );
-		$lifetime  = (int) apply_filters( 'kntnt_ad_attr_cookie_lifetime', 90 );
-		$dedup     = min( (int) apply_filters( 'kntnt_ad_attr_dedup_days', 30 ), $lifetime );
-
-		if ( $last_conv > 0 && ( time() - $last_conv ) < ( $dedup * DAY_IN_SECONDS ) ) {
-			return;
-		}
-
-		// Step 3–4: Read and parse the _ad_clicks cookie.
-		$entries = $this->cookie_manager->parse();
+		// Step 1: Read and parse the _ad_clicks cookie.
+		$entries = $this->cookie_manager->parse( '_ad_clicks' );
 		if ( empty( $entries ) ) {
 			return;
 		}
 
-		// Step 5: Filter to hashes that exist as published tracking URLs.
+		// Step 2: Filter to hashes that exist as published tracking URLs.
 		$valid_entries = $this->filter_valid_entries( $entries );
 		if ( empty( $valid_entries ) ) {
 			return;
 		}
 
-		// Step 6: Prepare click data for the attribution filter.
+		// Step 3: Per-hash deduplication — remove hashes converted recently.
+		$lifetime      = (int) apply_filters( 'kntnt_ad_attr_cookie_lifetime', 90 );
+		$dedup_seconds = (int) apply_filters( 'kntnt_ad_attr_dedup_seconds', 0 );
+		$dedup_seconds = min( $dedup_seconds, $lifetime * DAY_IN_SECONDS );
+
+		$last_conv_entries = [];
+		if ( $dedup_seconds > 0 ) {
+			$last_conv_entries = $this->cookie_manager->parse( '_ad_last_conv' );
+			$now = time();
+
+			foreach ( $valid_entries as $hash => $timestamp ) {
+				if ( isset( $last_conv_entries[ $hash ] ) && ( $now - $last_conv_entries[ $hash ] ) < $dedup_seconds ) {
+					unset( $valid_entries[ $hash ] );
+				}
+			}
+
+			if ( empty( $valid_entries ) ) {
+				return;
+			}
+		}
+
+		// Step 4: Prepare click data for the attribution filter.
 		$clicks = [];
 		foreach ( $valid_entries as $hash => $timestamp ) {
 			$clicks[] = [ 'hash' => $hash, 'clicked_at' => $timestamp ];
 		}
 
-		// Step 7: Default last-click attribution — full credit to most recent click.
+		// Step 5: Default last-click attribution — full credit to most recent click.
 		$latest_hash  = array_keys( $valid_entries, max( $valid_entries ) )[0];
 		$attributions = array_fill_keys( array_keys( $valid_entries ), 0.0 );
 		$attributions[ $latest_hash ] = 1.0;
@@ -139,12 +151,14 @@ final class Conversion_Handler {
 		 */
 		$attributions = apply_filters( 'kntnt_ad_attr_attribution', $attributions, $clicks );
 
-		// Step 8: Look up click records and write conversion rows.
+		// Step 6: Look up click records and write conversion rows.
 		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
 		$conv_table   = $wpdb->prefix . 'kntnt_ad_attr_conversions';
 		$converted_at = gmdate( 'Y-m-d H:i:s' );
 
 		$wpdb->query( 'START TRANSACTION' );
+
+		$attributed_hashes = [];
 
 		foreach ( $attributions as $hash => $value ) {
 			if ( $value <= 0 ) {
@@ -173,27 +187,29 @@ final class Conversion_Handler {
 				error_log( '[Kntnt Ad Attribution] Conversion write failed, rolled back.' );
 				return;
 			}
+
+			$attributed_hashes[] = $hash;
 		}
 
 		$wpdb->query( 'COMMIT' );
 
-		// Step 9: Set the _ad_last_conv deduplication cookie.
-		setcookie( '_ad_last_conv', (string) time(), [
-			'expires'  => time() + ( $dedup * DAY_IN_SECONDS ),
-			'path'     => '/',
-			'secure'   => true,
-			'httponly'  => true,
-			'samesite' => 'Lax',
-		] );
+		// Step 7: Write the per-hash dedup cookie (only when dedup is enabled).
+		if ( $dedup_seconds > 0 && ! empty( $attributed_hashes ) ) {
+			$now = time();
+			foreach ( $attributed_hashes as $hash ) {
+				$last_conv_entries[ $hash ] = $now;
+			}
+			$this->cookie_manager->set_dedup_cookie( $last_conv_entries, $dedup_seconds );
+		}
 
-		// Step 10: Notify other components that a conversion was recorded.
+		// Step 8: Notify other components that a conversion was recorded.
 		do_action( 'kntnt_ad_attr_conversion_recorded', $attributions, [
 			'timestamp'  => gmdate( 'c' ),
 			'ip'         => $_SERVER['REMOTE_ADDR'] ?? '',
 			'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
 		] );
 
-		// Step 11: Enqueue conversion reports for registered reporters.
+		// Step 9: Enqueue conversion reports for registered reporters.
 		$reporters = apply_filters( 'kntnt_ad_attr_conversion_reporters', [] );
 		if ( ! empty( $reporters ) ) {
 

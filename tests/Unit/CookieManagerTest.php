@@ -16,7 +16,7 @@ use Brain\Monkey\Functions;
 describe('Cookie_Manager::parse()', function () {
 
     afterEach(function () {
-        unset($_COOKIE['_ad_clicks']);
+        unset($_COOKIE['_ad_clicks'], $_COOKIE['_ad_last_conv']);
     });
 
     it('returns hash => timestamp map for valid cookie with one entry', function () {
@@ -73,6 +73,114 @@ describe('Cookie_Manager::parse()', function () {
         Functions\expect('error_log')->once();
 
         expect((new Cookie_Manager())->parse())->toBe([]);
+    });
+
+    it('reads a named cookie when name parameter is provided', function () {
+        $hash = str_repeat('d', 64);
+        $_COOKIE['_ad_last_conv'] = "{$hash}:1700000000";
+
+        $result = (new Cookie_Manager())->parse('_ad_last_conv');
+
+        expect($result)->toBe([$hash => 1700000000]);
+    });
+
+    it('returns empty array for missing named cookie', function () {
+        unset($_COOKIE['_ad_last_conv']);
+
+        expect((new Cookie_Manager())->parse('_ad_last_conv'))->toBe([]);
+    });
+
+});
+
+// ─── serialize_entries() ───
+
+describe('Cookie_Manager::serialize_entries()', function () {
+
+    it('serializes single entry', function () {
+        $hash = str_repeat('a', 64);
+
+        $result = (new Cookie_Manager())->serialize_entries([$hash => 1700000000]);
+
+        expect($result)->toBe("{$hash}:1700000000");
+    });
+
+    it('serializes multiple entries', function () {
+        $h1 = str_repeat('a', 64);
+        $h2 = str_repeat('b', 64);
+
+        $result = (new Cookie_Manager())->serialize_entries([$h1 => 1000, $h2 => 2000]);
+
+        expect($result)->toBe("{$h1}:1000,{$h2}:2000");
+    });
+
+    it('returns empty string for empty array', function () {
+        expect((new Cookie_Manager())->serialize_entries([]))->toBe('');
+    });
+
+});
+
+// ─── set_dedup_cookie() ───
+
+describe('Cookie_Manager::set_dedup_cookie()', function () {
+
+    it('calls setcookie with _ad_last_conv name', function () {
+        $hash = str_repeat('a', 64);
+
+        Functions\expect('setcookie')
+            ->once()
+            ->andReturnUsing(function (string $name) {
+                expect($name)->toBe('_ad_last_conv');
+                return true;
+            });
+
+        (new Cookie_Manager())->set_dedup_cookie([$hash => 1700000000], 3600);
+    });
+
+    it('serializes entries in hash:timestamp format', function () {
+        $h1 = str_repeat('a', 64);
+        $h2 = str_repeat('b', 64);
+
+        Functions\expect('setcookie')
+            ->once()
+            ->andReturnUsing(function (string $name, string $value) use ($h1, $h2) {
+                expect($value)->toBe("{$h1}:1000,{$h2}:2000");
+                return true;
+            });
+
+        (new Cookie_Manager())->set_dedup_cookie([$h1 => 1000, $h2 => 2000], 3600);
+    });
+
+    it('uses provided lifetime_seconds for expiry', function () {
+        $hash = str_repeat('a', 64);
+        $before = time();
+
+        Functions\expect('setcookie')
+            ->once()
+            ->andReturnUsing(function (string $name, string $value, array $options) use ($before) {
+                $expected_min = $before + 3600;
+                $expected_max = $expected_min + 2;
+                expect($options['expires'])->toBeGreaterThanOrEqual($expected_min);
+                expect($options['expires'])->toBeLessThanOrEqual($expected_max);
+                return true;
+            });
+
+        (new Cookie_Manager())->set_dedup_cookie([$hash => 1700000000], 3600);
+    });
+
+    it('sets correct cookie attributes', function () {
+        $hash = str_repeat('a', 64);
+
+        Functions\expect('setcookie')
+            ->once()
+            ->andReturnUsing(function (string $name, string $value, array $options) {
+                expect($options['path'])->toBe('/');
+                expect($options['httponly'])->toBeTrue();
+                expect($options['secure'])->toBeTrue();
+                expect($options['samesite'])->toBe('Lax');
+                return true;
+            });
+
+        (new Cookie_Manager())->set_dedup_cookie([$hash => 1700000000], 3600);
     });
 
 });

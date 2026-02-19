@@ -54,8 +54,8 @@ final class Campaign_List_Table extends WP_List_Table {
 	 */
 	public function __construct() {
 		parent::__construct( [
-			'singular' => 'campaign',
-			'plural'   => 'campaigns',
+			'singular' => 'tracking-url',
+			'plural'   => 'tracking-urls',
 			'ajax'     => false,
 		] );
 	}
@@ -63,19 +63,28 @@ final class Campaign_List_Table extends WP_List_Table {
 	/**
 	 * Defines the table columns.
 	 *
+	 * Includes checkbox for bulk actions. In trash view, omits the
+	 * click/conversion columns since trashed URLs have no active traffic.
+	 *
 	 * @return array<string, string> Column slug => display name.
 	 * @since 1.0.0
 	 */
 	public function get_columns(): array {
-		return [
-			'tracking_url'      => __( 'Tracking URL', 'kntnt-ad-attr' ),
-			'target_url'        => __( 'Target URL', 'kntnt-ad-attr' ),
-			'utm_source'        => __( 'Source', 'kntnt-ad-attr' ),
-			'utm_medium'        => __( 'Medium', 'kntnt-ad-attr' ),
-			'utm_campaign'      => __( 'Campaign', 'kntnt-ad-attr' ),
-			'total_clicks'      => __( 'Clicks', 'kntnt-ad-attr' ),
-			'total_conversions' => __( 'Conversions', 'kntnt-ad-attr' ),
+		$columns = [
+			'cb'           => '<input type="checkbox" />',
+			'tracking_url' => __( 'Tracking URL', 'kntnt-ad-attr' ),
+			'target_url'   => __( 'Target URL', 'kntnt-ad-attr' ),
+			'utm_source'   => __( 'Source', 'kntnt-ad-attr' ),
+			'utm_medium'   => __( 'Medium', 'kntnt-ad-attr' ),
+			'utm_campaign' => __( 'Campaign', 'kntnt-ad-attr' ),
 		];
+
+		if ( ! $this->is_trash_view() ) {
+			$columns['total_clicks']      = __( 'Clicks', 'kntnt-ad-attr' );
+			$columns['total_conversions'] = __( 'Conversions', 'kntnt-ad-attr' );
+		}
+
+		return $columns;
 	}
 
 	/**
@@ -95,10 +104,97 @@ final class Campaign_List_Table extends WP_List_Table {
 	}
 
 	/**
-	 * Renders the tracking URL column with click-to-copy.
+	 * Renders the checkbox column for bulk actions.
 	 *
-	 * Reconstructs the full tracking URL from the hash using the filterable
-	 * prefix, consistent with Click_Handler.
+	 * @param object $item The current row data.
+	 *
+	 * @return string HTML checkbox input.
+	 * @since 1.6.0
+	 */
+	protected function column_cb( $item ): string {
+		return '<input type="checkbox" name="post[]" value="' . esc_attr( (string) $item->post_id ) . '">';
+	}
+
+	/**
+	 * Returns available bulk actions based on the current view.
+	 *
+	 * @return array<string, string> Action slug => display label.
+	 * @since 1.6.0
+	 */
+	protected function get_bulk_actions(): array {
+		if ( $this->is_trash_view() ) {
+			return [
+				'restore' => __( 'Restore', 'kntnt-ad-attr' ),
+				'delete'  => __( 'Delete Permanently', 'kntnt-ad-attr' ),
+			];
+		}
+
+		return [
+			'trash' => __( 'Move to Trash', 'kntnt-ad-attr' ),
+		];
+	}
+
+	/**
+	 * Returns the status view links (All / Trash).
+	 *
+	 * The Trash view is only shown when trashed tracking URLs exist.
+	 *
+	 * @return array<string, string> View slug => HTML link.
+	 * @since 1.6.0
+	 */
+	protected function get_views(): array {
+		global $wpdb;
+
+		$current_status = sanitize_text_field( wp_unslash( $_GET['post_status'] ?? '' ) );
+		$base_url       = admin_url( 'tools.php?page=' . Plugin::get_slug() );
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+		$counts = $wpdb->get_results( $wpdb->prepare(
+			"SELECT post_status, COUNT(*) AS cnt
+			 FROM {$wpdb->posts}
+			 WHERE post_type = %s AND post_status IN ('publish', 'trash')
+			 GROUP BY post_status",
+			Post_Type::SLUG,
+		) );
+
+		$status_counts = [];
+		foreach ( $counts as $row ) {
+			$status_counts[ $row->post_status ] = (int) $row->cnt;
+		}
+
+		$publish_count = $status_counts['publish'] ?? 0;
+		$trash_count   = $status_counts['trash'] ?? 0;
+
+		$views = [];
+
+		$all_class    = ( $current_status !== 'trash' ) ? ' class="current"' : '';
+		$views['all'] = sprintf(
+			'<a href="%s"%s>%s <span class="count">(%d)</span></a>',
+			esc_url( $base_url ),
+			$all_class,
+			esc_html__( 'All', 'kntnt-ad-attr' ),
+			$publish_count,
+		);
+
+		if ( $trash_count > 0 ) {
+			$trash_class    = ( $current_status === 'trash' ) ? ' class="current"' : '';
+			$views['trash'] = sprintf(
+				'<a href="%s"%s>%s <span class="count">(%d)</span></a>',
+				esc_url( add_query_arg( 'post_status', 'trash', $base_url ) ),
+				$trash_class,
+				esc_html__( 'Trash', 'kntnt-ad-attr' ),
+				$trash_count,
+			);
+		}
+
+		return $views;
+	}
+
+	/**
+	 * Renders the tracking URL column with click-to-copy and row actions.
+	 *
+	 * Shows Trash action for published URLs and Restore/Delete Permanently
+	 * actions for trashed URLs.
 	 *
 	 * @param object $item The current row data.
 	 *
@@ -108,8 +204,52 @@ final class Campaign_List_Table extends WP_List_Table {
 	protected function column_tracking_url( object $item ): string {
 		$tracking_url = home_url( Plugin::get_url_prefix() . '/' . $item->hash );
 
-		return '<code class="kntnt-ad-attr-copy" role="button" tabindex="0" data-clipboard-text="'
+		$url = '<code class="kntnt-ad-attr-copy" role="button" tabindex="0" data-clipboard-text="'
 			. esc_attr( $tracking_url ) . '">' . esc_html( $tracking_url ) . '</code>';
+
+		if ( $this->is_trash_view() ) {
+
+			$restore_url = wp_nonce_url(
+				admin_url( sprintf(
+					'tools.php?page=%s&action=restore&post=%d',
+					Plugin::get_slug(),
+					$item->post_id,
+				) ),
+				'restore_kntnt_ad_attr_url_' . $item->post_id,
+			);
+
+			$delete_url = wp_nonce_url(
+				admin_url( sprintf(
+					'tools.php?page=%s&action=delete&post=%d',
+					Plugin::get_slug(),
+					$item->post_id,
+				) ),
+				'delete_kntnt_ad_attr_url_' . $item->post_id,
+			);
+
+			$actions = [
+				'untrash' => sprintf( '<a href="%s">%s</a>', esc_url( $restore_url ), esc_html__( 'Restore', 'kntnt-ad-attr' ) ),
+				'delete'  => sprintf( '<a href="%s" class="submitdelete">%s</a>', esc_url( $delete_url ), esc_html__( 'Delete Permanently', 'kntnt-ad-attr' ) ),
+			];
+
+		} else {
+
+			$trash_url = wp_nonce_url(
+				admin_url( sprintf(
+					'tools.php?page=%s&action=trash&post=%d',
+					Plugin::get_slug(),
+					$item->post_id,
+				) ),
+				'trash_kntnt_ad_attr_url_' . $item->post_id,
+			);
+
+			$actions = [
+				'trash' => sprintf( '<a href="%s">%s</a>', esc_url( $trash_url ), esc_html__( 'Trash', 'kntnt-ad-attr' ) ),
+			];
+
+		}
+
+		return $url . $this->row_actions( $actions );
 	}
 
 	/**
@@ -169,10 +309,20 @@ final class Campaign_List_Table extends WP_List_Table {
 	}
 
 	/**
+	 * Checks if the current view is the trash view.
+	 *
+	 * @return bool True if viewing trashed items.
+	 * @since 1.6.0
+	 */
+	private function is_trash_view(): bool {
+		return sanitize_text_field( wp_unslash( $_GET['post_status'] ?? '' ) ) === 'trash';
+	}
+
+	/**
 	 * Prepares the list of items for display.
 	 *
 	 * Reads per-page setting from Screen Options and delegates data fetching
-	 * to fetch_items().
+	 * to the appropriate method based on the current view.
 	 *
 	 * @return void
 	 * @since 1.0.0
@@ -181,7 +331,9 @@ final class Campaign_List_Table extends WP_List_Table {
 		$per_page     = $this->get_items_per_page( self::PER_PAGE_OPTION, 20 );
 		$current_page = $this->get_pagenum();
 
-		$total_items = $this->fetch_items( $per_page, $current_page );
+		$total_items = $this->is_trash_view()
+			? $this->fetch_trash_items( $per_page, $current_page )
+			: $this->fetch_items( $per_page, $current_page );
 
 		$this->set_pagination_args( [
 			'total_items' => $total_items,
@@ -393,6 +545,7 @@ final class Campaign_List_Table extends WP_List_Table {
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 		$results = $wpdb->get_results( $wpdb->prepare(
 			"SELECT c.hash,
+				p.ID AS post_id,
 				pm_target.meta_value AS target_post_id,
 				pm_src.meta_value AS utm_source,
 				pm_med.meta_value AS utm_medium,
@@ -401,6 +554,58 @@ final class Campaign_List_Table extends WP_List_Table {
 				COALESCE(SUM(cv.fractional_conversion), 0) AS total_conversions
 			{$base_query}
 			ORDER BY {$orderby} {$order}
+			LIMIT %d OFFSET %d",
+			...[ ...$params, $per_page, $offset ],
+		) );
+
+		$this->items = $results ?: [];
+
+		return $total_items;
+	}
+
+	/**
+	 * Fetches trashed tracking URLs with pagination.
+	 *
+	 * Uses a simplified query without click/conversion joins since trashed
+	 * URLs have no active traffic.
+	 *
+	 * @param int $per_page     Number of items per page.
+	 * @param int $current_page Current page number.
+	 *
+	 * @return int Total number of trashed items.
+	 * @since 1.6.0
+	 */
+	private function fetch_trash_items( int $per_page, int $current_page ): int {
+		global $wpdb;
+
+		$base_query = "FROM {$wpdb->posts} p
+			INNER JOIN {$wpdb->postmeta} pm_hash   ON pm_hash.post_id = p.ID   AND pm_hash.meta_key = '_hash'
+			INNER JOIN {$wpdb->postmeta} pm_target  ON pm_target.post_id = p.ID AND pm_target.meta_key = '_target_post_id'
+			LEFT JOIN  {$wpdb->postmeta} pm_src     ON pm_src.post_id = p.ID    AND pm_src.meta_key = '_utm_source'
+			LEFT JOIN  {$wpdb->postmeta} pm_med     ON pm_med.post_id = p.ID    AND pm_med.meta_key = '_utm_medium'
+			LEFT JOIN  {$wpdb->postmeta} pm_camp    ON pm_camp.post_id = p.ID   AND pm_camp.meta_key = '_utm_campaign'
+			WHERE p.post_type = %s AND p.post_status = 'trash'";
+
+		$params = [ Post_Type::SLUG ];
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$total_items = (int) $wpdb->get_var( $wpdb->prepare(
+			"SELECT COUNT(*) {$base_query}",
+			...$params,
+		) );
+
+		$offset = ( $current_page - 1 ) * $per_page;
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$results = $wpdb->get_results( $wpdb->prepare(
+			"SELECT pm_hash.meta_value AS hash,
+				p.ID AS post_id,
+				pm_target.meta_value AS target_post_id,
+				pm_src.meta_value AS utm_source,
+				pm_med.meta_value AS utm_medium,
+				pm_camp.meta_value AS utm_campaign
+			{$base_query}
+			ORDER BY p.ID DESC
 			LIMIT %d OFFSET %d",
 			...[ ...$params, $per_page, $offset ],
 		) );
@@ -457,7 +662,7 @@ final class Campaign_List_Table extends WP_List_Table {
 	 * @since 1.0.0
 	 */
 	protected function extra_tablenav( $which ): void {
-		if ( $which !== 'top' ) {
+		if ( $which !== 'top' || $this->is_trash_view() ) {
 			return;
 		}
 
@@ -541,27 +746,35 @@ final class Campaign_List_Table extends WP_List_Table {
 	 * @since 1.0.0
 	 */
 	public function display_rows(): void {
-		$totals = $this->get_totals();
-		if ( $totals && ( (int) $totals->total_clicks > 0 || (float) $totals->total_conversions > 0.0 ) ) {
-			$columns = $this->get_columns();
 
-			echo '<tr class="kntnt-ad-attr-totals-row">';
+		// Skip totals row in trash view.
+		if ( ! $this->is_trash_view() ) {
+			$totals = $this->get_totals();
+			if ( $totals && ( (int) $totals->total_clicks > 0 || (float) $totals->total_conversions > 0.0 ) ) {
+				$columns = $this->get_columns();
 
-			$first = true;
-			foreach ( $columns as $slug => $label ) {
-				if ( $first ) {
-					echo '<td><strong>' . esc_html__( 'Total', 'kntnt-ad-attr' ) . '</strong></td>';
-					$first = false;
-				} elseif ( $slug === 'total_clicks' ) {
-					echo '<td><strong>' . esc_html( number_format_i18n( (int) $totals->total_clicks ) ) . '</strong></td>';
-				} elseif ( $slug === 'total_conversions' ) {
-					echo '<td><strong>' . esc_html( number_format_i18n( (float) $totals->total_conversions, 1 ) ) . '</strong></td>';
-				} else {
-					echo '<td></td>';
+				echo '<tr class="kntnt-ad-attr-totals-row">';
+
+				$is_first_visible = true;
+				foreach ( $columns as $slug => $label ) {
+					if ( $slug === 'cb' ) {
+						echo '<td></td>';
+						continue;
+					}
+					if ( $is_first_visible ) {
+						echo '<td><strong>' . esc_html__( 'Total', 'kntnt-ad-attr' ) . '</strong></td>';
+						$is_first_visible = false;
+					} elseif ( $slug === 'total_clicks' ) {
+						echo '<td><strong>' . esc_html( number_format_i18n( (int) $totals->total_clicks ) ) . '</strong></td>';
+					} elseif ( $slug === 'total_conversions' ) {
+						echo '<td><strong>' . esc_html( number_format_i18n( (float) $totals->total_conversions, 1 ) ) . '</strong></td>';
+					} else {
+						echo '<td></td>';
+					}
 				}
-			}
 
-			echo '</tr>';
+				echo '</tr>';
+			}
 		}
 
 		parent::display_rows();

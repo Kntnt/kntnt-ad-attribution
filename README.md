@@ -24,7 +24,7 @@ The plugin does not hardcode integrations with any specific consent management o
 - **Hash-based tracking URLs** — each ad gets a unique `/ad/<hash>` URL (prefix configurable via filter), independent of ad platform.
 - **First-party cookie tracking** — stores clicked ad hashes in a single `HttpOnly`, `Secure`, `SameSite=Lax` cookie (`_ad_clicks`), with a configurable lifetime (default: 90 days).
 - **Filterable last-click attribution** — by default, the most recently clicked ad receives full conversion credit. The attribution model is filterable via the `kntnt_ad_attr_attribution` hook, enabling multi-touch models (e.g. time-weighted, linear, position-based).
-- **Deduplication** — repeated form submissions within a configurable cooldown period (default: 30 days) are not counted as new conversions.
+- **Deduplication** — per-hash deduplication prevents the same tracking URL from generating duplicate conversions within a configurable window. Disabled by default (`kntnt_ad_attr_dedup_seconds` = 0); when enabled, each hash is independently checked against its last conversion timestamp.
 - **Cookie size management** — stores a maximum of 50 ad hashes per visitor, pruning the oldest when the limit is reached.
 - **Campaign dashboard** — view clicks, conversions, and fractional attribution per campaign for any date range, with CSV export. Individual click records include per-click Content, Term, Id, and Group fields.
 - **Three-state consent model** — integrates with any cookie consent plugin via a filter hook, supporting yes, no, and undefined consent states with a transport mechanism for deferred consent.
@@ -150,15 +150,15 @@ Register the following cookies:
 | Name | `_ad_clicks` | `_ad_last_conv` | `_aah_pending` |
 | Type | HTTP Cookie | HTTP Cookie | HTTP Cookie |
 | Host | `.yourdomain.com` | `.yourdomain.com` | `.yourdomain.com` |
-| Duration | 90 days* | 30 days** | 60 seconds |
-| Purpose | Stores which ads the visitor has clicked in order to attribute form inquiries to the ads that generated them. | Stores the time of the most recent form inquiry to prevent duplicate counting of the same visitor. | Temporary transport of ad hash to the landing page while the visitor has not yet made a cookie consent decision. Automatically deleted after 60 seconds. |
+| Duration | 90 days* | Controlled by `kntnt_ad_attr_dedup_seconds`** | 60 seconds |
+| Purpose | Stores which ads the visitor has clicked in order to attribute form inquiries to the ads that generated them. | Stores per-hash last conversion timestamps to prevent duplicate counting. Only exists when deduplication is enabled. | Temporary transport of ad hash to the landing page while the visitor has not yet made a cookie consent decision. Automatically deleted after 60 seconds. |
 | Category | Marketing | Marketing | Necessary or Marketing*** |
 
 Replace `.yourdomain.com` with your actual domain.
 
 \* Configurable via the `kntnt_ad_attr_cookie_lifetime` filter (default: 90 days).
 
-\** Configurable via the `kntnt_ad_attr_dedup_days` filter (default: 30 days).
+\** This cookie only exists when the `kntnt_ad_attr_dedup_seconds` filter returns a non-zero value (default: `0`, meaning no dedup and no cookie). When enabled, the cookie lifetime equals the dedup window in seconds, capped to the cookie lifetime.
 
 \*** `_aah_pending` contains no personal data, lives at most 60 seconds, and serves only as a technical transport mechanism for deferred consent scenarios. Whether to classify it as "Necessary" or "Marketing" is a judgment call — see [Privacy and GDPR](#privacy-and-gdpr) for a discussion.
 
@@ -166,23 +166,13 @@ Replace `.yourdomain.com` with your actual domain.
 
 #### Admin Interface
 
-The plugin adds **Ad Attribution** under **Tools** in the WordPress admin menu. The page has two tabs:
+The plugin adds **Ad Attribution** under **Tools** in the WordPress admin menu. The page presents a single merged view for both managing tracking URLs and viewing attribution results.
 
-##### URLs Tab (default)
-
-This is where you create and manage tracking URLs.
-
-- **Create new URL:** Select a target page via a searchable dropdown and fill in the required parameter fields: source, medium, and campaign. Source and medium offer predefined options (configurable via the `kntnt_ad_attr_utm_options` filter) but also accept custom values. Content, Term, Id, and Group are not set at creation time — they vary per click and are captured automatically from incoming UTM or MTM parameters (see [Click-Time Parameter Population](#click-time-parameter-population)). The plugin generates a SHA-256 hash and produces a tracking URL: `https://yourdomain.com/ad/<hash>`.
-- **URL list:** Shows all created tracking URLs with full tracking URL, target URL, source, medium, and campaign. Click a tracking URL to copy it to the clipboard. The list can be filtered by source, medium, and campaign.
+- **Create Tracking URL:** Click the "Create Tracking URL" button to open the form. Select a target page via a searchable dropdown and fill in the required parameter fields: source, medium, and campaign. Source and medium offer predefined options (configurable via the `kntnt_ad_attr_utm_options` filter) but also accept custom values. Content, Term, Id, and Group are not set at creation time — they vary per click and are captured automatically from incoming UTM or MTM parameters (see [Click-Time Parameter Population](#click-time-parameter-population)). The plugin generates a SHA-256 hash and produces a tracking URL: `https://yourdomain.com/ad/<hash>`.
+- **Campaign list:** Shows all tracking URLs with their target URL, source, medium, campaign, click count, and fractional conversion count. Click a tracking URL to copy it to the clipboard. The list can be filtered by date range, source, medium, and campaign. A search box allows searching by tracking URL or hash.
 - **Row actions:** Trash (or Restore / Delete Permanently for trashed URLs).
-
-##### Campaigns Tab
-
-This is where you view attribution results.
-
-- **Filters:** Filter by date range and dimensions (source, medium, campaign). A search box allows searching by tracking URL or hash. All filters can be combined.
+- **Bulk actions:** Move to Trash (for published URLs), Restore / Delete Permanently (for trashed URLs).
 - **Summary:** Shows total clicks and total (fractional) conversions for the selected filters.
-- **Results table:** Lists each tracking URL with its target URL, source, medium, campaign, click count, and fractional conversion count.
 - **Export:** Export the filtered results as a CSV file (UTF-8 with BOM; semicolon delimiter when the locale uses comma as decimal separator). The CSV includes all fields including per-click Content, Term, Id, and Group from the clicks table.
 
 **Note:** The plugin tracks clicks (each request to `/ad/<hash>`) and conversions. Ad impressions are not available since they occur on the ad platform and never reach your server.
@@ -217,12 +207,13 @@ If consent is undefined (the visitor hasn't decided yet), the hash is transporte
 
 When a conversion is triggered (see [Connecting a Form Plugin](#connecting-a-form-plugin) in the Builders section), the plugin:
 
-1. Checks for deduplication — if a conversion was already recorded within the cooldown period (default: 30 days), the new one is ignored.
-2. Reads the `_ad_clicks` cookie and extracts all ad hashes.
-3. Filters out hashes that no longer exist as registered tracking URLs.
-4. If no valid hashes remain, exits without recording anything.
+1. Reads the `_ad_clicks` cookie and extracts all ad hashes.
+2. Filters out hashes that no longer exist as registered tracking URLs.
+3. If no valid hashes remain, exits without recording anything.
+4. Per-hash deduplication (only when `kntnt_ad_attr_dedup_seconds` > 0): removes hashes that were converted recently.
 5. Applies the attribution model (default: last-click — the most recent click receives `1.0`, all others receive `0.0`). The model is filterable via `kntnt_ad_attr_attribution`.
 6. Looks up the matching click records and stores conversion rows in the database within a transaction.
+7. Writes per-hash dedup cookie (only when dedup is enabled).
 
 ### User FAQ
 
@@ -252,7 +243,7 @@ The cookie stores a maximum of 50 ad hashes. When the limit is reached, the olde
 
 **What if the same visitor submits the form twice?**
 
-The plugin uses a deduplication mechanism. If a visitor triggers a conversion within the cooldown period (default: 30 days) after a previous conversion, the second submission is not counted. After the cooldown period, a new submission is counted as a new conversion. The cooldown can be changed via the `kntnt_ad_attr_dedup_days` filter.
+By default, all conversions are recorded (deduplication is disabled). When deduplication is enabled via the `kntnt_ad_attr_dedup_seconds` filter, each tracking URL hash is independently checked — a conversion for one ad does not block conversions for other ads. Only conversions for the same hash within the configured window are skipped.
 
 **Does the plugin send conversion data back to the ad platform?**
 
@@ -467,13 +458,14 @@ add_filter( 'kntnt_ad_attr_cookie_lifetime', function () {
 } );
 ```
 
-**`kntnt_ad_attr_dedup_days`**
+**`kntnt_ad_attr_dedup_seconds`**
 
-Filters the deduplication cooldown in days. Form submissions within this period after a previous conversion are not counted. Default: `30`. Automatically capped to the cookie lifetime.
+Per-hash deduplication window in seconds. Default: `0` (deduplication disabled). When non-zero, each hash is independently checked against its last conversion timestamp in the `_ad_last_conv` cookie. Automatically capped to `cookie_lifetime × DAY_IN_SECONDS`.
 
 ```php
-add_filter( 'kntnt_ad_attr_dedup_days', function () {
-    return 14;
+// Enable dedup with a 14-day window.
+add_filter( 'kntnt_ad_attr_dedup_seconds', function () {
+    return 14 * DAY_IN_SECONDS;
 } );
 ```
 
@@ -533,7 +525,7 @@ See [Adapter System](#adapter-system) for full examples and documentation.
 
 **`kntnt_ad_attr_admin_tabs`**
 
-Filters the admin page tab list. Add-on plugins can register custom tabs by adding slug → label entries. Unrecognized tab slugs dispatch to the `kntnt_ad_attr_admin_tab_{$tab}` action for rendering.
+Filters the admin page tab list. The core no longer uses tabs (the admin page is a single merged view), but add-on plugins can still register custom views by appending slug → label entries. When `?tab=<slug>` is passed, the `kntnt_ad_attr_admin_tab_{$tab}` action fires for rendering.
 
 ```php
 add_filter( 'kntnt_ad_attr_admin_tabs', function ( array $tabs ): array {
@@ -589,7 +581,7 @@ Filters the predefined UTM options shown in the source and medium dropdowns when
 
 ```php
 add_filter( 'kntnt_ad_attr_utm_options', function ( array $options ): array {
-    $options['sources']['snapchat'] = 'paid_social';
+    $options['sources']['snapchat'] = 'paid-social';
     $options['mediums'][] = 'native';
     return $options;
 } );
@@ -600,14 +592,23 @@ Default:
 ```php
 [
     'sources' => [
-        'google'    => 'cpc',
-        'meta'      => 'paid_social',
-        'linkedin'  => 'paid_social',
-        'microsoft' => 'cpc',
-        'tiktok'    => 'paid_social',
-        'pinterest' => 'paid_social',
+        'bing'       => 'cpc',
+        'event'      => 'offline',
+        'google'     => 'cpc',
+        'linkedin'   => 'paid-social',
+        'meta'       => 'paid-social',
+        'newsletter' => 'email',
+        'pinterest'  => 'paid-social',
+        'qr-code'    => 'print',
+        'snapchat'   => 'paid-social',
+        'tiktok'     => 'paid-social',
+        'x'          => 'paid-social',
+        'youtube'    => 'video',
     ],
-    'mediums' => [ 'cpc', 'paid_social', 'display', 'video', 'shopping' ],
+    'mediums' => [
+        'affiliate', 'cpc', 'display', 'email', 'offline',
+        'organic', 'paid-social', 'print', 'sms', 'social', 'video',
+    ],
 ]
 ```
 
@@ -748,9 +749,9 @@ For basic usage you need to connect at least a form plugin to trigger conversion
 
 Yes. The default is last-click (the most recent click gets 100% credit). You can implement any model — time-weighted, linear, position-based, or something custom — by hooking into the `kntnt_ad_attr_attribution` filter. See the [`kntnt_ad_attr_attribution` filter](#filters) for a working time-weighted example.
 
-**Can I extend the admin interface with custom tabs?**
+**Can I extend the admin interface with custom views?**
 
-Yes. Use the `kntnt_ad_attr_admin_tabs` filter to register a tab slug and label, then hook into `kntnt_ad_attr_admin_tab_{$slug}` to render its content. This is intended for add-on plugins that need their own settings or reports page within the plugin's admin area.
+Yes. Use the `kntnt_ad_attr_admin_tabs` filter to register a view slug and label, then hook into `kntnt_ad_attr_admin_tab_{$slug}` to render its content. When `?tab=<slug>` is passed as a GET parameter, the action fires for rendering. This is intended for add-on plugins that need their own settings or reports page within the plugin's admin area.
 
 **Where can I find detailed technical specifications?**
 
@@ -852,9 +853,8 @@ kntnt-ad-attribution/
 │   ├── Consent.php               ← Three-state consent check logic
 │   ├── Bot_Detector.php          ← User-Agent filtering, robots.txt rule
 │   ├── Rest_Endpoint.php         ← REST API (set-cookie with rate limiting, search-posts)
-│   ├── Admin_Page.php            ← Tools page with tab navigation, URL CRUD, CSV export
-│   ├── Url_List_Table.php        ← WP_List_Table for the URLs tab
-│   ├── Campaign_List_Table.php   ← WP_List_Table for the Campaigns tab
+│   ├── Admin_Page.php            ← Tools page with merged view, URL CRUD, CSV export
+│   ├── Campaign_List_Table.php   ← WP_List_Table for the campaign list with bulk actions
 │   ├── Csv_Exporter.php          ← CSV export with locale-aware formatting
 │   ├── Utm_Options.php           ← Predefined UTM source/medium options (filterable)
 │   ├── Cron.php                  ← Daily cleanup job, target page warnings
@@ -889,7 +889,7 @@ The `docs/` directory contains detailed specifications for every aspect of the p
 | `conversion-handling.md` | Conversion flow, dedup, attribution formula, reporter enqueueing |
 | `rest-api.md` | REST endpoints (set-cookie, search-posts), rate limiting |
 | `client-script.md` | sessionStorage, pending consent, JS consent interface |
-| `admin-ui.md` | WP_List_Table tabs, SQL queries, CSV export |
+| `admin-ui.md` | Merged admin view, WP_List_Table, SQL queries, CSV export |
 | `developer-hooks.md` | All filters/actions with implementation logic |
 | `lifecycle.md` | Activation, deactivation, uninstall, migration, cron |
 | `security.md` | Validation, nonces, capabilities, error handling, time zones |

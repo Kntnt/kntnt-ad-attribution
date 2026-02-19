@@ -11,7 +11,6 @@ declare(strict_types=1);
 use Kntnt\Ad_Attribution\Admin_Page;
 use Kntnt\Ad_Attribution\Queue;
 use Kntnt\Ad_Attribution\Plugin;
-use Kntnt\Ad_Attribution\Post_Type;
 use Brain\Monkey\Functions;
 use Brain\Monkey\Actions;
 use Brain\Monkey\Filters;
@@ -30,6 +29,40 @@ class AdminExitException extends \RuntimeException {}
 function make_admin_page(): array {
     $queue = Mockery::mock(Queue::class);
     return [new Admin_Page($queue), $queue];
+}
+
+/**
+ * Sets up the environment for render_page() tests.
+ *
+ * Mocks wpdb for Campaign_List_Table::prepare_items(), redefines
+ * Plugin statics, and stubs WordPress functions needed during rendering.
+ *
+ * @return array{0: Admin_Page, 1: Mockery\MockInterface}
+ */
+function setup_render_env(): array {
+    [$page, $queue] = make_admin_page();
+
+    $wpdb = TestFactory::wpdb();
+    $GLOBALS['wpdb'] = $wpdb;
+
+    // Campaign_List_Table::prepare_items() query mocks.
+    $wpdb->shouldReceive('prepare')->andReturn('SQL');
+    $wpdb->shouldReceive('esc_like')->andReturnArg(0);
+    $wpdb->shouldReceive('get_var')->andReturn(0);
+    $wpdb->shouldReceive('get_results')->andReturn([]);
+
+    \Patchwork\redefine(
+        'Kntnt\Ad_Attribution\Plugin::get_slug',
+        fn () => 'kntnt-ad-attr',
+    );
+
+    Functions\when('admin_url')->justReturn('https://example.com/wp-admin/tools.php');
+    Functions\when('wp_nonce_field')->justReturn('');
+    Functions\when('submit_button')->alias(function () {
+        echo '<button>Submit</button>';
+    });
+
+    return [$page, $queue];
 }
 
 // ─── register() ───
@@ -53,15 +86,6 @@ describe('Admin_Page::register()', function () {
 // ─── save_screen_option() ───
 
 describe('Admin_Page::save_screen_option()', function () {
-
-    it('returns int value for URL per-page option', function () {
-        [$page] = make_admin_page();
-
-        // Url_List_Table::PER_PAGE_OPTION.
-        $result = $page->save_screen_option(false, 'kntnt_ad_attr_urls_per_page', '25');
-
-        expect($result)->toBe(25);
-    });
 
     it('returns int value for Campaign per-page option', function () {
         [$page] = make_admin_page();
@@ -193,33 +217,19 @@ describe('Admin_Page::render_page()', function () {
 
     afterEach(function () {
         $_GET = [];
+        unset($GLOBALS['wpdb']);
     });
 
     it('dispatches unknown tab to kntnt_ad_attr_admin_tab_{slug} action', function () {
-        [$page, $queue] = make_admin_page();
+        [$page, $queue] = setup_render_env();
 
         $_GET['tab'] = 'addons';
 
-        \Patchwork\redefine(
-            'Kntnt\Ad_Attribution\Plugin::get_slug',
-            fn () => 'kntnt-ad-attribution',
-        );
-
-        Functions\expect('admin_url')->once()->andReturn('https://example.com/tools.php');
-        Functions\expect('add_query_arg')->andReturnArg(1);
-
-        // Tab filter should be applied.
-        Filters\expectApplied('kntnt_ad_attr_admin_tabs')->once()->andReturn([
-            'urls'      => 'URLs',
-            'campaigns' => 'Campaigns',
-            'addons'    => 'Add-ons',
-        ]);
-
         // The unknown tab dispatches to an action.
-        Actions\expectDone("kntnt_ad_attr_admin_tab_addons")->once();
+        Actions\expectDone('kntnt_ad_attr_admin_tab_addons')->once();
 
-        // No reporters → no queue status.
-        Filters\expectApplied('kntnt_ad_attr_conversion_reporters')->once()->andReturn([]);
+        // No reporters → no queue status or CSV export.
+        Filters\expectApplied('kntnt_ad_attr_conversion_reporters')->andReturn([]);
 
         ob_start();
         $page->render_page();
@@ -229,24 +239,10 @@ describe('Admin_Page::render_page()', function () {
     });
 
     it('renders queue status when reporters registered', function () {
-        [$page, $queue] = make_admin_page();
+        [$page, $queue] = setup_render_env();
 
-        $_GET['tab'] = 'addons';
-
-        \Patchwork\redefine(
-            'Kntnt\Ad_Attribution\Plugin::get_slug',
-            fn () => 'kntnt-ad-attribution',
-        );
-
-        Functions\expect('admin_url')->once()->andReturn('https://example.com/tools.php');
-        Functions\expect('add_query_arg')->andReturnArg(1);
-
-        Filters\expectApplied('kntnt_ad_attr_admin_tabs')->once()->andReturn([
-            'addons' => 'Add-ons',
-        ]);
-
-        // Reporters are registered.
-        Filters\expectApplied('kntnt_ad_attr_conversion_reporters')->once()->andReturn([
+        // Reporters are registered (called in both render_main_view and render_page).
+        Filters\expectApplied('kntnt_ad_attr_conversion_reporters')->andReturn([
             'test-reporter' => fn () => null,
         ]);
 
@@ -262,6 +258,19 @@ describe('Admin_Page::render_page()', function () {
 
         expect($output)->toContain('Report Queue');
         expect($output)->toContain('Test error');
+    });
+
+    it('outputs Create Tracking URL button on main view', function () {
+        [$page, $queue] = setup_render_env();
+
+        // No reporters.
+        Filters\expectApplied('kntnt_ad_attr_conversion_reporters')->andReturn([]);
+
+        ob_start();
+        $page->render_page();
+        $output = ob_get_clean();
+
+        expect($output)->toContain('Create Tracking URL');
     });
 
 });

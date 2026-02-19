@@ -2,37 +2,43 @@
 
 The plugin registers a single menu item **Ad Attribution** under **Tools** in the WordPress admin menu via `add_management_page`. The page requires capability `kntnt_ad_attr`.
 
-## Navigation
+## Page Layout
 
-The page has two tabs rendered as horizontal links at the top of the page using the WordPress standard CSS class `nav-tab-wrapper`:
+The admin page presents a single merged view combining tracking URL management and campaign reporting. There are no tabs — all functionality is on one page.
 
-```
-URLs | Campaigns
-```
+Add-on plugins can still register custom views via the `kntnt_ad_attr_admin_tabs` filter and render content via the `kntnt_ad_attr_admin_tab_{$tab}` action (dispatched when `?tab=<slug>` is passed as a GET parameter).
 
-The active tab is marked with `nav-tab-active`. The tabs are regular `<a>` elements that navigate to the same admin page with GET parameter `tab`:
+## Main View
 
-```
-tools_page_kntnt-ad-attribution&tab=urls
-tools_page_kntnt-ad-attribution&tab=campaigns
-```
+The main view displays a campaign list table powered by a `WP_List_Table` subclass (`Campaign_List_Table`). The table joins CPT metadata with click/conversion data from custom tables.
 
-Default tab (if `tab` is missing): `urls`. No JavaScript required — full page reload on tab switch. The tab list is filterable via `kntnt_ad_attr_admin_tabs`, allowing add-on plugins to register custom tabs. Unrecognized tab slugs dispatch to the `kntnt_ad_attr_admin_tab_{$tab}` action for rendering. All core behavior is configured via filters (see [developer-hooks.md](developer-hooks.md)).
-
-## URLs Tab
-
-Tracking URLs are displayed and managed via a custom `WP_List_Table` subclass (not the CPT's `edit.php`). The reason is that everything should live under a single menu page with tabs. The CPT `kntnt_ad_attr_url` is still used as the data model, but the admin UI is built separately.
-
-**Columns:**
+**Columns (publish view):**
 
 - Checkbox (bulk actions)
 - Tracking URL (full URL, click to copy to clipboard)
 - Target URL (resolved via `get_permalink()`)
 - Source, Medium, Campaign (from postmeta)
+- Clicks (count from clicks table)
+- Conversions (fractional sum from conversions table)
 
-**Row actions:** Trash (or Restore / Delete Permanently for trashed URLs).
+**Columns (trash view):**
 
-**Form (Add New):** Displayed on the same page. Fields:
+- Checkbox (bulk actions)
+- Tracking URL
+- Target URL
+- Source, Medium, Campaign
+
+Trashed URLs omit click/conversion columns since trashed URLs have no active traffic.
+
+**Row actions:** Trash (for published URLs), Restore / Delete Permanently (for trashed URLs).
+
+**Bulk actions:** "Move to Trash" for published view, "Restore" / "Delete Permanently" for trash view.
+
+**Views:** "All (N)" and "Trash (N)" status links, matching the standard WordPress pattern.
+
+**"Create Tracking URL" button:** Displayed above the list when not in trash view. Navigates to the inline form for creating a new tracking URL.
+
+**Form (Create Tracking URL):** Displayed on the same page (action=add). Fields:
 
 - Target URL: searchable select component (see below) that displays post type and post ID. All public post types are included. The plugin's own CPT is excluded.
 - Source (required), medium (required), campaign (required). Content, Term, Id, and Group are captured per click from incoming parameters and are not set in the form.
@@ -63,24 +69,15 @@ wp_localize_script( 'kntnt-ad-attribution-admin', 'kntntAdAttrAdmin', [
 ] );
 ```
 
-**Filtering:** Search field + dropdown filter per UTM dimension. Page reload.
+**Filtering:** Search field + dropdown filter per UTM dimension. Date range filter with two HTML5 `<input type="date">` fields. Page reload.
 
 **Pagination:** Built into `WP_List_Table`. Default 20 rows (configurable via Screen Options).
 
-## Campaigns Tab
-
-Report view that joins CPT metadata with aggregated stats. Rendered as a `WP_List_Table` subclass.
-
-**Filtering** (GET parameters, page reload):
-
-- Date range: two HTML5 `<input type="date">` fields.
-- Dimensions: one dropdown per dimension (source, medium, campaign), populated with distinct values from post meta.
-- Tracking URL / target URL: free-text field.
-
-**SQL query (tab view):**
+## SQL Query (Main View)
 
 ```sql
-SELECT c.hash,
+SELECT p.ID AS post_id,
+       c.hash,
        pm_target.meta_value AS target_post_id,
        pm_src.meta_value AS utm_source,
        pm_med.meta_value AS utm_medium,
@@ -104,11 +101,13 @@ LEFT JOIN {prefix}kntnt_ad_attr_conversions cv
     ON cv.click_id = c.id
 WHERE c.clicked_at BETWEEN %s AND %s
 -- Additional WHERE clauses based on active filters
-GROUP BY c.hash, pm_target.meta_value,
+GROUP BY c.hash, p.ID, pm_target.meta_value,
          pm_src.meta_value, pm_med.meta_value, pm_camp.meta_value
 ORDER BY total_clicks DESC
 LIMIT %d OFFSET %d
 ```
+
+**Trash view query** uses a simplified query without the clicks/conversions joins, since trashed URLs have no active traffic. It selects directly from the posts and postmeta tables with `post_status = 'trash'`.
 
 **CSV query** uses the same base but groups additionally by `c.utm_content, c.utm_term, c.utm_id, c.utm_source_platform` and includes those fields in SELECT, providing per-click granularity.
 
@@ -116,11 +115,9 @@ LIMIT %d OFFSET %d
 
 **Summation:** Separate query without GROUP BY — totals for the entire filtered dataset using `COUNT(DISTINCT c.id)` for clicks and `COALESCE(SUM(cv.fractional_conversion), 0)` for conversions.
 
-**Pagination:** Built into `WP_List_Table`. Default 20 rows (configurable via Screen Options).
-
 ## CSV Export
 
-Button in the Campaigns tab. Same query without LIMIT/OFFSET, streamed as `text/csv`.
+Button below the list table (visible only when conversion reporters are registered). Same query without LIMIT/OFFSET, streamed as `text/csv`.
 
 **Character encoding:** UTF-8 with BOM (`\xEF\xBB\xBF`).
 

@@ -9,6 +9,7 @@
 declare(strict_types=1);
 
 use Kntnt\Ad_Attribution\Campaign_List_Table;
+use Kntnt\Ad_Attribution\Plugin;
 use Kntnt\Ad_Attribution\Post_Type;
 use Brain\Monkey\Functions;
 use Tests\Helpers\TestFactory;
@@ -17,11 +18,16 @@ use Tests\Helpers\TestFactory;
 
 describe('Campaign_List_Table::get_columns()', function () {
 
-    it('returns expected column keys', function () {
+    afterEach(function () {
+        $_GET = [];
+    });
+
+    it('returns expected column keys including checkbox', function () {
         $table   = new Campaign_List_Table();
         $columns = $table->get_columns();
 
         expect($columns)->toHaveKeys([
+            'cb',
             'tracking_url',
             'target_url',
             'utm_source',
@@ -31,7 +37,19 @@ describe('Campaign_List_Table::get_columns()', function () {
             'total_conversions',
         ]);
 
-        expect($columns)->toHaveCount(7);
+        expect($columns)->toHaveCount(8);
+    });
+
+    it('omits click and conversion columns in trash view', function () {
+        $_GET['post_status'] = 'trash';
+
+        $table   = new Campaign_List_Table();
+        $columns = $table->get_columns();
+
+        expect($columns)->toHaveKey('cb');
+        expect($columns)->not->toHaveKey('total_clicks');
+        expect($columns)->not->toHaveKey('total_conversions');
+        expect($columns)->toHaveCount(6);
     });
 
 });
@@ -143,6 +161,116 @@ describe('Campaign_List_Table::get_filter_params()', function () {
 
 });
 
+// ─── get_bulk_actions() ───
+
+describe('Campaign_List_Table::get_bulk_actions()', function () {
+
+    afterEach(function () {
+        $_GET = [];
+    });
+
+    it('returns trash action for published view', function () {
+        $table = new Campaign_List_Table();
+
+        $ref = new \ReflectionMethod($table, 'get_bulk_actions');
+        $ref->setAccessible(true);
+        $actions = $ref->invoke($table);
+
+        expect($actions)->toHaveKey('trash');
+        expect($actions)->not->toHaveKey('restore');
+        expect($actions)->not->toHaveKey('delete');
+    });
+
+    it('returns restore and delete actions for trash view', function () {
+        $_GET['post_status'] = 'trash';
+
+        $table = new Campaign_List_Table();
+
+        $ref = new \ReflectionMethod($table, 'get_bulk_actions');
+        $ref->setAccessible(true);
+        $actions = $ref->invoke($table);
+
+        expect($actions)->toHaveKey('restore');
+        expect($actions)->toHaveKey('delete');
+        expect($actions)->not->toHaveKey('trash');
+    });
+
+});
+
+// ─── get_views() ───
+
+describe('Campaign_List_Table::get_views()', function () {
+
+    afterEach(function () {
+        unset($GLOBALS['wpdb']);
+        $_GET = [];
+    });
+
+    it('returns All view with publish count', function () {
+        $wpdb = TestFactory::wpdb();
+        $GLOBALS['wpdb'] = $wpdb;
+
+        \Patchwork\redefine(
+            'Kntnt\Ad_Attribution\Plugin::get_slug',
+            fn () => 'kntnt-ad-attr',
+        );
+
+        Functions\expect('admin_url')
+            ->once()
+            ->andReturn('https://example.com/tools.php?page=kntnt-ad-attr');
+
+        $wpdb->shouldReceive('prepare')->andReturn('SQL');
+        $wpdb->shouldReceive('get_results')->once()->andReturn([
+            (object) ['post_status' => 'publish', 'cnt' => 5],
+        ]);
+
+        $table = new Campaign_List_Table();
+
+        $ref = new \ReflectionMethod($table, 'get_views');
+        $ref->setAccessible(true);
+        $views = $ref->invoke($table);
+
+        expect($views)->toHaveKey('all');
+        expect($views['all'])->toContain('(5)');
+        expect($views)->not->toHaveKey('trash');
+    });
+
+    it('includes Trash view when trashed URLs exist', function () {
+        $wpdb = TestFactory::wpdb();
+        $GLOBALS['wpdb'] = $wpdb;
+
+        \Patchwork\redefine(
+            'Kntnt\Ad_Attribution\Plugin::get_slug',
+            fn () => 'kntnt-ad-attr',
+        );
+
+        Functions\expect('admin_url')
+            ->once()
+            ->andReturn('https://example.com/tools.php?page=kntnt-ad-attr');
+
+        Functions\expect('add_query_arg')
+            ->once()
+            ->andReturn('https://example.com/tools.php?page=kntnt-ad-attr&post_status=trash');
+
+        $wpdb->shouldReceive('prepare')->andReturn('SQL');
+        $wpdb->shouldReceive('get_results')->once()->andReturn([
+            (object) ['post_status' => 'publish', 'cnt' => 5],
+            (object) ['post_status' => 'trash', 'cnt' => 2],
+        ]);
+
+        $table = new Campaign_List_Table();
+
+        $ref = new \ReflectionMethod($table, 'get_views');
+        $ref->setAccessible(true);
+        $views = $ref->invoke($table);
+
+        expect($views)->toHaveKey('all');
+        expect($views)->toHaveKey('trash');
+        expect($views['trash'])->toContain('(2)');
+    });
+
+});
+
 // ─── prepare_items() (SQL construction) ───
 
 describe('Campaign_List_Table::prepare_items()', function () {
@@ -250,6 +378,74 @@ describe('Campaign_List_Table::prepare_items()', function () {
         }
 
         expect($has_between)->toBeTrue();
+    });
+
+    it('uses simplified query without clicks table for trash view', function () {
+        $_GET['post_status'] = 'trash';
+
+        $wpdb = TestFactory::wpdb();
+        $GLOBALS['wpdb'] = $wpdb;
+
+        $captured_sql = [];
+
+        $wpdb->shouldReceive('esc_like')->andReturnArg(0);
+        $wpdb->shouldReceive('prepare')->andReturnUsing(function () use (&$captured_sql) {
+            $args = func_get_args();
+            $captured_sql[] = $args[0];
+            return 'SQL';
+        });
+
+        $wpdb->shouldReceive('get_var')->once()->andReturn(0);
+        $wpdb->shouldReceive('get_results')->once()->andReturn([]);
+
+        $table = new Campaign_List_Table();
+        $table->prepare_items();
+
+        // Trash query should NOT reference clicks/conversions custom tables.
+        $has_clicks = false;
+        $has_trash_status = false;
+        foreach ($captured_sql as $sql) {
+            if (str_contains($sql, 'kntnt_ad_attr_clicks')) {
+                $has_clicks = true;
+            }
+            if (str_contains($sql, "post_status = 'trash'")) {
+                $has_trash_status = true;
+            }
+        }
+
+        expect($has_clicks)->toBeFalse();
+        expect($has_trash_status)->toBeTrue();
+    });
+
+    it('includes post_id in SELECT for publish view', function () {
+        $wpdb = TestFactory::wpdb();
+        $GLOBALS['wpdb'] = $wpdb;
+
+        $captured_sql = [];
+
+        $wpdb->shouldReceive('esc_like')->andReturnArg(0);
+        $wpdb->shouldReceive('prepare')->andReturnUsing(function () use (&$captured_sql) {
+            $args = func_get_args();
+            $captured_sql[] = $args[0];
+            return 'SQL';
+        });
+
+        $wpdb->shouldReceive('get_var')->once()->andReturn(0);
+        $wpdb->shouldReceive('get_results')->once()->andReturn([]);
+
+        $table = new Campaign_List_Table();
+        $table->prepare_items();
+
+        // The SELECT query should include post_id for bulk action checkboxes.
+        $has_post_id = false;
+        foreach ($captured_sql as $sql) {
+            if (str_contains($sql, 'p.ID AS post_id')) {
+                $has_post_id = true;
+                break;
+            }
+        }
+
+        expect($has_post_id)->toBeTrue();
     });
 
 });

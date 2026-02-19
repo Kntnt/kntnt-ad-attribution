@@ -52,24 +52,26 @@ final class Cookie_Manager {
 	private const COOKIE_PATTERN = '/^[a-f0-9]{64}:\d{1,10}(,[a-f0-9]{64}:\d{1,10})*$/';
 
 	/**
-	 * Parses the _ad_clicks cookie into an associative array.
+	 * Parses a cookie into an associative array.
 	 *
 	 * Reads directly from `$_COOKIE`, validates format with regex, and returns
 	 * a map of hash => timestamp. Logs a warning on corrupt data.
+	 *
+	 * @param string $name Cookie name to read. Defaults to '_ad_clicks'.
 	 *
 	 * @return array<string, int> Map of hash => Unix timestamp. Empty if cookie is
 	 *                            missing or invalid.
 	 * @since 1.0.0
 	 */
-	public function parse(): array {
-		if ( ! isset( $_COOKIE['_ad_clicks'] ) ) {
+	public function parse( string $name = '_ad_clicks' ): array {
+		if ( ! isset( $_COOKIE[ $name ] ) ) {
 			return [];
 		}
 
-		$raw = $_COOKIE['_ad_clicks'];
+		$raw = $_COOKIE[ $name ];
 
 		if ( ! preg_match( self::COOKIE_PATTERN, $raw ) ) {
-			error_log( 'kntnt-ad-attr: Corrupt _ad_clicks cookie discarded.' );
+			error_log( "kntnt-ad-attr: Corrupt {$name} cookie discarded." );
 			return [];
 		}
 
@@ -115,7 +117,7 @@ final class Cookie_Manager {
 	 * @return string Cookie value in `hash:timestamp,hash:timestamp,...` format.
 	 * @since 1.0.0
 	 */
-	private function serialize( array $entries ): string {
+	public function serialize_entries( array $entries ): string {
 		$pairs = [];
 		foreach ( $entries as $hash => $timestamp ) {
 			$pairs[] = $hash . ':' . $timestamp;
@@ -138,7 +140,7 @@ final class Cookie_Manager {
 		/** @var int $lifetime_days Number of days the cookie should persist. */
 		$lifetime_days = (int) apply_filters( 'kntnt_ad_attr_cookie_lifetime', 90 );
 
-		setcookie( '_ad_clicks', $this->serialize( $entries ), [
+		setcookie( '_ad_clicks', $this->serialize_entries( $entries ), [
 			'expires'  => time() + ( $lifetime_days * DAY_IN_SECONDS ),
 			'path'     => '/',
 			'secure'   => true,
@@ -165,6 +167,28 @@ final class Cookie_Manager {
 			'path'     => '/',
 			'secure'   => true,
 			'httponly'  => false,
+			'samesite' => 'Lax',
+		] );
+	}
+
+	/**
+	 * Writes the _ad_last_conv deduplication cookie.
+	 *
+	 * Stores hash:timestamp pairs so per-hash dedup can be checked on
+	 * subsequent conversions. Only called when dedup_seconds > 0.
+	 *
+	 * @param array<string, int> $entries          Hash => timestamp map.
+	 * @param int                $lifetime_seconds Cookie lifetime in seconds.
+	 *
+	 * @return void
+	 * @since 1.6.0
+	 */
+	public function set_dedup_cookie( array $entries, int $lifetime_seconds ): void {
+		setcookie( '_ad_last_conv', $this->serialize_entries( $entries ), [
+			'expires'  => time() + $lifetime_seconds,
+			'path'     => '/',
+			'secure'   => true,
+			'httponly'  => true,
 			'samesite' => 'Lax',
 		] );
 	}
