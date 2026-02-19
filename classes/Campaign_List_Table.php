@@ -70,21 +70,16 @@ final class Campaign_List_Table extends WP_List_Table {
 	 * @since 1.0.0
 	 */
 	public function get_columns(): array {
-		$columns = [
-			'cb'           => '<input type="checkbox" />',
-			'tracking_url' => __( 'Tracking URL', 'kntnt-ad-attr' ),
-			'target_url'   => __( 'Target URL', 'kntnt-ad-attr' ),
-			'utm_source'   => __( 'Source', 'kntnt-ad-attr' ),
-			'utm_medium'   => __( 'Medium', 'kntnt-ad-attr' ),
-			'utm_campaign' => __( 'Campaign', 'kntnt-ad-attr' ),
+		return [
+			'cb'                => '<input type="checkbox" />',
+			'tracking_url'      => __( 'Tracking URL', 'kntnt-ad-attr' ),
+			'target_url'        => __( 'Target URL', 'kntnt-ad-attr' ),
+			'utm_source'        => __( 'Source', 'kntnt-ad-attr' ),
+			'utm_medium'        => __( 'Medium', 'kntnt-ad-attr' ),
+			'utm_campaign'      => __( 'Campaign', 'kntnt-ad-attr' ),
+			'total_clicks'      => __( 'Clicks', 'kntnt-ad-attr' ),
+			'total_conversions' => __( 'Conversions', 'kntnt-ad-attr' ),
 		];
-
-		if ( ! $this->is_trash_view() ) {
-			$columns['total_clicks']      = __( 'Clicks', 'kntnt-ad-attr' );
-			$columns['total_conversions'] = __( 'Conversions', 'kntnt-ad-attr' );
-		}
-
-		return $columns;
 	}
 
 	/**
@@ -402,11 +397,10 @@ final class Campaign_List_Table extends WP_List_Table {
 		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
 		$conv_table   = $wpdb->prefix . 'kntnt_ad_attr_conversions';
 
-		$from_where = "FROM {$clicks_table} c
+		// Start FROM posts so zero-click tracking URLs are included.
+		$from_where = "FROM {$wpdb->posts} p
 			INNER JOIN {$wpdb->postmeta} pm_hash
-				ON pm_hash.meta_key = '_hash' AND pm_hash.meta_value = c.hash
-			INNER JOIN {$wpdb->posts} p
-				ON p.ID = pm_hash.post_id AND p.post_type = %s AND p.post_status = 'publish'";
+				ON pm_hash.post_id = p.ID AND pm_hash.meta_key = '_hash'";
 
 		if ( $include_target ) {
 			$from_where .= "
@@ -414,6 +408,7 @@ final class Campaign_List_Table extends WP_List_Table {
 				ON pm_target.post_id = p.ID AND pm_target.meta_key = '_target_post_id'";
 		}
 
+		// Date filter in JOIN condition so zero-click URLs still appear.
 		$from_where .= "
 			LEFT JOIN {$wpdb->postmeta} pm_src
 				ON pm_src.post_id = p.ID AND pm_src.meta_key = '_utm_source'
@@ -421,16 +416,18 @@ final class Campaign_List_Table extends WP_List_Table {
 				ON pm_med.post_id = p.ID AND pm_med.meta_key = '_utm_medium'
 			LEFT JOIN {$wpdb->postmeta} pm_camp
 				ON pm_camp.post_id = p.ID AND pm_camp.meta_key = '_utm_campaign'
+			LEFT JOIN {$clicks_table} c
+				ON c.hash = pm_hash.meta_value AND c.clicked_at BETWEEN %s AND %s
 			LEFT JOIN {$conv_table} cv
 				ON cv.click_id = c.id
-			WHERE c.clicked_at BETWEEN %s AND %s";
+			WHERE p.post_type = %s AND p.post_status = 'publish'";
 
 		$params = $this->get_filter_params();
 
 		$query_params = [
-			Post_Type::SLUG,
 			$params['date_start'] . ' 00:00:00',
 			$params['date_end'] . ' 23:59:59',
+			Post_Type::SLUG,
 		];
 
 		$from_where .= $this->build_filter_clauses( $params );
@@ -449,7 +446,7 @@ final class Campaign_List_Table extends WP_List_Table {
 	private function build_base_query(): array {
 		[ $from_where, $params ] = $this->build_from_where();
 
-		$group_by = ' GROUP BY c.hash, pm_target.meta_value,
+		$group_by = ' GROUP BY pm_hash.meta_value, pm_target.meta_value,
 			pm_src.meta_value, pm_med.meta_value, pm_camp.meta_value';
 
 		return [ $from_where . $group_by, $params ];
@@ -467,7 +464,7 @@ final class Campaign_List_Table extends WP_List_Table {
 	private function build_csv_query(): array {
 		[ $from_where, $params ] = $this->build_from_where();
 
-		$group_by = ' GROUP BY c.hash, pm_target.meta_value,
+		$group_by = ' GROUP BY pm_hash.meta_value, pm_target.meta_value,
 			pm_src.meta_value, pm_med.meta_value, pm_camp.meta_value,
 			c.utm_content, c.utm_term, c.utm_id, c.utm_source_platform';
 
@@ -544,7 +541,7 @@ final class Campaign_List_Table extends WP_List_Table {
 
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 		$results = $wpdb->get_results( $wpdb->prepare(
-			"SELECT c.hash,
+			"SELECT pm_hash.meta_value AS hash,
 				p.ID AS post_id,
 				pm_target.meta_value AS target_post_id,
 				pm_src.meta_value AS utm_source,
@@ -603,7 +600,9 @@ final class Campaign_List_Table extends WP_List_Table {
 				pm_target.meta_value AS target_post_id,
 				pm_src.meta_value AS utm_source,
 				pm_med.meta_value AS utm_medium,
-				pm_camp.meta_value AS utm_campaign
+				pm_camp.meta_value AS utm_campaign,
+				0 AS total_clicks,
+				0 AS total_conversions
 			{$base_query}
 			ORDER BY p.ID DESC
 			LIMIT %d OFFSET %d",
@@ -631,7 +630,7 @@ final class Campaign_List_Table extends WP_List_Table {
 
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 		$results = $wpdb->get_results( $wpdb->prepare(
-			"SELECT c.hash,
+			"SELECT pm_hash.meta_value AS hash,
 				pm_target.meta_value AS target_post_id,
 				pm_src.meta_value AS utm_source,
 				pm_med.meta_value AS utm_medium,

@@ -44,8 +44,8 @@ if (!class_exists('WP_List_Table')) {
     /**
      * Minimal WP_List_Table stub for autoloading.
      *
-     * Provides just enough surface area so that Url_List_Table and
-     * Campaign_List_Table can be parsed and instantiated in tests.
+     * Provides just enough surface area so that Campaign_List_Table
+     * can be parsed and instantiated in tests.
      */
     class WP_List_Table {
 

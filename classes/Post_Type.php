@@ -109,7 +109,7 @@ final class Post_Type {
 	/**
 	 * Retrieves distinct meta values for a given key from published tracking URLs.
 	 *
-	 * Shared by Url_List_Table and Campaign_List_Table for filter dropdowns.
+	 * Used by Campaign_List_Table for filter dropdowns.
 	 *
 	 * @param string $meta_key The meta key to query (e.g. '_utm_source').
 	 *

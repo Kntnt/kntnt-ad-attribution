@@ -40,16 +40,24 @@ describe('Campaign_List_Table::get_columns()', function () {
         expect($columns)->toHaveCount(8);
     });
 
-    it('omits click and conversion columns in trash view', function () {
+    it('returns same columns in trash view for consistent layout', function () {
         $_GET['post_status'] = 'trash';
 
         $table   = new Campaign_List_Table();
         $columns = $table->get_columns();
 
-        expect($columns)->toHaveKey('cb');
-        expect($columns)->not->toHaveKey('total_clicks');
-        expect($columns)->not->toHaveKey('total_conversions');
-        expect($columns)->toHaveCount(6);
+        expect($columns)->toHaveKeys([
+            'cb',
+            'tracking_url',
+            'target_url',
+            'utm_source',
+            'utm_medium',
+            'utm_campaign',
+            'total_clicks',
+            'total_conversions',
+        ]);
+
+        expect($columns)->toHaveCount(8);
     });
 
 });
@@ -415,6 +423,68 @@ describe('Campaign_List_Table::prepare_items()', function () {
 
         expect($has_clicks)->toBeFalse();
         expect($has_trash_status)->toBeTrue();
+    });
+
+    it('starts FROM posts to include zero-click tracking URLs', function () {
+        $wpdb = TestFactory::wpdb();
+        $GLOBALS['wpdb'] = $wpdb;
+
+        $captured_sql = [];
+
+        $wpdb->shouldReceive('esc_like')->andReturnArg(0);
+        $wpdb->shouldReceive('prepare')->andReturnUsing(function () use (&$captured_sql) {
+            $args = func_get_args();
+            $captured_sql[] = $args[0];
+            return 'SQL';
+        });
+
+        $wpdb->shouldReceive('get_var')->once()->andReturn(0);
+        $wpdb->shouldReceive('get_results')->once()->andReturn([]);
+
+        $table = new Campaign_List_Table();
+        $table->prepare_items();
+
+        // The query must start FROM wp_posts, not from clicks table.
+        $from_posts = false;
+        foreach ($captured_sql as $sql) {
+            if (str_contains($sql, 'FROM wp_posts p')) {
+                $from_posts = true;
+                break;
+            }
+        }
+
+        expect($from_posts)->toBeTrue();
+    });
+
+    it('LEFT JOINs clicks so zero-click URLs appear with 0 clicks', function () {
+        $wpdb = TestFactory::wpdb();
+        $GLOBALS['wpdb'] = $wpdb;
+
+        $captured_sql = [];
+
+        $wpdb->shouldReceive('esc_like')->andReturnArg(0);
+        $wpdb->shouldReceive('prepare')->andReturnUsing(function () use (&$captured_sql) {
+            $args = func_get_args();
+            $captured_sql[] = $args[0];
+            return 'SQL';
+        });
+
+        $wpdb->shouldReceive('get_var')->once()->andReturn(0);
+        $wpdb->shouldReceive('get_results')->once()->andReturn([]);
+
+        $table = new Campaign_List_Table();
+        $table->prepare_items();
+
+        // Clicks must be LEFT JOINed (not INNER JOIN) so zero-click URLs appear.
+        $left_join_clicks = false;
+        foreach ($captured_sql as $sql) {
+            if (preg_match('/LEFT\s+JOIN.*kntnt_ad_attr_clicks/i', $sql)) {
+                $left_join_clicks = true;
+                break;
+            }
+        }
+
+        expect($left_join_clicks)->toBeTrue();
     });
 
     it('includes post_id in SELECT for publish view', function () {

@@ -228,7 +228,7 @@ describe('Admin_Page::render_page()', function () {
         // The unknown tab dispatches to an action.
         Actions\expectDone('kntnt_ad_attr_admin_tab_addons')->once();
 
-        // No reporters → no queue status or CSV export.
+        // No reporters → no queue status.
         Filters\expectApplied('kntnt_ad_attr_conversion_reporters')->andReturn([]);
 
         ob_start();
@@ -241,7 +241,7 @@ describe('Admin_Page::render_page()', function () {
     it('renders queue status when reporters registered', function () {
         [$page, $queue] = setup_render_env();
 
-        // Reporters are registered (called in both render_main_view and render_page).
+        // Reporters are registered → queue status is displayed.
         Filters\expectApplied('kntnt_ad_attr_conversion_reporters')->andReturn([
             'test-reporter' => fn () => null,
         ]);

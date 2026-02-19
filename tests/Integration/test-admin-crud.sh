@@ -2,7 +2,8 @@
 # Integration test: Admin page CRUD operations.
 #
 # Tests creating, listing, trashing, restoring, and permanently deleting
-# tracking URLs via the admin interface.
+# tracking URLs via the admin interface. Verifies that zero-click URLs
+# appear in the list view.
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -44,26 +45,19 @@ assert_equals "cpc" "$(echo "$meta" | jq -r '.meta_value')" "utm_medium stored c
 meta=$(query_db "SELECT meta_value FROM wp_postmeta WHERE meta_key = '_utm_campaign' AND post_id = (SELECT post_id FROM wp_postmeta WHERE meta_key = '_hash' AND meta_value = '${HASH}')")
 assert_equals "admin-test" "$(echo "$meta" | jq -r '.meta_value')" "utm_campaign stored correctly"
 
-# ─── Insert a click record so the URL appears in the merged campaign view ───
-
-execute_sql "INSERT INTO wp_kntnt_ad_attr_clicks (hash, clicked_at, utm_content, utm_term, utm_id, utm_source_platform) VALUES ('${HASH}', datetime('now'), '', '', '', '')"
-
-# Debug: verify click record and joined query work.
-click_debug=$(get_click_count "$HASH")
-echo "  DEBUG: click count for hash = $click_debug"
-join_debug=$(query_db "SELECT c.hash FROM wp_kntnt_ad_attr_clicks c INNER JOIN wp_postmeta pm ON pm.meta_key = '_hash' AND pm.meta_value = c.hash INNER JOIN wp_posts p ON p.ID = pm.post_id AND p.post_type = 'kntnt_ad_attr_url' AND p.post_status = 'publish' WHERE c.hash = '${HASH}'")
-echo "  DEBUG: joined query result = $join_debug"
-
-# ─── List view shows created URL ───
+# ─── List view shows zero-click URL ───
 
 admin_page=$(curl -sf -b "${ADMIN_COOKIE}" \
     "${WP_BASE_URL}/wp-admin/tools.php?page=kntnt-ad-attribution")
-echo "  DEBUG: admin page length = ${#admin_page}"
-assert_contains "$admin_page" "$HASH" "List view shows the tracking URL hash"
+assert_contains "$admin_page" "$HASH" "Zero-click URL appears in list view"
 
 # ─── Merged view with Create button ───
 
 assert_contains "$admin_page" "Create Tracking URL" "Admin page shows Create Tracking URL button"
+
+# ─── Insert a click (needed for permanent delete verification below) ───
+
+execute_sql "INSERT INTO wp_kntnt_ad_attr_clicks (hash, clicked_at, utm_content, utm_term, utm_id, utm_source_platform) VALUES ('${HASH}', datetime('now'), '', '', '', '')"
 
 # ─── Trash URL via test helper ---
 
@@ -80,7 +74,7 @@ update_post_status "$post_id" "publish"
 result=$(query_db "SELECT post_status FROM wp_posts WHERE ID = ${post_id}")
 assert_equals "publish" "$(echo "$result" | jq -r '.post_status')" "Tracking URL restored to publish"
 
-# ─── Permanently delete URL (verify clicks/conversions also deleted) ───
+# ─── Permanently delete URL (verify clicks also deleted) ───
 
 # The click inserted earlier should still exist.
 click_count_before=$(get_click_count "$HASH")
