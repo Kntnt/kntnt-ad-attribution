@@ -44,11 +44,9 @@ assert_equals "cpc" "$(echo "$meta" | jq -r '.meta_value')" "utm_medium stored c
 meta=$(query_db "SELECT meta_value FROM wp_postmeta WHERE meta_key = '_utm_campaign' AND post_id = (SELECT post_id FROM wp_postmeta WHERE meta_key = '_hash' AND meta_value = '${HASH}')")
 assert_equals "admin-test" "$(echo "$meta" | jq -r '.meta_value')" "utm_campaign stored correctly"
 
-# ─── Generate a click so the URL appears in the merged campaign view ───
+# ─── Insert a click record so the URL appears in the merged campaign view ───
 
-set_consent_state "granted"
-flush_rewrites
-simulate_click "$HASH" > /dev/null
+execute_sql "INSERT INTO wp_kntnt_ad_attr_clicks (hash, clicked_at, user_agent, utm_content, utm_term, utm_id, utm_source_platform) VALUES ('${HASH}', datetime('now'), 'TestAgent', '', '', '', '')"
 
 # ─── List view shows created URL ───
 
@@ -77,9 +75,7 @@ assert_equals "publish" "$(echo "$result" | jq -r '.post_status')" "Tracking URL
 
 # ─── Permanently delete URL (verify clicks/conversions also deleted) ───
 
-# Add another click for the permanent delete test.
-simulate_click "$HASH" > /dev/null
-
+# The click inserted earlier should still exist.
 click_count_before=$(get_click_count "$HASH")
 assert_greater_than "0" "$click_count_before" "Click exists before permanent delete"
 
@@ -89,8 +85,5 @@ delete_post "$post_id"
 # Post should be gone.
 result=$(query_db "SELECT COUNT(*) AS cnt FROM wp_posts WHERE ID = ${post_id}")
 assert_equals "0" "$(echo "$result" | jq -r '.cnt')" "Post permanently deleted"
-
-# Cleanup: reset consent.
-set_consent_state "default"
 
 print_summary
