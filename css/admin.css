@@ -70,32 +70,25 @@
 }
 
 .kntnt-ad-attr-campaigns .column-tracking_url {
-	width: 18%;
+	width: 30%;
 }
 
 .kntnt-ad-attr-campaigns .column-target_url {
-	width: 14%;
+	width: 22%;
 }
 
 .kntnt-ad-attr-campaigns .column-utm_source,
 .kntnt-ad-attr-campaigns .column-utm_medium,
 .kntnt-ad-attr-campaigns .column-utm_campaign {
-	width: 7%;
-}
-
-.kntnt-ad-attr-campaigns .column-utm_content,
-.kntnt-ad-attr-campaigns .column-utm_term,
-.kntnt-ad-attr-campaigns .column-utm_id,
-.kntnt-ad-attr-campaigns .column-utm_source_platform {
-	width: 6%;
+	width: 10%;
 }
 
 .kntnt-ad-attr-campaigns .column-total_clicks {
-	width: 6%;
+	width: 7%;
 }
 
 .kntnt-ad-attr-campaigns .column-total_conversions {
-	width: 8%;
+	width: 9%;
 }
 
 /* Date filter inputs */
