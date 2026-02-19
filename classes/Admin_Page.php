@@ -323,24 +323,21 @@ final class Admin_Page {
 		$table->display();
 		echo '</form>';
 
-		// CSV export button — only on publish view with reporters registered.
+		// CSV export button — only on publish view.
 		if ( ! $is_trash ) {
-			$reporters = apply_filters( 'kntnt_ad_attr_conversion_reporters', [] );
-			if ( ! empty( $reporters ) ) {
-				$params = $table->get_filter_params();
+			$params = $table->get_filter_params();
 
-				echo '<form method="post" class="kntnt-ad-attr-export">';
-				wp_nonce_field( 'kntnt_ad_attr_export', 'kntnt_ad_attr_export_nonce' );
-				echo '<input type="hidden" name="kntnt_ad_attr_action" value="export_csv">';
+			echo '<form method="post" class="kntnt-ad-attr-export">';
+			wp_nonce_field( 'kntnt_ad_attr_export', 'kntnt_ad_attr_export_nonce' );
+			echo '<input type="hidden" name="kntnt_ad_attr_action" value="export_csv">';
 
-				// Pass current filter values so the export matches the displayed data.
-				foreach ( $params as $key => $value ) {
-					echo '<input type="hidden" name="' . esc_attr( $key ) . '" value="' . esc_attr( $value ) . '">';
-				}
-
-				submit_button( __( 'Export CSV', 'kntnt-ad-attr' ), 'secondary', 'export_csv', false );
-				echo '</form>';
+			// Pass current filter values so the export matches the displayed data.
+			foreach ( $params as $key => $value ) {
+				echo '<input type="hidden" name="' . esc_attr( $key ) . '" value="' . esc_attr( $value ) . '">';
 			}
+
+			submit_button( __( 'Export CSV', 'kntnt-ad-attr' ), 'secondary', 'export_csv', false );
+			echo '</form>';
 		}
 	}
 

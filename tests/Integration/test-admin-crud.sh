@@ -44,6 +44,12 @@ assert_equals "cpc" "$(echo "$meta" | jq -r '.meta_value')" "utm_medium stored c
 meta=$(query_db "SELECT meta_value FROM wp_postmeta WHERE meta_key = '_utm_campaign' AND post_id = (SELECT post_id FROM wp_postmeta WHERE meta_key = '_hash' AND meta_value = '${HASH}')")
 assert_equals "admin-test" "$(echo "$meta" | jq -r '.meta_value')" "utm_campaign stored correctly"
 
+# ─── Generate a click so the URL appears in the merged campaign view ───
+
+set_consent_state "granted"
+flush_rewrites
+simulate_click "$HASH" > /dev/null
+
 # ─── List view shows created URL ───
 
 admin_page=$(curl -sf -b "${ADMIN_COOKIE}" \
@@ -71,9 +77,7 @@ assert_equals "publish" "$(echo "$result" | jq -r '.post_status')" "Tracking URL
 
 # ─── Permanently delete URL (verify clicks/conversions also deleted) ───
 
-# First, add a click and conversion for this URL.
-set_consent_state "granted"
-flush_rewrites
+# Add another click for the permanent delete test.
 simulate_click "$HASH" > /dev/null
 
 click_count_before=$(get_click_count "$HASH")
