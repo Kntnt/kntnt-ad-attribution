@@ -2,16 +2,6 @@
 #
 # Builds a clean kntnt-ad-attribution.zip from local files or a git tag.
 #
-# Usage:
-#   build-release-zip.sh                              Local files → zip in $CWD
-#   build-release-zip.sh --output <path>              Local files → zip in <path>
-#   build-release-zip.sh --tag <tag>                  Tagged files → zip in $CWD
-#   build-release-zip.sh --tag <tag> --output <path>  Tagged files → zip in <path>
-#   build-release-zip.sh --tag <tag> --update         Tagged files → upload to existing release
-#   build-release-zip.sh --tag <tag> --create         Tagged files → create release + upload
-#
-# --output can be combined with --update/--create (saves locally AND uploads).
-#
 # Requirements: zip, msgfmt (GNU gettext).
 #   With --tag: git.
 #   With --update/--create: gh (GitHub CLI).
@@ -21,15 +11,54 @@ set -euo pipefail
 REPO="Kntnt/kntnt-ad-attribution"
 PLUGIN_DIR="kntnt-ad-attribution"
 ZIP_NAME="${PLUGIN_DIR}.zip"
-ORIG_DIR=$(pwd)
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+
+# Print usage and exit.
+usage() {
+  cat <<'HELP'
+Usage:
+  build-release-zip.sh --output <path>
+  build-release-zip.sh --tag <tag> --output <path>
+  build-release-zip.sh --tag <tag> --update
+  build-release-zip.sh --tag <tag> --create
+  build-release-zip.sh --help
+
+Source:
+  Without --tag, builds from the local working copy.
+  With --tag <tag>, builds from files at the given git tag.
+
+Destination (exactly one required):
+  --output <path>      Save zip to <path>. If <path> is a directory or ends
+                       with /, saves as kntnt-ad-attribution.zip in that
+                       directory. Otherwise the last path component is used
+                       as the filename. The parent directory must exist.
+  --update             Upload zip to an existing GitHub release for <tag>.
+                       Replaces any existing zip asset. Requires --tag.
+  --create             Create a new GitHub release for <tag> and upload zip.
+                       The tag must already exist. Requires --tag.
+
+Examples:
+  build-release-zip.sh --output .
+  build-release-zip.sh --output ~/Desktop/custom-name.zip
+  build-release-zip.sh --tag 1.6.0 --output /tmp
+  build-release-zip.sh --tag 1.6.0 --create
+  build-release-zip.sh --tag 1.6.0 --update
+HELP
+  exit "${1:-0}"
+}
 
 # Parse arguments.
 TAG=""
-OUTPUT_DIR=""
+OUTPUT_PATH=""
 RELEASE_ACTION=""
+
+[[ $# -eq 0 ]] && usage 1
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --help|-h)
+      usage 0
+      ;;
     --tag)
       [[ $# -lt 2 ]] && { echo "Error: --tag requires a value." >&2; exit 1; }
       TAG="$2"
@@ -37,8 +66,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --output)
       [[ $# -lt 2 ]] && { echo "Error: --output requires a value." >&2; exit 1; }
-      [[ -d "$2" ]] || { echo "Error: Directory '$2' does not exist." >&2; exit 1; }
-      OUTPUT_DIR=$(cd "$2" && pwd)
+      OUTPUT_PATH="$2"
       shift 2
       ;;
     --update)
@@ -52,16 +80,47 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     *)
-      echo "Unknown option: $1" >&2
-      exit 1
+      echo "Error: Unknown option: $1" >&2
+      echo >&2
+      usage 1
       ;;
   esac
 done
 
-# Validate flag combinations.
+# Validate: exactly one destination is required.
+if [[ -z "$OUTPUT_PATH" && -z "$RELEASE_ACTION" ]]; then
+  echo "Error: specify --output, --update, or --create." >&2
+  echo >&2
+  usage 1
+fi
+
+if [[ -n "$OUTPUT_PATH" && -n "$RELEASE_ACTION" ]]; then
+  echo "Error: --output and --${RELEASE_ACTION} cannot be combined." >&2
+  exit 1
+fi
+
+# Validate: --update/--create requires --tag.
 if [[ -n "$RELEASE_ACTION" && -z "$TAG" ]]; then
   echo "Error: --${RELEASE_ACTION} requires --tag." >&2
   exit 1
+fi
+
+# Resolve output path: directory → append default filename; file → parent must exist.
+OUTPUT_FILE=""
+if [[ -n "$OUTPUT_PATH" ]]; then
+  if [[ -d "$OUTPUT_PATH" ]]; then
+    OUTPUT_FILE="$(cd "$OUTPUT_PATH" && pwd)/$ZIP_NAME"
+  elif [[ "$OUTPUT_PATH" == */ ]]; then
+    echo "Error: Directory '${OUTPUT_PATH}' does not exist." >&2
+    exit 1
+  else
+    parent_dir=$(dirname "$OUTPUT_PATH")
+    if [[ ! -d "$parent_dir" ]]; then
+      echo "Error: Directory '${parent_dir}' does not exist." >&2
+      exit 1
+    fi
+    OUTPUT_FILE="$(cd "$parent_dir" && pwd)/$(basename "$OUTPUT_PATH")"
+  fi
 fi
 
 # Verify that all required tools are available.
@@ -82,6 +141,7 @@ fi
 if [[ -n "$TAG" ]]; then
   if [[ -z $(git -C "$SCRIPT_DIR" tag -l "$TAG") ]]; then
     echo "Error: Tag '$TAG' does not exist." >&2
+    echo "Create it first:  git tag $TAG && git push origin $TAG" >&2
     exit 1
   fi
   if [[ "$RELEASE_ACTION" == "update" ]]; then
@@ -156,9 +216,9 @@ zip -qr "$ZIP_NAME" "$PLUGIN_DIR"
 echo "Created: $ZIP_NAME ($(du -h "$ZIP_NAME" | cut -f1))"
 
 # Deliver the zip.
-if [[ -n "$OUTPUT_DIR" ]]; then
-  cp "$ZIP_NAME" "$OUTPUT_DIR/$ZIP_NAME"
-  echo "Saved: $OUTPUT_DIR/$ZIP_NAME"
+if [[ -n "$OUTPUT_FILE" ]]; then
+  cp "$ZIP_NAME" "$OUTPUT_FILE"
+  echo "Saved: $OUTPUT_FILE"
 fi
 
 if [[ "$RELEASE_ACTION" == "create" ]]; then
@@ -167,17 +227,11 @@ if [[ "$RELEASE_ACTION" == "create" ]]; then
 fi
 
 if [[ "$RELEASE_ACTION" == "update" || "$RELEASE_ACTION" == "create" ]]; then
-  # Delete existing asset with the same name (if any) before uploading.
+  # Replace existing asset with the same name (if any).
   if gh release view "$TAG" --repo "$REPO" --json assets --jq ".assets[].name" | grep -qx "$ZIP_NAME"; then
-    echo "Deleting existing $ZIP_NAME from release ${TAG}…"
+    echo "Replacing existing $ZIP_NAME in release ${TAG}…"
     gh release delete-asset "$TAG" "$ZIP_NAME" --repo "$REPO" --yes
   fi
   gh release upload "$TAG" "$ZIP_NAME" --repo "$REPO"
   echo "Uploaded $ZIP_NAME to release $TAG"
-fi
-
-# Default: save zip to original working directory.
-if [[ -z "$OUTPUT_DIR" && -z "$RELEASE_ACTION" ]]; then
-  cp "$ZIP_NAME" "$ORIG_DIR/$ZIP_NAME"
-  echo "Saved: $ORIG_DIR/$ZIP_NAME"
 fi
