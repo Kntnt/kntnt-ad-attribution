@@ -46,7 +46,7 @@ assert_equals "admin-test" "$(echo "$meta" | jq -r '.meta_value')" "utm_campaign
 
 # ─── Insert a click record so the URL appears in the merged campaign view ───
 
-execute_sql "INSERT INTO wp_kntnt_ad_attr_clicks (hash, clicked_at, user_agent, utm_content, utm_term, utm_id, utm_source_platform) VALUES ('${HASH}', datetime('now'), 'TestAgent', '', '', '', '')"
+execute_sql "INSERT INTO wp_kntnt_ad_attr_clicks (hash, clicked_at, utm_content, utm_term, utm_id, utm_source_platform) VALUES ('${HASH}', datetime('now'), '', '', '', '')"
 
 # ─── List view shows created URL ───
 
