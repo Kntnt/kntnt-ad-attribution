@@ -209,6 +209,10 @@ add_action('rest_api_init', function () {
                 $_COOKIE['_ad_last_conv'] = $last_conv;
             }
 
+            // Set a browser-like User-Agent so Bot_Detector doesn't reject
+            // the conversion (curl's default UA matches the bot signature list).
+            $_SERVER['HTTP_USER_AGENT'] = 'Mozilla/5.0 IntegrationTest';
+
             // Capture any Set-Cookie headers from the conversion handler.
             $headers_before = headers_list();
             do_action('kntnt_ad_attr_conversion');

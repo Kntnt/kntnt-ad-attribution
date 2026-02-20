@@ -34,6 +34,14 @@ final class Conversion_Handler {
 	private readonly Cookie_Manager $cookie_manager;
 
 	/**
+	 * Bot detector for filtering automated requests.
+	 *
+	 * @var Bot_Detector
+	 * @since 1.6.0
+	 */
+	private readonly Bot_Detector $bot_detector;
+
+	/**
 	 * Click ID store for retrieving platform-specific click IDs.
 	 *
 	 * @var Click_ID_Store
@@ -61,14 +69,16 @@ final class Conversion_Handler {
 	 * Initializes the conversion handler with its dependencies.
 	 *
 	 * @param Cookie_Manager  $cookie_manager  Cookie read operations.
+	 * @param Bot_Detector    $bot_detector    Bot traffic detection.
 	 * @param Click_ID_Store  $click_id_store  Platform-specific click ID retrieval.
 	 * @param Queue           $queue           Async job queue.
 	 * @param Queue_Processor $queue_processor Queue processing scheduler.
 	 *
 	 * @since 1.0.0
 	 */
-	public function __construct( Cookie_Manager $cookie_manager, Click_ID_Store $click_id_store, Queue $queue, Queue_Processor $queue_processor ) {
+	public function __construct( Cookie_Manager $cookie_manager, Bot_Detector $bot_detector, Click_ID_Store $click_id_store, Queue $queue, Queue_Processor $queue_processor ) {
 		$this->cookie_manager  = $cookie_manager;
+		$this->bot_detector    = $bot_detector;
 		$this->click_id_store  = $click_id_store;
 		$this->queue           = $queue;
 		$this->queue_processor = $queue_processor;
@@ -96,6 +106,11 @@ final class Conversion_Handler {
 	 */
 	public function handle_conversion(): void {
 		global $wpdb;
+
+		// Reject automated requests to prevent fake conversions.
+		if ( $this->bot_detector->is_bot() ) {
+			return;
+		}
 
 		// Step 1: Read and parse the _ad_clicks cookie.
 		$entries = $this->cookie_manager->parse( '_ad_clicks' );
