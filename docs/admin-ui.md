@@ -109,7 +109,7 @@ LIMIT %d OFFSET %d
 
 **Trash view query** uses a simplified query without the clicks/conversions joins, since trashed URLs have no active traffic. It selects directly from the posts and postmeta tables with `post_status = 'trash'`.
 
-**CSV query** uses the same base but groups additionally by `c.utm_content, c.utm_term, c.utm_id, c.utm_source_platform` and includes those fields in SELECT, providing per-click granularity.
+**CSV query** uses the same base without GROUP BY — each row is one click–conversion pair. Includes per-click UTM fields (`c.utm_content`, `c.utm_term`, `c.utm_id`, `c.utm_source_platform`), timestamps (`c.clicked_at`, `cv.converted_at`), and fractional attribution (`cv.fractional_conversion`) in SELECT. Excludes tracking URLs with zero clicks via `AND c.id IS NOT NULL`.
 
 **Target URL is resolved in PHP**, not in SQL: `get_permalink( (int) $row->target_post_id )`. This ensures the URL always reflects the current permalink structure.
 
@@ -123,7 +123,7 @@ Button below the list table (visible only when conversion reporters are register
 
 **Delimiter:** Respects the WordPress locale's decimal separator. If the decimal character is a comma (e.g., Swedish), semicolon is used as the field delimiter.
 
-**Columns:**
+**Columns (one row per click–conversion pair):**
 
 | Column | Content |
 |--------|---------|
@@ -136,8 +136,9 @@ Button below the list table (visible only when conversion reporters are register
 | `utm_term` | Term |
 | `utm_id` | Id |
 | `utm_source_platform` | Group |
-| `clicks` | Total clicks (integer) |
-| `conversions` | Fractional conversions (4 decimals, locale's decimal character) |
+| `clicked_at` | Click timestamp (MySQL datetime `YYYY-MM-DD HH:MM:SS`) |
+| `fractional_conversion` | Attribution value (4 decimals, locale's decimal character; empty if no conversion) |
+| `converted_at` | Conversion timestamp (MySQL datetime; empty if no conversion) |
 
 **Filename pattern:** `kntnt-ad-attribution-YYYY-MM-DD.csv` or `kntnt-ad-attribution-YYYY-MM-DD-to-YYYY-MM-DD.csv` if a date filter is set.
 

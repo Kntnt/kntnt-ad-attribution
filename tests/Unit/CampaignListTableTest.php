@@ -529,7 +529,7 @@ describe('Campaign_List_Table::fetch_all_items()', function () {
         $_GET = [];
     });
 
-    it('includes per-click UTM fields in query', function () {
+    it('includes per-click fields in query', function () {
         $wpdb = TestFactory::wpdb();
         $GLOBALS['wpdb'] = $wpdb;
 
@@ -547,14 +547,17 @@ describe('Campaign_List_Table::fetch_all_items()', function () {
         $table = new Campaign_List_Table();
         $table->fetch_all_items();
 
-        // Should include per-click UTM fields in SELECT.
+        // Should include per-click UTM fields, timestamps, and attribution in SELECT.
         $has_per_click = false;
         foreach ($captured_sql as $sql) {
             if (
                 str_contains($sql, 'c.utm_content') &&
                 str_contains($sql, 'c.utm_term') &&
                 str_contains($sql, 'c.utm_id') &&
-                str_contains($sql, 'c.utm_source_platform')
+                str_contains($sql, 'c.utm_source_platform') &&
+                str_contains($sql, 'c.clicked_at') &&
+                str_contains($sql, 'cv.fractional_conversion') &&
+                str_contains($sql, 'cv.converted_at')
             ) {
                 $has_per_click = true;
                 break;
@@ -564,7 +567,7 @@ describe('Campaign_List_Table::fetch_all_items()', function () {
         expect($has_per_click)->toBeTrue();
     });
 
-    it('groups by per-click UTM fields in CSV query', function () {
+    it('uses no GROUP BY and filters zero-click URLs in CSV query', function () {
         $wpdb = TestFactory::wpdb();
         $GLOBALS['wpdb'] = $wpdb;
 
@@ -582,20 +585,20 @@ describe('Campaign_List_Table::fetch_all_items()', function () {
         $table = new Campaign_List_Table();
         $table->fetch_all_items();
 
-        // GROUP BY should include per-click dimensions.
-        $has_group = false;
+        // CSV query should NOT contain GROUP BY.
+        $has_group_by = false;
+        $has_click_filter = false;
         foreach ($captured_sql as $sql) {
-            if (
-                str_contains($sql, 'GROUP BY') &&
-                str_contains($sql, 'c.utm_content') &&
-                str_contains($sql, 'c.utm_source_platform')
-            ) {
-                $has_group = true;
-                break;
+            if (str_contains($sql, 'GROUP BY')) {
+                $has_group_by = true;
+            }
+            if (str_contains($sql, 'c.id IS NOT NULL')) {
+                $has_click_filter = true;
             }
         }
 
-        expect($has_group)->toBeTrue();
+        expect($has_group_by)->toBeFalse();
+        expect($has_click_filter)->toBeTrue();
     });
 
     it('returns empty array when no results', function () {

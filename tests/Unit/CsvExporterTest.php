@@ -22,6 +22,49 @@ class CsvExitException extends \RuntimeException {}
 describe('Csv_Exporter::export()', function () {
 
     /**
+     * Returns a default per-click item object with sensible defaults.
+     *
+     * @param array $overrides Properties to override.
+     *
+     * @return object
+     */
+    function make_click(array $overrides = []): object {
+        return (object) array_merge([
+            'hash'                  => 'abc123',
+            'target_post_id'        => 1,
+            'utm_source'            => 'google',
+            'utm_medium'            => 'cpc',
+            'utm_campaign'          => 'summer',
+            'utm_content'           => '',
+            'utm_term'              => '',
+            'utm_id'                => '',
+            'utm_source_platform'   => '',
+            'clicked_at'            => '2024-06-15 10:30:00',
+            'fractional_conversion' => null,
+            'converted_at'          => null,
+        ], $overrides);
+    }
+
+    /**
+     * Strips BOM, parses CSV output, and returns associative rows keyed by header names.
+     *
+     * @param string $output    Raw CSV output (may include BOM).
+     * @param string $delimiter CSV field delimiter.
+     *
+     * @return array<int, array<string, string>>
+     */
+    function parse_csv_rows(string $output, string $delimiter = ','): array {
+        $clean  = ltrim($output, "\xEF\xBB\xBF");
+        $lines  = array_filter(explode("\n", $clean), fn ($l) => $l !== '');
+        $header = str_getcsv(array_shift($lines), $delimiter);
+
+        return array_map(
+            fn ($line) => array_combine($header, str_getcsv($line, $delimiter)),
+            $lines,
+        );
+    }
+
+    /**
      * Runs export() in an output buffer, capturing headers and CSV output.
      * Uses Patchwork to intercept exit() and header().
      *
@@ -98,19 +141,7 @@ describe('Csv_Exporter::export()', function () {
     });
 
     it('uses semicolon delimiter for European locales', function () {
-        $item = (object) [
-            'hash'                => 'abc123',
-            'target_post_id'      => 1,
-            'utm_source'          => 'google',
-            'utm_medium'          => 'cpc',
-            'utm_campaign'        => 'summer',
-            'utm_content'         => '',
-            'utm_term'            => '',
-            'utm_id'              => '',
-            'utm_source_platform' => '',
-            'total_clicks'        => 10,
-            'total_conversions'   => 2.5,
-        ];
+        $item = make_click(['fractional_conversion' => 1.0, 'converted_at' => '2024-06-15 11:00:00']);
 
         $result = run_export([$item], locale_decimal: ',');
 
@@ -123,19 +154,7 @@ describe('Csv_Exporter::export()', function () {
     });
 
     it('uses comma delimiter for other locales', function () {
-        $item = (object) [
-            'hash'                => 'abc123',
-            'target_post_id'      => 1,
-            'utm_source'          => 'google',
-            'utm_medium'          => 'cpc',
-            'utm_campaign'        => 'summer',
-            'utm_content'         => '',
-            'utm_term'            => '',
-            'utm_id'              => '',
-            'utm_source_platform' => '',
-            'total_clicks'        => 10,
-            'total_conversions'   => 2.5,
-        ];
+        $item = make_click(['fractional_conversion' => 1.0, 'converted_at' => '2024-06-15 11:00:00']);
 
         $result = run_export([$item], locale_decimal: '.');
 
@@ -144,7 +163,7 @@ describe('Csv_Exporter::export()', function () {
         expect($lines[0])->toContain(',');
     });
 
-    it('has correct number of columns (11)', function () {
+    it('has correct number of columns (12)', function () {
         $result = run_export([], locale_decimal: '.');
 
         // Remove BOM and parse header.
@@ -153,7 +172,7 @@ describe('Csv_Exporter::export()', function () {
 
         // Parse the header row.
         $header = str_getcsv($lines[0], ',');
-        expect($header)->toHaveCount(11);
+        expect($header)->toHaveCount(12);
     });
 
     it('includes date range in filename when filtered', function () {
@@ -182,24 +201,105 @@ describe('Csv_Exporter::export()', function () {
     });
 
     it('shows deleted for missing target', function () {
-        $item = (object) [
-            'hash'                => 'abc123',
-            'target_post_id'      => 0,
-            'utm_source'          => 'google',
-            'utm_medium'          => 'cpc',
-            'utm_campaign'        => 'summer',
-            'utm_content'         => '',
-            'utm_term'            => '',
-            'utm_id'              => '',
-            'utm_source_platform' => '',
-            'total_clicks'        => 5,
-            'total_conversions'   => 1.0,
-        ];
+        $item = make_click(['target_post_id' => 0]);
 
         // get_permalink returns false for post_id 0.
         $result = run_export([$item], locale_decimal: '.');
 
         expect($result['output'])->toContain('(deleted)');
+    });
+
+    it('includes Clicked At, Attribution and Converted At header names', function () {
+        $result = run_export([]);
+
+        $clean  = ltrim($result['output'], "\xEF\xBB\xBF");
+        $header = str_getcsv(explode("\n", $clean)[0], ',');
+
+        // New per-click column names are present.
+        expect($header)->toContain('Clicked At');
+        expect($header)->toContain('Attribution');
+        expect($header)->toContain('Converted At');
+
+        // Old aggregated column names are absent.
+        expect($header)->not->toContain('Clicks');
+        expect($header)->not->toContain('Conversions');
+    });
+
+    it('outputs clicked_at timestamp as-is', function () {
+        $item   = make_click();
+        $result = run_export([$item]);
+        $rows   = parse_csv_rows($result['output']);
+
+        expect($rows[0]['Clicked At'])->toBe('2024-06-15 10:30:00');
+    });
+
+    it('formats fractional_conversion with 4 decimals', function () {
+        $item = make_click([
+            'fractional_conversion' => 1.0,
+            'converted_at'         => '2024-06-15 11:00:00',
+        ]);
+
+        $result = run_export([$item], locale_decimal: '.');
+        $rows   = parse_csv_rows($result['output']);
+
+        expect($rows[0]['Attribution'])->toBe('1.0000');
+    });
+
+    it('formats fractional_conversion with locale decimal separator', function () {
+        $item = make_click([
+            'fractional_conversion' => 0.5,
+            'converted_at'         => '2024-06-15 11:00:00',
+        ]);
+
+        $result = run_export([$item], locale_decimal: ',');
+        $rows   = parse_csv_rows($result['output'], ';');
+
+        expect($rows[0]['Attribution'])->toBe('0,5000');
+    });
+
+    it('outputs empty attribution and converted_at when no conversion', function () {
+        $item   = make_click();
+        $result = run_export([$item]);
+        $rows   = parse_csv_rows($result['output']);
+
+        expect($rows[0]['Attribution'])->toBe('');
+        expect($rows[0]['Converted At'])->toBe('');
+    });
+
+    it('outputs converted_at timestamp as-is', function () {
+        $item = make_click([
+            'fractional_conversion' => 0.25,
+            'converted_at'         => '2024-06-15 11:00:00',
+        ]);
+
+        $result = run_export([$item], locale_decimal: '.');
+        $rows   = parse_csv_rows($result['output']);
+
+        expect($rows[0]['Converted At'])->toBe('2024-06-15 11:00:00');
+    });
+
+    it('produces one row per item with 12 fields each', function () {
+        $items = [
+            make_click([
+                'fractional_conversion' => 1.0,
+                'converted_at'         => '2024-06-15 11:00:00',
+            ]),
+            make_click([
+                'hash'       => 'def456',
+                'clicked_at' => '2024-06-16 09:00:00',
+            ]),
+        ];
+
+        $result = run_export($items);
+        $rows   = parse_csv_rows($result['output']);
+
+        // Two data rows.
+        expect($rows)->toHaveCount(2);
+
+        // Each row has 12 fields.
+        foreach ($rows as $row) {
+            expect($row)->toHaveCount(12);
+        }
     });
 
 });

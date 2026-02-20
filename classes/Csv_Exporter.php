@@ -1,9 +1,9 @@
 <?php
 /**
- * CSV exporter for campaign statistics.
+ * CSV exporter for per-click campaign data.
  *
- * Streams aggregated campaign data as a downloadable CSV file with
- * locale-aware formatting (decimal separator and field delimiter).
+ * Streams individual click–conversion rows as a downloadable CSV file
+ * with locale-aware formatting (decimal separator and field delimiter).
  *
  * @package Kntnt\Ad_Attribution
  * @since   1.0.0
@@ -26,9 +26,14 @@ final class Csv_Exporter {
 	/**
 	 * Streams a CSV file to the browser and terminates execution.
 	 *
-	 * @param array  $items      Row objects from Campaign_List_Table::fetch_all_items().
-	 * @param string $date_start Start date filter value ('1970-01-01' if unset).
-	 * @param string $date_end   End date filter value ('9999-12-31' if unset).
+	 * Each item is a per-click row with optional conversion attribution.
+	 * Properties: hash, target_post_id, utm_source, utm_medium, utm_campaign,
+	 * utm_content, utm_term, utm_id, utm_source_platform, clicked_at,
+	 * fractional_conversion (nullable), converted_at (nullable).
+	 *
+	 * @param array<object> $items      Row objects from Campaign_List_Table::fetch_all_items().
+	 * @param string        $date_start Start date filter value ('1970-01-01' if unset).
+	 * @param string        $date_end   End date filter value ('9999-12-31' if unset).
 	 *
 	 * @return never
 	 * @since 1.0.0
@@ -75,17 +80,23 @@ final class Csv_Exporter {
 			__( 'Term', 'kntnt-ad-attr' ),
 			__( 'Id', 'kntnt-ad-attr' ),
 			__( 'Group', 'kntnt-ad-attr' ),
-			__( 'Clicks', 'kntnt-ad-attr' ),
-			__( 'Conversions', 'kntnt-ad-attr' ),
+			__( 'Clicked At', 'kntnt-ad-attr' ),
+			__( 'Attribution', 'kntnt-ad-attr' ),
+			__( 'Converted At', 'kntnt-ad-attr' ),
 		], $delimiter );
 
 		// Build tracking URL prefix once.
 		$prefix = Plugin::get_url_prefix();
 
-		// Data rows.
+		// Data rows — one per click–conversion pair.
 		foreach ( $items as $item ) {
 			$tracking_url = home_url( $prefix . '/' . $item->hash );
 			$target_url   = get_permalink( (int) $item->target_post_id );
+
+			// Format fractional attribution with 4 decimals, or empty if no conversion.
+			$attribution = isset( $item->fractional_conversion )
+				? number_format( (float) $item->fractional_conversion, 4, $decimal_point, '' )
+				: '';
 
 			fputcsv( $output, [
 				$tracking_url,
@@ -97,8 +108,9 @@ final class Csv_Exporter {
 				$item->utm_term ?? '',
 				$item->utm_id ?? '',
 				$item->utm_source_platform ?? '',
-				(int) $item->total_clicks,
-				number_format( (float) $item->total_conversions, 1, $decimal_point, '' ),
+				$item->clicked_at ?? '',
+				$attribution,
+				$item->converted_at ?? '',
 			], $delimiter );
 		}
 

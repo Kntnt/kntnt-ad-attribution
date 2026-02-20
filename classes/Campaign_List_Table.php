@@ -453,10 +453,10 @@ final class Campaign_List_Table extends WP_List_Table {
 	}
 
 	/**
-	 * Builds the CSV query with per-click UTM fields included.
+	 * Builds the CSV query for per-click export.
 	 *
-	 * Content/Term/Id/Group vary per click and are stored in the clicks table,
-	 * so the CSV query groups by these additional dimensions.
+	 * No GROUP BY — each row is one click–conversion pair. Excludes
+	 * tracking URLs with zero clicks (no meaningful data in a per-click export).
 	 *
 	 * @return array{0: string, 1: array} SQL fragment and bound parameters.
 	 * @since 1.5.0
@@ -464,11 +464,7 @@ final class Campaign_List_Table extends WP_List_Table {
 	private function build_csv_query(): array {
 		[ $from_where, $params ] = $this->build_from_where();
 
-		$group_by = ' GROUP BY pm_hash.meta_value, pm_target.meta_value,
-			pm_src.meta_value, pm_med.meta_value, pm_camp.meta_value,
-			c.utm_content, c.utm_term, c.utm_id, c.utm_source_platform';
-
-		return [ $from_where . $group_by, $params ];
+		return [ $from_where . ' AND c.id IS NOT NULL', $params ];
 	}
 
 	/**
@@ -615,12 +611,12 @@ final class Campaign_List_Table extends WP_List_Table {
 	}
 
 	/**
-	 * Fetches all campaign data matching the current filters (no LIMIT).
+	 * Fetches all per-click data matching the current filters (no LIMIT).
 	 *
-	 * Used by Csv_Exporter to export the complete dataset. Uses the CSV query
-	 * which includes per-click Content/Term/Id/Group dimensions.
+	 * Used by Csv_Exporter to export the complete dataset. Each row is one
+	 * click–conversion pair with timestamps and fractional attribution.
 	 *
-	 * @return array List of row objects.
+	 * @return array<object> List of row objects.
 	 * @since 1.0.0
 	 */
 	public function fetch_all_items(): array {
@@ -639,10 +635,11 @@ final class Campaign_List_Table extends WP_List_Table {
 				c.utm_term,
 				c.utm_id,
 				c.utm_source_platform,
-				COUNT(c.id) AS total_clicks,
-				COALESCE(SUM(cv.fractional_conversion), 0) AS total_conversions
+				c.clicked_at,
+				cv.fractional_conversion,
+				cv.converted_at
 			{$base_query}
-			ORDER BY total_clicks DESC",
+			ORDER BY c.clicked_at DESC",
 			...$params,
 		) );
 
