@@ -15,14 +15,30 @@ The click handler is registered on `template_redirect` — the conventional hook
 7b. Forward query parameters: merge incoming request params with target URL params (target wins on collision), filter via `kntnt_ad_attr_redirect_query_params`
 8. Redirect loop guard: verify that target URL does not start with /<prefix>/
 9. Bot check: if is_bot() → redirect without logging or setting cookie
-10. Extract per-click UTM fields (Content, Term, Id, Group) from incoming parameters
-10b. Insert click record into kntnt_ad_attr_clicks table
-10c. Capture platform-specific click IDs via registered kntnt_ad_attr_click_id_capturers filter
-10d. Populate empty postmeta fields (Source, Medium, Campaign only) from incoming UTM/MTM query parameters
-10e. Fire kntnt_ad_attr_click action (hash, target URL, campaign data) — allows companion plugins to capture platform-specific parameters (e.g. gclid)
-11. Check consent → three outcomes (see Consent below)
-12. Redirect to target URL
+10. Check consent
+10b. Click deduplication: if consent=true and dedup_seconds>0 and hash in cookie within window → refresh cookie, redirect (skip insert)
+11. Extract per-click UTM fields (Content, Term, Id, Group) from incoming parameters
+11b. Insert click record into kntnt_ad_attr_clicks table
+11c. Capture platform-specific click IDs via registered kntnt_ad_attr_click_id_capturers filter
+11d. Populate empty postmeta fields (Source, Medium, Campaign only) from incoming UTM/MTM query parameters
+11e. Fire kntnt_ad_attr_click action (hash, target URL, campaign data) — allows companion plugins to capture platform-specific parameters (e.g. gclid)
+12. Handle consent for cookie storage → three outcomes (see Consent below)
+13. Redirect to target URL
 ```
+
+## Click Deduplication
+
+When `kntnt_ad_attr_dedup_seconds` returns a non-zero value and the visitor has granted consent (`true`), the click handler checks the `_ad_clicks` cookie for an existing entry for the same hash. If the hash exists and the elapsed time since the stored timestamp is less than the dedup window, the click is treated as a duplicate:
+
+- The cookie timestamp is refreshed (keeping the hash alive).
+- The visitor is redirected to the target URL.
+- No click record is inserted, no click IDs are captured, no postmeta is populated, and no `kntnt_ad_attr_click` action fires.
+
+This prevents inflated click counts from repeated visits (e.g. page refreshes, back-button navigation).
+
+When consent is `false` or `null`, the cookie cannot be read, so dedup is impossible — the click is always recorded. This matches the consent-scenarios specification (Cases 7–16).
+
+When dedup is disabled (default `0`), the dedup check is skipped entirely.
 
 ## Click ID Capture
 

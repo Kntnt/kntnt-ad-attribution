@@ -50,7 +50,7 @@ assert_equals "true" "$has_cpt" "CPT kntnt_ad_attr_url is registered"
 
 result=$(get_option "kntnt_ad_attr_version")
 version=$(echo "$result" | jq -r '.value')
-assert_equals "1.6.0" "$version" "Version option is 1.6.0"
+assert_equals "1.7.0" "$version" "Version option is 1.7.0"
 
 # --- Rewrite rule works (valid hash gets handled, not generic 404) ---
 

@@ -40,7 +40,7 @@ All machine-readable names use `kntnt-ad-attr` (hyphens) / `kntnt_ad_attr` (unde
 8. `Queue` — async job queue (v1.2.0)
 9. `Queue_Processor(Queue)` — queue job dispatcher (v1.2.0)
 10. `Click_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store)` — click processing & redirect
-11. `Conversion_Handler(Cookie_Manager, Bot_Detector, Click_ID_Store, Queue, Queue_Processor)` — conversion attribution
+11. `Conversion_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store, Queue, Queue_Processor)` — conversion attribution
 12. `Cron(Click_ID_Store, Queue)` — scheduled cleanup tasks
 13. `Admin_Page(Queue)` — admin UI orchestration
 14. `Rest_Endpoint(Cookie_Manager, Consent)` — REST API routes
@@ -57,11 +57,11 @@ All machine-readable names use `kntnt-ad-attr` (hyphens) / `kntnt_ad_attr` (unde
 
 **Shared utility methods (v1.5.1):** `Post_Type::get_valid_hashes(array $hashes)` returns hashes with published tracking URL posts (used by both `Conversion_Handler` and `Rest_Endpoint`). `Post_Type::get_distinct_meta_values(string $meta_key)` returns sorted distinct meta values for filter dropdowns (used by `Campaign_List_Table`).
 
-**Adapter infrastructure (v1.2.0):** Click_ID_Store, Queue, and Queue_Processor are instantiated in Plugin constructor and injected into Click_Handler (Click_ID_Store), Conversion_Handler (Bot_Detector, Click_ID_Store, Queue, Queue_Processor), Cron (Click_ID_Store, Queue), and Admin_Page (Queue). Two new filters: `kntnt_ad_attr_click_id_capturers` and `kntnt_ad_attr_conversion_reporters`. Queue processing via `kntnt_ad_attr_process_queue` cron hook. If no adapters are registered, zero overhead.
+**Adapter infrastructure (v1.2.0):** Click_ID_Store, Queue, and Queue_Processor are instantiated in Plugin constructor and injected into Click_Handler (Click_ID_Store), Conversion_Handler (Consent, Bot_Detector, Click_ID_Store, Queue, Queue_Processor), Cron (Click_ID_Store, Queue), and Admin_Page (Queue). Two new filters: `kntnt_ad_attr_click_id_capturers` and `kntnt_ad_attr_conversion_reporters`. Queue processing via `kntnt_ad_attr_process_queue` cron hook. If no adapters are registered, zero overhead.
 
 **Merged admin view (v1.6.0):** The admin page is a single merged view (no tabs). Add-on plugins can still register custom views via `kntnt_ad_attr_admin_tabs` filter; when `?tab=<slug>` is passed, the `kntnt_ad_attr_admin_tab_{$tab}` action fires for rendering.
 
-**Per-hash deduplication (v1.6.0):** Conversion deduplication is per-hash (not global) and disabled by default. Controlled by `kntnt_ad_attr_dedup_seconds` filter (default: 0). When enabled, the `_ad_last_conv` cookie stores `hash:timestamp` pairs (same format as `_ad_clicks`).
+**Per-hash deduplication (v1.6.0):** Both click and conversion deduplication are per-hash (not global) and disabled by default. Controlled by `kntnt_ad_attr_dedup_seconds` filter (default: 0). Click dedup (v1.7.0) skips the DB insert when the same hash is in the `_ad_clicks` cookie within the window (requires consent=true). Conversion dedup stores `hash:timestamp` pairs in the `_ad_last_conv` cookie (same format as `_ad_clicks`).
 
 **Query parameter forwarding (v1.3.0):** Click_Handler merges incoming query parameters (e.g. `gclid`, `fbclid`) into the redirect target URL. Target URL parameters take precedence on collision. The merged set is filterable via `kntnt_ad_attr_redirect_query_params`.
 
@@ -75,7 +75,7 @@ All machine-readable names use `kntnt-ad-attr` (hyphens) / `kntnt_ad_attr` (unde
 
 ## Hook Reference (Quick)
 
-**Filters (15):** `kntnt_ad_attr_has_consent`, `kntnt_ad_attr_redirect_method`, `kntnt_ad_attr_url_prefix`, `kntnt_ad_attr_cookie_lifetime`, `kntnt_ad_attr_dedup_seconds`, `kntnt_ad_attr_pending_transport`, `kntnt_ad_attr_is_bot`, `kntnt_ad_attr_attribution`, `kntnt_ad_attr_click_retention_days`, `kntnt_ad_attr_utm_options`, `kntnt_ad_attr_admin_tabs`, `kntnt_ad_attr_redirect_query_params`, `kntnt_ad_attr_click_id_capturers`, `kntnt_ad_attr_conversion_reporters`, `wp_untrash_post_status` (priority 20, for CPT only).
+**Filters (16):** `kntnt_ad_attr_has_consent`, `kntnt_ad_attr_redirect_method`, `kntnt_ad_attr_url_prefix`, `kntnt_ad_attr_cookie_lifetime`, `kntnt_ad_attr_dedup_seconds`, `kntnt_ad_attr_pending_transport`, `kntnt_ad_attr_is_bot`, `kntnt_ad_attr_attribution`, `kntnt_ad_attr_click_retention_days`, `kntnt_ad_attr_utm_options`, `kntnt_ad_attr_admin_tabs`, `kntnt_ad_attr_redirect_query_params`, `kntnt_ad_attr_click_id_capturers`, `kntnt_ad_attr_conversion_reporters`, `kntnt_ad_attr_delete_cookies`, `wp_untrash_post_status` (priority 20, for CPT only).
 
 **Actions (5):** `kntnt_ad_attr_click` (hash, target_url, campaign_data — fires for all non-bot clicks), `kntnt_ad_attr_conversion` (trigger from form plugin), `kntnt_ad_attr_conversion_recorded` (attributions, context — fires after DB write), `kntnt_ad_attr_admin_tab_{$tab}` (custom tab rendering), `kntnt_ad_attr_daily_cleanup` (cron).
 
@@ -195,3 +195,5 @@ All specs are in `docs/`. Read the relevant doc before implementing a feature:
 - The `kntnt_ad_attr_click` action fires for all non-bot clicks regardless of consent state, enabling companion plugins to capture platform-specific parameters even before consent is resolved.
 - Admin page is registered under Tools (`add_management_page`), not as a top-level menu item.
 - CSV export uses POST with its own nonce (`kntnt_ad_attr_export`) and reconstructs GET filter params from POST data for `Campaign_List_Table` compatibility.
+- The global `kntnt_ad_attribution_delete_cookies()` function (v1.7.0) is defined in `kntnt-ad-attribution.php` after `Plugin::get_instance()`. CMP plugins call it from server-side opt-out hooks to expire HttpOnly cookies. The cookie list is filterable via `kntnt_ad_attr_delete_cookies`.
+- `Conversion_Handler` requires consent=true before reading the `_ad_clicks` cookie (ePrivacy Art. 5(3)). Both consent=false and consent=null abort without attribution.

@@ -780,13 +780,13 @@ The `build-release-zip.sh` script creates a clean distribution ZIP by removing d
 ./build-release-zip.sh --output ~/Desktop/custom-name.zip
 
 # Build from a git tag → zip in /tmp
-./build-release-zip.sh --tag 1.6.0 --output /tmp
+./build-release-zip.sh --tag 1.7.0 --output /tmp
 
 # Build from a git tag, create a new GitHub release, and upload
-./build-release-zip.sh --tag 1.6.0 --create
+./build-release-zip.sh --tag 1.7.0 --create
 
 # Build from a git tag and upload to an existing GitHub release
-./build-release-zip.sh --tag 1.6.0 --update
+./build-release-zip.sh --tag 1.7.0 --update
 
 # Show full usage
 ./build-release-zip.sh --help

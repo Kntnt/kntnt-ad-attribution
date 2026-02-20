@@ -44,21 +44,17 @@ add_filter( 'kntnt_ad_attr_has_consent', function(): ?bool {
 
 ## PHP: Server-Side Cookie Deletion on Opt-Out
 
-The `_ad_clicks` cookie is set with the `HttpOnly` flag, preventing consent plugins from deleting it via client-side JavaScript. Use Real Cookie Banner's server-side opt-out hook:
+The `_ad_clicks` and `_ad_last_conv` cookies are set with the `HttpOnly` flag, preventing consent plugins from deleting them via client-side JavaScript. Use the plugin's `kntnt_ad_attribution_delete_cookies()` function from Real Cookie Banner's server-side opt-out hook:
 
 ```php
 add_action( 'RCB/OptOut/ByHttpCookie', function ( string $name, string $host ): void {
-    if ( $name === '_ad_clicks' ) {
-        setcookie( '_ad_clicks', '', [
-            'expires'  => 1,
-            'path'     => '/',
-            'secure'   => true,
-            'httponly'  => true,
-            'samesite' => 'Lax',
-        ] );
+    if ( $name === '_ad_clicks' || $name === '_ad_last_conv' ) {
+        kntnt_ad_attribution_delete_cookies();
     }
 }, 10, 2 );
 ```
+
+The function expires both `_ad_clicks` and `_ad_last_conv` (and any add-on cookies registered via the `kntnt_ad_attr_delete_cookies` filter) with the correct cookie attributes.
 
 ## JavaScript Consent Interface
 

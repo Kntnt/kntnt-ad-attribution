@@ -10,6 +10,7 @@ declare(strict_types=1);
 
 use Kntnt\Ad_Attribution\Conversion_Handler;
 use Kntnt\Ad_Attribution\Cookie_Manager;
+use Kntnt\Ad_Attribution\Consent;
 use Kntnt\Ad_Attribution\Bot_Detector;
 use Kntnt\Ad_Attribution\Click_ID_Store;
 use Kntnt\Ad_Attribution\Queue;
@@ -22,22 +23,24 @@ use Tests\Helpers\TestFactory;
 /**
  * Creates a Conversion_Handler with fresh mocked dependencies.
  *
- * The Bot_Detector mock defaults to is_bot() => false so existing tests
- * don't need to configure it.
+ * The Bot_Detector mock defaults to is_bot() => false and the Consent mock
+ * defaults to check() => true so existing tests don't need to configure them.
  *
- * @return array{0: Conversion_Handler, 1: Mockery\MockInterface, 2: Mockery\MockInterface, 3: Mockery\MockInterface, 4: Mockery\MockInterface, 5: Mockery\MockInterface}
+ * @return array{0: Conversion_Handler, 1: Mockery\MockInterface, 2: Mockery\MockInterface, 3: Mockery\MockInterface, 4: Mockery\MockInterface, 5: Mockery\MockInterface, 6: Mockery\MockInterface}
  */
 function make_conversion_handler(): array {
     $cm  = Mockery::mock(Cookie_Manager::class);
+    $con = Mockery::mock(Consent::class);
     $bd  = Mockery::mock(Bot_Detector::class);
     $cis = Mockery::mock(Click_ID_Store::class);
     $q   = Mockery::mock(Queue::class);
     $qp  = Mockery::mock(Queue_Processor::class);
 
-    // Default: not a bot.
+    // Default: not a bot, consent granted.
     $bd->shouldReceive('is_bot')->andReturn(false)->byDefault();
+    $con->shouldReceive('check')->andReturn(true)->byDefault();
 
-    return [new Conversion_Handler($cm, $bd, $cis, $q, $qp), $cm, $bd, $cis, $q, $qp];
+    return [new Conversion_Handler($cm, $con, $bd, $cis, $q, $qp), $cm, $con, $bd, $cis, $q, $qp];
 }
 
 /**
@@ -45,7 +48,7 @@ function make_conversion_handler(): array {
  * Returns everything needed for the full conversion flow.
  */
 function setup_conversion_path(): array {
-    [$handler, $cm, $bd, $cis, $q, $qp] = make_conversion_handler();
+    [$handler, $cm, $con, $bd, $cis, $q, $qp] = make_conversion_handler();
 
     $hash1 = TestFactory::hash('conv-old');
     $hash2 = TestFactory::hash('conv-new');
@@ -88,7 +91,7 @@ function setup_conversion_path(): array {
     $_SERVER['HTTP_USER_AGENT'] = 'TestAgent';
     $_SERVER['REQUEST_URI']    = '/thank-you/';
 
-    return [$handler, $cm, $bd, $cis, $q, $qp, $wpdb, $hash1, $hash2, $now];
+    return [$handler, $cm, $con, $bd, $cis, $q, $qp, $wpdb, $hash1, $hash2, $now];
 }
 
 // ─── register() ───
@@ -118,12 +121,40 @@ describe('Conversion_Handler::handle_conversion()', function () {
     });
 
     it('returns early when request is from a bot', function () {
-        [$handler, $cm, $bd] = make_conversion_handler();
+        [$handler, $cm, $con, $bd] = make_conversion_handler();
 
         // Override the default to detect a bot.
         $bd->shouldReceive('is_bot')->andReturn(true);
 
         // Cookie should never be read.
+        $cm->shouldNotReceive('parse');
+
+        $handler->handle_conversion();
+
+        expect(true)->toBeTrue();
+    });
+
+    it('returns early when consent is false', function () {
+        [$handler, $cm, $con] = make_conversion_handler();
+
+        // Override the default to deny consent.
+        $con->shouldReceive('check')->andReturn(false);
+
+        // Cookie should never be read — ePrivacy Art. 5(3).
+        $cm->shouldNotReceive('parse');
+
+        $handler->handle_conversion();
+
+        expect(true)->toBeTrue();
+    });
+
+    it('returns early when consent is null (undetermined)', function () {
+        [$handler, $cm, $con] = make_conversion_handler();
+
+        // Override the default to undetermined consent.
+        $con->shouldReceive('check')->andReturn(null);
+
+        // Cookie should never be read — consent not confirmed.
         $cm->shouldNotReceive('parse');
 
         $handler->handle_conversion();
@@ -331,7 +362,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
     });
 
     it('filters to only valid hashes', function () {
-        [$handler, $cm, $bd, $cis, $q, $qp] = make_conversion_handler();
+        [$handler, $cm, $con, $bd, $cis, $q, $qp] = make_conversion_handler();
 
         $valid   = TestFactory::hash('valid');
         $invalid = TestFactory::hash('invalid');
@@ -372,7 +403,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
     });
 
     it('attributes 1.0 to latest click and 0.0 to older clicks', function () {
-        [$handler, $cm, $bd, $cis, $q, $qp] = make_conversion_handler();
+        [$handler, $cm, $con, $bd, $cis, $q, $qp] = make_conversion_handler();
 
         $hash_old = TestFactory::hash('old-click');
         $hash_new = TestFactory::hash('new-click');
@@ -420,7 +451,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
     });
 
     it('uses modified weights from attribution filter', function () {
-        [$handler, $cm, $bd, $cis, $q, $qp] = make_conversion_handler();
+        [$handler, $cm, $con, $bd, $cis, $q, $qp] = make_conversion_handler();
 
         $hash1 = TestFactory::hash('attr-1');
         $hash2 = TestFactory::hash('attr-2');
@@ -473,7 +504,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
     });
 
     it('wraps inserts in START TRANSACTION and COMMIT', function () {
-        [$handler, $cm, $bd, $cis, $q, $qp] = make_conversion_handler();
+        [$handler, $cm, $con, $bd, $cis, $q, $qp] = make_conversion_handler();
         $hash = TestFactory::hash('transaction');
         $now  = 1700000000;
 
@@ -507,7 +538,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
     });
 
     it('rolls back transaction on insert failure', function () {
-        [$handler, $cm, $bd, $cis, $q, $qp] = make_conversion_handler();
+        [$handler, $cm, $con, $bd, $cis, $q, $qp] = make_conversion_handler();
         $hash = TestFactory::hash('rollback');
         $now  = 1700000000;
 
@@ -544,7 +575,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
     });
 
     it('fires kntnt_ad_attr_conversion_recorded action', function () {
-        [$handler, $cm, $bd, $cis, $q, $qp] = make_conversion_handler();
+        [$handler, $cm, $con, $bd, $cis, $q, $qp] = make_conversion_handler();
         $hash = TestFactory::hash('recorded-action');
         $now  = 1700000000;
 
@@ -584,7 +615,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
     });
 
     it('does not enqueue when no reporters registered', function () {
-        [$handler, $cm, $bd, $cis, $q, $qp] = make_conversion_handler();
+        [$handler, $cm, $con, $bd, $cis, $q, $qp] = make_conversion_handler();
         $hash = TestFactory::hash('no-reporters');
         $now  = 1700000000;
 
@@ -620,7 +651,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
     });
 
     it('enqueues conversion reports for registered reporters', function () {
-        [$handler, $cm, $bd, $cis, $q, $qp] = make_conversion_handler();
+        [$handler, $cm, $con, $bd, $cis, $q, $qp] = make_conversion_handler();
         $hash = TestFactory::hash('reporter');
         $now  = 1700000000;
 
@@ -680,7 +711,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
     });
 
     it('passes correct arguments to reporter enqueue callback', function () {
-        [$handler, $cm, $bd, $cis, $q, $qp] = make_conversion_handler();
+        [$handler, $cm, $con, $bd, $cis, $q, $qp] = make_conversion_handler();
         $hash = TestFactory::hash('reporter-args');
         $now  = 1700000000;
 
@@ -738,7 +769,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
     });
 
     it('skips reporters with non-callable enqueue', function () {
-        [$handler, $cm, $bd, $cis, $q, $qp] = make_conversion_handler();
+        [$handler, $cm, $con, $bd, $cis, $q, $qp] = make_conversion_handler();
         $hash = TestFactory::hash('bad-reporter');
         $now  = 1700000000;
 

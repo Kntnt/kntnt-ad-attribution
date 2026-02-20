@@ -40,9 +40,9 @@ Destination (exactly one required):
 Examples:
   build-release-zip.sh --output .
   build-release-zip.sh --output ~/Desktop/custom-name.zip
-  build-release-zip.sh --tag 1.6.0 --output /tmp
-  build-release-zip.sh --tag 1.6.0 --create
-  build-release-zip.sh --tag 1.6.0 --update
+  build-release-zip.sh --tag 1.7.0 --output /tmp
+  build-release-zip.sh --tag 1.7.0 --create
+  build-release-zip.sh --tag 1.7.0 --update
 HELP
   exit "${1:-0}"
 }

@@ -75,10 +75,17 @@ function setup_happy_path(): array {
     // Step 9: bot check.
     $bd->shouldReceive('is_bot')->once()->andReturn(false);
 
-    // Step 10: gmdate for click insert.
+    // Step 10: consent check (moved before DB insert for dedup support).
+    $con->shouldReceive('check')->once()->andReturn(true);
+
+    // Step 10b: dedup — default dedup_seconds is 0, so parse() for dedup
+    // is not called. The kntnt_ad_attr_dedup_seconds filter fires via
+    // Brain Monkey's passthrough.
+
+    // Step 11: gmdate for click insert.
     Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
 
-    // Step 10: insert click record.
+    // Step 11: insert click record.
     $wpdb->shouldReceive('insert')->once()->andReturn(true);
 
     // Click ID capturers — none by default.
@@ -87,8 +94,7 @@ function setup_happy_path(): array {
     Functions\when('get_post_meta')->justReturn('existing');
     Functions\when('update_post_meta')->justReturn(true);
 
-    // Step 11: consent.
-    $con->shouldReceive('check')->once()->andReturn(true);
+    // Step 12: consent-aware cookie setting (reuses consent_state from step 10).
     $cm->shouldReceive('parse')->andReturn([]);
     $cm->shouldReceive('add')->andReturn([$hash => time()]);
     $cm->shouldReceive('set_clicks_cookie')->once();
@@ -280,6 +286,7 @@ describe('Click_Handler::handle_click()', function () {
         Functions\when('add_query_arg')->alias(fn ($args, $url) => $url);
 
         $bd->shouldReceive('is_bot')->andReturn(false);
+        $con->shouldReceive('check')->andReturn(true);
         Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
 
         // Verify insert receives the UTM fields.
@@ -294,7 +301,6 @@ describe('Click_Handler::handle_click()', function () {
             });
 
         Functions\when('get_post_meta')->justReturn('existing');
-        $con->shouldReceive('check')->andReturn(true);
         $cm->shouldReceive('parse')->andReturn([]);
         $cm->shouldReceive('add')->andReturn([$hash => time()]);
         $cm->shouldReceive('set_clicks_cookie')->once();
@@ -327,6 +333,7 @@ describe('Click_Handler::handle_click()', function () {
         Functions\when('add_query_arg')->alias(fn ($args, $url) => $url);
 
         $bd->shouldReceive('is_bot')->andReturn(false);
+        $con->shouldReceive('check')->andReturn(true);
         Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
 
         $wpdb->shouldReceive('insert')
@@ -338,7 +345,6 @@ describe('Click_Handler::handle_click()', function () {
             });
 
         Functions\when('get_post_meta')->justReturn('existing');
-        $con->shouldReceive('check')->andReturn(true);
         $cm->shouldReceive('parse')->andReturn([]);
         $cm->shouldReceive('add')->andReturn([$hash => time()]);
         $cm->shouldReceive('set_clicks_cookie')->once();
@@ -368,6 +374,7 @@ describe('Click_Handler::handle_click()', function () {
         Functions\when('wp_parse_str')->alias(function ($str, &$result) { parse_str($str, $result); });
         Functions\when('add_query_arg')->alias(fn ($args, $url) => $url);
         $bd->shouldReceive('is_bot')->andReturn(false);
+        $con->shouldReceive('check')->andReturn(true);
         Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
 
         $wpdb->shouldReceive('insert')
@@ -378,7 +385,6 @@ describe('Click_Handler::handle_click()', function () {
             });
 
         Functions\when('get_post_meta')->justReturn('existing');
-        $con->shouldReceive('check')->andReturn(true);
         $cm->shouldReceive('parse')->andReturn([]);
         $cm->shouldReceive('add')->andReturn([$hash => time()]);
         $cm->shouldReceive('set_clicks_cookie')->once();
@@ -413,12 +419,13 @@ describe('Click_Handler::handle_click()', function () {
         Functions\when('wp_parse_str')->alias(function ($str, &$result) { parse_str($str, $result); });
         Functions\when('add_query_arg')->alias(fn ($args, $url) => $url);
         $bd->shouldReceive('is_bot')->andReturn(false);
+
+        // Consent denied — checked before DB insert.
+        $con->shouldReceive('check')->once()->andReturn(false);
+
         Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
         $wpdb->shouldReceive('insert')->once()->andReturn(true);
         Functions\when('get_post_meta')->justReturn('existing');
-
-        // Consent denied.
-        $con->shouldReceive('check')->once()->andReturn(false);
 
         // Cookie methods should NOT be called.
         $cm->shouldNotReceive('parse');
@@ -448,12 +455,13 @@ describe('Click_Handler::handle_click()', function () {
         Functions\when('wp_parse_str')->alias(function ($str, &$result) { parse_str($str, $result); });
         Functions\when('add_query_arg')->alias(fn ($args, $url) => $url);
         $bd->shouldReceive('is_bot')->andReturn(false);
+
+        // Consent pending — checked before DB insert.
+        $con->shouldReceive('check')->once()->andReturn(null);
+
         Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
         $wpdb->shouldReceive('insert')->once()->andReturn(true);
         Functions\when('get_post_meta')->justReturn('existing');
-
-        // Consent pending.
-        $con->shouldReceive('check')->once()->andReturn(null);
 
         // Transport cookie should be set.
         $cm->shouldReceive('set_transport_cookie')->once()->with($hash);
@@ -482,11 +490,13 @@ describe('Click_Handler::handle_click()', function () {
         Functions\when('wp_parse_str')->alias(function ($str, &$result) { parse_str($str, $result); });
         Functions\when('add_query_arg')->alias(fn ($args, $url) => $url);
         $bd->shouldReceive('is_bot')->andReturn(false);
+
+        // Consent pending — checked before DB insert.
+        $con->shouldReceive('check')->once()->andReturn(null);
+
         Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
         $wpdb->shouldReceive('insert')->once()->andReturn(true);
         Functions\when('get_post_meta')->justReturn('existing');
-
-        $con->shouldReceive('check')->once()->andReturn(null);
 
         // Transport set to fragment via filter.
         Filters\expectApplied('kntnt_ad_attr_pending_transport')
@@ -571,6 +581,7 @@ describe('Click_Handler::handle_click()', function () {
         Functions\when('wp_parse_str')->alias(function ($str, &$result) { parse_str($str, $result); });
         Functions\when('add_query_arg')->alias(fn ($args, $url) => $url);
         $bd->shouldReceive('is_bot')->andReturn(false);
+        $con->shouldReceive('check')->andReturn(true);
         Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
         $wpdb->shouldReceive('insert')->once()->andReturn(true);
         Functions\when('get_post_meta')->justReturn('existing');
@@ -583,7 +594,6 @@ describe('Click_Handler::handle_click()', function () {
         // Assert store() called with correct args.
         $cis->shouldReceive('store')->once()->with($hash, 'google', 'abc123');
 
-        $con->shouldReceive('check')->andReturn(true);
         $cm->shouldReceive('parse')->andReturn([]);
         $cm->shouldReceive('add')->andReturn([$hash => time()]);
         $cm->shouldReceive('set_clicks_cookie')->once();
@@ -613,6 +623,7 @@ describe('Click_Handler::handle_click()', function () {
         Functions\when('wp_parse_str')->alias(function ($str, &$result) { parse_str($str, $result); });
         Functions\when('add_query_arg')->alias(fn ($args, $url) => $url);
         $bd->shouldReceive('is_bot')->andReturn(false);
+        $con->shouldReceive('check')->andReturn(true);
         Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
         $wpdb->shouldReceive('insert')->once()->andReturn(true);
         Functions\when('get_post_meta')->justReturn('existing');
@@ -624,7 +635,6 @@ describe('Click_Handler::handle_click()', function () {
         // store() should NOT be called — value too long.
         $cis->shouldNotReceive('store');
 
-        $con->shouldReceive('check')->andReturn(true);
         $cm->shouldReceive('parse')->andReturn([]);
         $cm->shouldReceive('add')->andReturn([$hash => time()]);
         $cm->shouldReceive('set_clicks_cookie')->once();
@@ -656,6 +666,7 @@ describe('Click_Handler::handle_click()', function () {
         Functions\when('wp_parse_str')->alias(function ($str, &$result) { parse_str($str, $result); });
         Functions\when('add_query_arg')->alias(fn ($args, $url) => $url);
         $bd->shouldReceive('is_bot')->andReturn(false);
+        $con->shouldReceive('check')->andReturn(true);
         Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
         $wpdb->shouldReceive('insert')->once()->andReturn(true);
 
@@ -671,7 +682,6 @@ describe('Click_Handler::handle_click()', function () {
                 return true;
             });
 
-        $con->shouldReceive('check')->andReturn(true);
         $cm->shouldReceive('parse')->andReturn([]);
         $cm->shouldReceive('add')->andReturn([$hash => time()]);
         $cm->shouldReceive('set_clicks_cookie')->once();
@@ -701,6 +711,7 @@ describe('Click_Handler::handle_click()', function () {
         Functions\when('wp_parse_str')->alias(function ($str, &$result) { parse_str($str, $result); });
         Functions\when('add_query_arg')->alias(fn ($args, $url) => $url);
         $bd->shouldReceive('is_bot')->andReturn(false);
+        $con->shouldReceive('check')->andReturn(true);
         Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
         $wpdb->shouldReceive('insert')->once()->andReturn(true);
 
@@ -708,7 +719,6 @@ describe('Click_Handler::handle_click()', function () {
         Functions\when('get_post_meta')->justReturn('existing_value');
         Functions\expect('update_post_meta')->never();
 
-        $con->shouldReceive('check')->andReturn(true);
         $cm->shouldReceive('parse')->andReturn([]);
         $cm->shouldReceive('add')->andReturn([$hash => time()]);
         $cm->shouldReceive('set_clicks_cookie')->once();
@@ -742,10 +752,10 @@ describe('Click_Handler::handle_click()', function () {
         Functions\when('add_query_arg')->alias(fn ($args, $url) => $url . '?' . http_build_query($args));
 
         $bd->shouldReceive('is_bot')->andReturn(false);
+        $con->shouldReceive('check')->andReturn(true);
         Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
         $wpdb->shouldReceive('insert')->once()->andReturn(true);
         Functions\when('get_post_meta')->justReturn('existing');
-        $con->shouldReceive('check')->andReturn(true);
         $cm->shouldReceive('parse')->andReturn([]);
         $cm->shouldReceive('add')->andReturn([$hash => time()]);
         $cm->shouldReceive('set_clicks_cookie')->once();
@@ -781,10 +791,10 @@ describe('Click_Handler::handle_click()', function () {
         Functions\when('wp_parse_url')->alias(fn ($url, $comp) => parse_url($url, $comp));
         Functions\when('add_query_arg')->alias(fn ($args, $url) => $url);
         $bd->shouldReceive('is_bot')->andReturn(false);
+        $con->shouldReceive('check')->andReturn(true);
         Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
         $wpdb->shouldReceive('insert')->once()->andReturn(true);
         Functions\when('get_post_meta')->justReturn('existing');
-        $con->shouldReceive('check')->andReturn(true);
         $cm->shouldReceive('parse')->andReturn([]);
         $cm->shouldReceive('add')->andReturn([$hash => time()]);
         $cm->shouldReceive('set_clicks_cookie')->once();
@@ -804,6 +814,209 @@ describe('Click_Handler::handle_click()', function () {
             'Kntnt\Ad_Attribution\Click_Handler::js_redirect',
             fn (string $url) => throw new ExitException('js-redirect'),
         );
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class);
+    });
+
+    it('skips DB insert on dedup hit when consent true and hash within dedup window', function () {
+        [$handler, $cm, $con, $bd, $cis] = make_click_handler();
+        $hash = TestFactory::hash('dedup-hit');
+        $now  = 1700000000;
+
+        Functions\expect('get_query_var')->once()->andReturn($hash);
+        $cm->shouldReceive('validate_hash')->andReturn(true);
+
+        $wpdb = TestFactory::wpdb();
+        $row  = (object) ['ID' => 10, 'target_post_id' => '20'];
+        $wpdb->shouldReceive('prepare')->andReturn('SQL');
+        $wpdb->shouldReceive('get_row')->once()->andReturn($row);
+        $GLOBALS['wpdb'] = $wpdb;
+
+        Functions\expect('get_permalink')->once()->andReturn('https://example.com/');
+        Functions\when('wp_parse_url')->alias(fn ($url, $comp) => parse_url($url, $comp));
+        Functions\when('wp_parse_str')->alias(function ($str, &$result) { parse_str($str, $result); });
+        Functions\when('add_query_arg')->alias(fn ($args, $url) => $url);
+        $bd->shouldReceive('is_bot')->andReturn(false);
+        Functions\when('time')->justReturn($now);
+
+        // Consent granted + dedup enabled.
+        $con->shouldReceive('check')->once()->andReturn(true);
+        Filters\expectApplied('kntnt_ad_attr_dedup_seconds')->once()->andReturn(3600);
+
+        // parse() is called twice: once in dedup check, once in set_cookie().
+        $cm->shouldReceive('parse')->andReturn([
+            $hash => $now - 1800,
+        ]);
+
+        // Dedup hit — DB insert should NOT happen.
+        $wpdb->shouldNotReceive('insert');
+
+        // Cookie should be refreshed with new timestamp.
+        $cm->shouldReceive('add')->once()->andReturn([$hash => $now]);
+        $cm->shouldReceive('set_clicks_cookie')->once();
+
+        Functions\expect('nocache_headers')->once();
+        Functions\expect('wp_redirect')->once()->andReturnUsing(fn () => throw new ExitException());
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class);
+    });
+
+    it('records click when consent true but hash outside dedup window', function () {
+        [$handler, $cm, $con, $bd, $cis] = make_click_handler();
+        $hash = TestFactory::hash('dedup-expired');
+        $now  = 1700000000;
+
+        Functions\expect('get_query_var')->once()->andReturn($hash);
+        $cm->shouldReceive('validate_hash')->andReturn(true);
+
+        $wpdb = TestFactory::wpdb();
+        $row  = (object) ['ID' => 10, 'target_post_id' => '20'];
+        $wpdb->shouldReceive('prepare')->andReturn('SQL');
+        $wpdb->shouldReceive('get_row')->once()->andReturn($row);
+        $GLOBALS['wpdb'] = $wpdb;
+
+        Functions\expect('get_permalink')->once()->andReturn('https://example.com/');
+        Functions\when('wp_parse_url')->alias(fn ($url, $comp) => parse_url($url, $comp));
+        Functions\when('wp_parse_str')->alias(function ($str, &$result) { parse_str($str, $result); });
+        Functions\when('add_query_arg')->alias(fn ($args, $url) => $url);
+        $bd->shouldReceive('is_bot')->andReturn(false);
+        Functions\when('time')->justReturn($now);
+
+        // Consent granted + dedup enabled.
+        $con->shouldReceive('check')->once()->andReturn(true);
+        Filters\expectApplied('kntnt_ad_attr_dedup_seconds')->once()->andReturn(3600);
+
+        // parse() called in dedup check and again in set_cookie().
+        // Hash from 5000 seconds ago (outside 3600 window) → not a dedup hit.
+        $cm->shouldReceive('parse')->andReturn([
+            $hash => $now - 5000,
+        ]);
+
+        // Not a dedup hit — insert should happen.
+        Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
+        $wpdb->shouldReceive('insert')->once()->andReturn(true);
+        Functions\when('get_post_meta')->justReturn('existing');
+
+        // Cookie set in consent handling at end.
+        $cm->shouldReceive('add')->andReturn([$hash => $now]);
+        $cm->shouldReceive('set_clicks_cookie')->once();
+
+        Functions\expect('nocache_headers')->once();
+        Functions\expect('wp_redirect')->once()->andReturnUsing(fn () => throw new ExitException());
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class);
+    });
+
+    it('records click when consent true, dedup enabled, but no existing cookie entry', function () {
+        [$handler, $cm, $con, $bd, $cis] = make_click_handler();
+        $hash = TestFactory::hash('dedup-no-cookie');
+        $now  = 1700000000;
+
+        Functions\expect('get_query_var')->once()->andReturn($hash);
+        $cm->shouldReceive('validate_hash')->andReturn(true);
+
+        $wpdb = TestFactory::wpdb();
+        $row  = (object) ['ID' => 10, 'target_post_id' => '20'];
+        $wpdb->shouldReceive('prepare')->andReturn('SQL');
+        $wpdb->shouldReceive('get_row')->once()->andReturn($row);
+        $GLOBALS['wpdb'] = $wpdb;
+
+        Functions\expect('get_permalink')->once()->andReturn('https://example.com/');
+        Functions\when('wp_parse_url')->alias(fn ($url, $comp) => parse_url($url, $comp));
+        Functions\when('wp_parse_str')->alias(function ($str, &$result) { parse_str($str, $result); });
+        Functions\when('add_query_arg')->alias(fn ($args, $url) => $url);
+        $bd->shouldReceive('is_bot')->andReturn(false);
+        Functions\when('time')->justReturn($now);
+
+        // Consent granted + dedup enabled.
+        $con->shouldReceive('check')->once()->andReturn(true);
+        Filters\expectApplied('kntnt_ad_attr_dedup_seconds')->once()->andReturn(3600);
+
+        // parse() called in dedup check and again in set_cookie().
+        // Empty cookie — hash not present → not a dedup hit.
+        $cm->shouldReceive('parse')->andReturn([]);
+
+        // No dedup hit — insert should happen.
+        Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
+        $wpdb->shouldReceive('insert')->once()->andReturn(true);
+        Functions\when('get_post_meta')->justReturn('existing');
+
+        $cm->shouldReceive('add')->andReturn([$hash => $now]);
+        $cm->shouldReceive('set_clicks_cookie')->once();
+
+        Functions\expect('nocache_headers')->once();
+        Functions\expect('wp_redirect')->once()->andReturnUsing(fn () => throw new ExitException());
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class);
+    });
+
+    it('records click when consent false even within dedup window', function () {
+        [$handler, $cm, $con, $bd, $cis] = make_click_handler();
+        $hash = TestFactory::hash('dedup-no-consent');
+
+        Functions\expect('get_query_var')->once()->andReturn($hash);
+        $cm->shouldReceive('validate_hash')->andReturn(true);
+
+        $wpdb = TestFactory::wpdb();
+        $row  = (object) ['ID' => 10, 'target_post_id' => '20'];
+        $wpdb->shouldReceive('prepare')->andReturn('SQL');
+        $wpdb->shouldReceive('get_row')->once()->andReturn($row);
+        $GLOBALS['wpdb'] = $wpdb;
+
+        Functions\expect('get_permalink')->once()->andReturn('https://example.com/');
+        Functions\when('wp_parse_url')->alias(fn ($url, $comp) => parse_url($url, $comp));
+        Functions\when('wp_parse_str')->alias(function ($str, &$result) { parse_str($str, $result); });
+        Functions\when('add_query_arg')->alias(fn ($args, $url) => $url);
+        $bd->shouldReceive('is_bot')->andReturn(false);
+
+        // Consent denied — dedup cannot read cookie, so click always recorded.
+        $con->shouldReceive('check')->once()->andReturn(false);
+
+        Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
+        $wpdb->shouldReceive('insert')->once()->andReturn(true);
+        Functions\when('get_post_meta')->justReturn('existing');
+
+        // No cookie operations since consent is false.
+        $cm->shouldNotReceive('parse');
+        $cm->shouldNotReceive('set_clicks_cookie');
+
+        Functions\expect('nocache_headers')->once();
+        Functions\expect('wp_redirect')->once()->andReturnUsing(fn () => throw new ExitException());
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class);
+    });
+
+    it('records click when consent null even within dedup window', function () {
+        [$handler, $cm, $con, $bd, $cis] = make_click_handler();
+        $hash = TestFactory::hash('dedup-null-consent');
+
+        Functions\expect('get_query_var')->once()->andReturn($hash);
+        $cm->shouldReceive('validate_hash')->andReturn(true);
+
+        $wpdb = TestFactory::wpdb();
+        $row  = (object) ['ID' => 10, 'target_post_id' => '20'];
+        $wpdb->shouldReceive('prepare')->andReturn('SQL');
+        $wpdb->shouldReceive('get_row')->once()->andReturn($row);
+        $GLOBALS['wpdb'] = $wpdb;
+
+        Functions\expect('get_permalink')->once()->andReturn('https://example.com/');
+        Functions\when('wp_parse_url')->alias(fn ($url, $comp) => parse_url($url, $comp));
+        Functions\when('wp_parse_str')->alias(function ($str, &$result) { parse_str($str, $result); });
+        Functions\when('add_query_arg')->alias(fn ($args, $url) => $url);
+        $bd->shouldReceive('is_bot')->andReturn(false);
+
+        // Consent undetermined — dedup cannot read cookie, so click always recorded.
+        $con->shouldReceive('check')->once()->andReturn(null);
+
+        Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
+        $wpdb->shouldReceive('insert')->once()->andReturn(true);
+        Functions\when('get_post_meta')->justReturn('existing');
+
+        // Transport cookie for pending consent.
+        $cm->shouldReceive('set_transport_cookie')->once()->with($hash);
+
+        Functions\expect('nocache_headers')->once();
+        Functions\expect('wp_redirect')->once()->andReturnUsing(fn () => throw new ExitException());
 
         expect(fn () => $handler->handle_click())->toThrow(ExitException::class);
     });

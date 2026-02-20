@@ -3,7 +3,7 @@
  * Plugin Name:       Kntnt Ad Attribution
  * Plugin URI:        https://github.com/Kntnt/kntnt-ad-attribution
  * Description:       Provides internal lead attribution for ad campaigns using first-party cookies and filterable last-click attribution.
- * Version:           1.6.0
+ * Version:           1.7.0
  * Author:            Kntnt Sweden AB
  * Author URI:        https://www.kntnt.com/
  * License:           GPL-2.0-or-later
@@ -60,3 +60,22 @@ Plugin::set_plugin_file( __FILE__ );
 
 // Initialize the plugin.
 Plugin::get_instance();
+
+/**
+ * Deletes the plugin's HttpOnly cookies.
+ *
+ * CMP plugins call this function from their server-side opt-out hook to
+ * expire `_ad_clicks` and `_ad_last_conv`. The cookie list is filterable
+ * via `kntnt_ad_attr_delete_cookies` so add-on plugins can append their
+ * own cookie names.
+ *
+ * @return void
+ * @since 1.7.0
+ */
+function kntnt_ad_attribution_delete_cookies(): void {
+
+	/** @var string[] $names Cookie names to delete. */
+	$names = apply_filters( 'kntnt_ad_attr_delete_cookies', [ '_ad_clicks', '_ad_last_conv' ] );
+
+	Plugin::get_instance()->cookie_manager->delete_cookies( $names );
+}

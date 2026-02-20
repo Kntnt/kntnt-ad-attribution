@@ -220,7 +220,24 @@ final class Click_Handler {
 		$now     = time();
 		$post_id = (int) $row->ID;
 
-		// Step 10: Extract per-click UTM fields from incoming parameters.
+		// Step 10: Check consent early — needed for click deduplication.
+		$consent_state = $this->consent->check();
+
+		// Step 10b: Click deduplication — skip DB insert when the same hash
+		// was already clicked within the dedup window and consent allows
+		// reading the cookie. Without consent we cannot read the cookie,
+		// so dedup is only possible when consent is granted.
+		$dedup_seconds = (int) apply_filters( 'kntnt_ad_attr_dedup_seconds', 0 );
+
+		if ( $consent_state === true && $dedup_seconds > 0 ) {
+			$existing = $this->cookie_manager->parse();
+			if ( isset( $existing[ $hash ] ) && ( $now - $existing[ $hash ] ) < $dedup_seconds ) {
+				$this->set_cookie( $hash, $now );
+				$this->redirect( $target_url );
+			}
+		}
+
+		// Step 11: Extract per-click UTM fields from incoming parameters.
 		$click_content = sanitize_text_field( $_GET['utm_content'] ?? '' )
 			?: sanitize_text_field( $_GET['mtm_content'] ?? '' );
 		$click_term    = sanitize_text_field( $_GET['utm_term'] ?? '' )
@@ -289,16 +306,14 @@ final class Click_Handler {
 			'utm_campaign' => get_post_meta( $post_id, '_utm_campaign', true ),
 		] );
 
-		// Step 11: Handle consent for cookie storage.
-		$consent_state = $this->consent->check();
-
+		// Step 12: Handle consent for cookie storage.
 		match ( $consent_state ) {
 			true  => $this->set_cookie( $hash, $now ),
 			false => null, // Consent denied — attribution lost for this visitor.
 			null  => $this->handle_pending_consent( $hash, $target_url ),
 		};
 
-		// Step 12: Redirect to the target page.
+		// Step 13: Redirect to the target page.
 		$this->redirect( $target_url );
 	}
 

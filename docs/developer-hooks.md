@@ -28,7 +28,7 @@ Cookie lifetime in days. Default: `90`. Affects the `_ad_clicks` cookie and the 
 
 **`kntnt_ad_attr_dedup_seconds`**
 
-Per-hash deduplication window in seconds. Default: `0` (deduplication disabled). When non-zero, each hash is independently checked against its last conversion timestamp. Automatically capped to `cookie_lifetime × DAY_IN_SECONDS`.
+Per-hash deduplication window in seconds. Default: `0` (deduplication disabled). Controls both click deduplication (in Click_Handler) and conversion deduplication (in Conversion_Handler). When non-zero, repeated clicks for the same hash within the window are silently deduplicated (cookie refreshed, no DB insert), and each hash's conversion is independently checked against its last conversion timestamp. Automatically capped to `cookie_lifetime × DAY_IN_SECONDS` for conversion dedup.
 
 **`kntnt_ad_attr_pending_transport`**
 
@@ -176,6 +176,23 @@ add_filter( 'kntnt_ad_attr_conversion_reporters', function ( array $reporters ):
     return $reporters;
 } );
 ```
+
+**`kntnt_ad_attr_delete_cookies`**
+
+Filters the list of cookie names expired by `kntnt_ad_attribution_delete_cookies()`. Default: `['_ad_clicks', '_ad_last_conv']`. Add-on plugins can append their own cookie names so they are all deleted in a single call from CMP opt-out hooks.
+
+```php
+add_filter( 'kntnt_ad_attr_delete_cookies', function ( array $names ): array {
+    $names[] = '_my_addon_cookie';
+    return $names;
+} );
+```
+
+## Global Functions
+
+**`kntnt_ad_attribution_delete_cookies()`**
+
+Expires the plugin's HttpOnly cookies so CMP plugins can delete them from server-side opt-out hooks. Calls `Cookie_Manager::delete_cookies()` with the cookie names from the `kntnt_ad_attr_delete_cookies` filter. See `docs/consent-example.md` for usage.
 
 ## Actions
 

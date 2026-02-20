@@ -205,4 +205,29 @@ final class Cookie_Manager {
 		return (bool) preg_match( self::HASH_PATTERN, $hash );
 	}
 
+	/**
+	 * Expires the given cookies so CMP plugins can delete HttpOnly cookies.
+	 *
+	 * Sets each cookie to an empty value with an expiry in the past.
+	 * Uses the same attributes (Path, Secure, HttpOnly, SameSite) as the
+	 * original cookies to ensure the browser matches and removes them.
+	 *
+	 * @param string[] $names Cookie names to delete.
+	 *
+	 * @return void
+	 * @since 1.7.0
+	 */
+	public function delete_cookies( array $names ): void {
+		$options = [
+			'expires'  => 1,
+			'path'     => '/',
+			'secure'   => true,
+			'httponly'  => true,
+			'samesite' => 'Lax',
+		];
+		foreach ( $names as $name ) {
+			setcookie( $name, '', $options );
+		}
+	}
+
 }

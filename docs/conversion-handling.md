@@ -6,6 +6,7 @@ Conversions are triggered via the action hook `kntnt_ad_attr_conversion` from th
 
 ```
 0. Bot check — reject automated requests (same Bot_Detector used by Click_Handler)
+0b. Consent check — reading the _ad_clicks cookie requires confirmed consent (true). Both denied (false) and undetermined (null) abort — no attribution possible without cookie access.
 1. Read the _ad_clicks cookie
 2. Validate and extract hash:timestamp pairs
 3. Filter out hashes that do not exist as published tracking URLs (CPT with post_status = publish)

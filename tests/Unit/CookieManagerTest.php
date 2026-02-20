@@ -445,3 +445,36 @@ describe('Cookie_Manager::validate_hash()', function () {
     });
 
 });
+
+// ─── delete_cookies() ───
+
+describe('Cookie_Manager::delete_cookies()', function () {
+
+    it('calls setcookie for each cookie name with past expiry', function () {
+        $called = [];
+
+        Functions\expect('setcookie')
+            ->twice()
+            ->andReturnUsing(function (string $name, string $value, array $options) use (&$called) {
+                $called[] = $name;
+                expect($value)->toBe('');
+                expect($options['expires'])->toBe(1);
+                expect($options['path'])->toBe('/');
+                expect($options['secure'])->toBeTrue();
+                expect($options['httponly'])->toBeTrue();
+                expect($options['samesite'])->toBe('Lax');
+                return true;
+            });
+
+        (new Cookie_Manager())->delete_cookies(['_ad_clicks', '_ad_last_conv']);
+
+        expect($called)->toBe(['_ad_clicks', '_ad_last_conv']);
+    });
+
+    it('handles empty array without calling setcookie', function () {
+        Functions\expect('setcookie')->never();
+
+        (new Cookie_Manager())->delete_cookies([]);
+    });
+
+});

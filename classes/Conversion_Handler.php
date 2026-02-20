@@ -34,6 +34,14 @@ final class Conversion_Handler {
 	private readonly Cookie_Manager $cookie_manager;
 
 	/**
+	 * Consent resolver for determining cookie read permission.
+	 *
+	 * @var Consent
+	 * @since 1.7.0
+	 */
+	private readonly Consent $consent;
+
+	/**
 	 * Bot detector for filtering automated requests.
 	 *
 	 * @var Bot_Detector
@@ -69,6 +77,7 @@ final class Conversion_Handler {
 	 * Initializes the conversion handler with its dependencies.
 	 *
 	 * @param Cookie_Manager  $cookie_manager  Cookie read operations.
+	 * @param Consent         $consent         Consent state resolution.
 	 * @param Bot_Detector    $bot_detector    Bot traffic detection.
 	 * @param Click_ID_Store  $click_id_store  Platform-specific click ID retrieval.
 	 * @param Queue           $queue           Async job queue.
@@ -76,8 +85,9 @@ final class Conversion_Handler {
 	 *
 	 * @since 1.0.0
 	 */
-	public function __construct( Cookie_Manager $cookie_manager, Bot_Detector $bot_detector, Click_ID_Store $click_id_store, Queue $queue, Queue_Processor $queue_processor ) {
+	public function __construct( Cookie_Manager $cookie_manager, Consent $consent, Bot_Detector $bot_detector, Click_ID_Store $click_id_store, Queue $queue, Queue_Processor $queue_processor ) {
 		$this->cookie_manager  = $cookie_manager;
+		$this->consent         = $consent;
 		$this->bot_detector    = $bot_detector;
 		$this->click_id_store  = $click_id_store;
 		$this->queue           = $queue;
@@ -109,6 +119,12 @@ final class Conversion_Handler {
 
 		// Reject automated requests to prevent fake conversions.
 		if ( $this->bot_detector->is_bot() ) {
+			return;
+		}
+
+		// Reading the _ad_clicks cookie requires confirmed consent under
+		// ePrivacy Article 5(3). Without consent, no attribution possible.
+		if ( $this->consent->check() !== true ) {
 			return;
 		}
 
