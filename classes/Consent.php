@@ -27,20 +27,15 @@ final class Consent {
 	/**
 	 * Checks the visitor's consent state.
 	 *
-	 * Resolution order:
-	 * 1. If a callback is registered on `kntnt_ad_attr_has_consent`,
-	 *    return whatever it provides (true, false, or null).
-	 * 2. Otherwise fall back to `kntnt_ad_attr_default_consent` (default true).
+	 * Returns whatever `kntnt_ad_attr_has_consent` provides. When no callback
+	 * is registered the default `null` (undetermined) is returned, which
+	 * activates the deferred consent transport mechanism.
 	 *
 	 * @return bool|null True = consent granted, false = denied, null = undetermined.
 	 * @since 1.0.0
 	 */
 	public function check(): ?bool {
-		if ( has_filter( 'kntnt_ad_attr_has_consent' ) ) {
-			return apply_filters( 'kntnt_ad_attr_has_consent', null );
-		}
-
-		return apply_filters( 'kntnt_ad_attr_default_consent', true );
+		return apply_filters( 'kntnt_ad_attr_has_consent', null );
 	}
 
 }

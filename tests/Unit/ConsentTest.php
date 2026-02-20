@@ -10,16 +10,10 @@ declare(strict_types=1);
 
 use Kntnt\Ad_Attribution\Consent;
 use Brain\Monkey\Functions;
-use Brain\Monkey\Filters;
 
 describe('Consent::check()', function () {
 
-    it('returns true when kntnt_ad_attr_has_consent filter returns true', function () {
-        Functions\expect('has_filter')
-            ->once()
-            ->with('kntnt_ad_attr_has_consent')
-            ->andReturn(true);
-
+    it('returns true when filter returns true', function () {
         Functions\expect('apply_filters')
             ->once()
             ->with('kntnt_ad_attr_has_consent', null)
@@ -28,12 +22,7 @@ describe('Consent::check()', function () {
         expect((new Consent())->check())->toBeTrue();
     });
 
-    it('returns false when kntnt_ad_attr_has_consent filter returns false', function () {
-        Functions\expect('has_filter')
-            ->once()
-            ->with('kntnt_ad_attr_has_consent')
-            ->andReturn(true);
-
+    it('returns false when filter returns false', function () {
         Functions\expect('apply_filters')
             ->once()
             ->with('kntnt_ad_attr_has_consent', null)
@@ -42,12 +31,7 @@ describe('Consent::check()', function () {
         expect((new Consent())->check())->toBeFalse();
     });
 
-    it('returns null when kntnt_ad_attr_has_consent filter returns null', function () {
-        Functions\expect('has_filter')
-            ->once()
-            ->with('kntnt_ad_attr_has_consent')
-            ->andReturn(true);
-
+    it('returns null when filter returns null', function () {
         Functions\expect('apply_filters')
             ->once()
             ->with('kntnt_ad_attr_has_consent', null)
@@ -56,32 +40,10 @@ describe('Consent::check()', function () {
         expect((new Consent())->check())->toBeNull();
     });
 
-    it('falls back to default_consent (true) when no has_consent filter registered', function () {
-        Functions\expect('has_filter')
-            ->once()
-            ->with('kntnt_ad_attr_has_consent')
-            ->andReturn(false);
+    it('defaults to null when no filter is registered', function () {
+        Functions\when('apply_filters')->returnArg(2);
 
-        Functions\expect('apply_filters')
-            ->once()
-            ->with('kntnt_ad_attr_default_consent', true)
-            ->andReturn(true);
-
-        expect((new Consent())->check())->toBeTrue();
-    });
-
-    it('returns false when no has_consent filter but default_consent returns false', function () {
-        Functions\expect('has_filter')
-            ->once()
-            ->with('kntnt_ad_attr_has_consent')
-            ->andReturn(false);
-
-        Functions\expect('apply_filters')
-            ->once()
-            ->with('kntnt_ad_attr_default_consent', true)
-            ->andReturn(false);
-
-        expect((new Consent())->check())->toBeFalse();
+        expect((new Consent())->check())->toBeNull();
     });
 
 });

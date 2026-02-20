@@ -4,28 +4,15 @@
 
 **`kntnt_ad_attr_has_consent`**
 
-Checks whether consent exists. Return `true` (yes), `false` (no), or `null` (undefined). Default: fallback to `kntnt_ad_attr_default_consent`.
+Checks whether the visitor has consented to marketing cookies. Return `true` (granted), `false` (denied), or `null` (undetermined). Default: `null`.
 
-Implementation logic in the `Consent` class:
+When no callback is registered, the default `null` activates the deferred consent transport mechanism (temporary `_aah_pending` cookie or URL fragment). Sites that don't need consent management should register a callback that returns `true`.
 
 ```php
 public function check(): ?bool {
-    if ( ! has_filter( 'kntnt_ad_attr_has_consent' ) ) {
-        // No consent plugin registered — use default
-        return apply_filters( 'kntnt_ad_attr_default_consent', true );
-    }
-
-    // Consent plugin registered — query it
-    // The filter MUST return true, false, or null
     return apply_filters( 'kntnt_ad_attr_has_consent', null );
 }
 ```
-
-Note: `has_filter()` checks if at least one callback is registered. If not, the plugin falls back to `default_consent` (which defaults to `true`). If yes, the filter is called with `null` as the initial value — the callback should return `true`, `false`, or `null`.
-
-**`kntnt_ad_attr_default_consent`**
-
-Fallback when no callback is registered on `has_consent`. Default: `true`. This means that sites without a consent plugin treat all visitors as having consented, which is correct if the site has no consent requirements.
 
 **`kntnt_ad_attr_redirect_method`**
 

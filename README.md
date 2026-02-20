@@ -301,7 +301,7 @@ The plugin uses a three-state consent model:
 
 Consent integration requires two parts: a **PHP filter** for server-side consent checks (at click time and when setting cookies via REST), and a **JavaScript override** for client-side deferred consent handling (when the visitor hasn't decided yet at the time of the click).
 
-If no filter callback is registered on `kntnt_ad_attr_has_consent`, the plugin falls back to `kntnt_ad_attr_default_consent` (default: `true`), which is appropriate for sites without consent requirements.
+When no filter callback is registered on `kntnt_ad_attr_has_consent`, the default `null` (undetermined) activates the deferred consent transport mechanism. Sites without consent requirements should register a callback that returns `true`.
 
 #### PHP: Server-side consent filter
 
@@ -403,7 +403,7 @@ Real Cookie Banner's `consentApi.consent()` method returns a Promise — it is a
 
 **`kntnt_ad_attr_has_consent`**
 
-Controls whether the plugin has consent to set cookies for the current visitor. Return `true` to allow cookies, `false` to block them, or `null` for undefined (triggers deferred consent transport). When no callback is registered, the plugin falls back to the value of `kntnt_ad_attr_default_consent`.
+Controls whether the plugin has consent to set cookies for the current visitor. Return `true` to allow cookies, `false` to block them, or `null` for undefined (triggers deferred consent transport). Default: `null`.
 
 > [!IMPORTANT]
 > Returning `false` when the visitor simply hasn't decided yet will silently prevent the deferred transport mechanism from activating. Make sure your implementation distinguishes "no decision yet" (`null`) from "actively denied" (`false`). See [Connecting a Cookie Consent Plugin](#connecting-a-cookie-consent-plugin) for a detailed example.
@@ -413,15 +413,6 @@ add_filter( 'kntnt_ad_attr_has_consent', function (): ?bool {
     // Your consent logic here — return true, false, or null
     return true;
 } );
-```
-
-**`kntnt_ad_attr_default_consent`**
-
-Controls the fallback consent behavior when no callback is registered on `kntnt_ad_attr_has_consent`. Default: `true` (cookies are set). This is appropriate for sites that do not have consent requirements.
-
-```php
-// Block cookies by default when no consent integration is configured
-add_filter( 'kntnt_ad_attr_default_consent', '__return_false' );
 ```
 
 **`kntnt_ad_attr_redirect_method`**
@@ -819,7 +810,7 @@ Requires `zip` and `msgfmt` (GNU gettext). With `--tag`: `git`. With `--update` 
 8. `Queue` — async job queue
 9. `Queue_Processor(Queue)` — queue job dispatcher
 10. `Click_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store)` — click processing & redirect
-11. `Conversion_Handler(Cookie_Manager, Click_ID_Store, Queue, Queue_Processor)` — conversion attribution
+11. `Conversion_Handler(Cookie_Manager, Bot_Detector, Click_ID_Store, Queue, Queue_Processor)` — conversion attribution
 12. `Cron(Click_ID_Store, Queue)` — scheduled cleanup tasks
 13. `Admin_Page(Queue)` — admin UI orchestration
 14. `Rest_Endpoint(Cookie_Manager, Consent)` — REST API routes

@@ -118,7 +118,7 @@ Consent is checked via the filter `kntnt_ad_attr_has_consent`. Three states:
 - **No (`false`)** — the visitor has declined.
 - **Undefined (`null`)** — the visitor has not yet made a decision.
 
-If no callback is registered, the plugin falls back to `kntnt_ad_attr_default_consent` (default `true`), which covers sites without consent requirements.
+When no callback is registered, the default `null` (undetermined) activates the deferred consent transport mechanism. Sites without consent requirements should register a callback that returns `true`.
 
 **Consent = yes:** Set the `_ad_clicks` cookie. Redirect to target URL.
 
