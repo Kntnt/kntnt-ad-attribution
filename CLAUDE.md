@@ -167,6 +167,7 @@ All specs are in `docs/`. Read the relevant doc before implementing a feature:
 | `coding-standards.md` | Full coding standards reference |
 | `file-structure.md` | Project file organization, updates, translations |
 | `consent-example.md` | Complete consent integration example (Real Cookie Banner) |
+| `consent-scenarios.md` | Consent × dedup scenario matrix (click and conversion behavior per state) |
 | `testing-strategy.md` | Test suite architecture, specifications, implementation plan |
 
 ## Coding Standards
