@@ -67,7 +67,7 @@ All admin functions require `kntnt_ad_attr`. Assigned to Administrator and Edito
 ## Cookie Security
 
 - `_ad_clicks`: `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`. Lifetime configurable (default 90 days).
-- `_ad_last_conv`: `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`. Lifetime controlled by dedup_days (default 30 days, capped to cookie_lifetime).
+- `_ad_last_conv`: `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`. Lifetime equals `kntnt_ad_attr_dedup_seconds` (default `0` -- cookie not written when dedup is disabled). Capped to `cookie_lifetime * DAY_IN_SECONDS`.
 - `_aah_pending`: **Not** `HttpOnly` (the client script must read it), `Secure`, `SameSite=Lax`, `Path=/`. Lifetime: 60 seconds.
 
 ## Error Handling

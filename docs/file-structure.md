@@ -21,9 +21,8 @@ kntnt-ad-attribution/
 │   ├── Consent.php               ← Three-state consent check logic
 │   ├── Bot_Detector.php          ← User-Agent filtering, robots.txt rule
 │   ├── Rest_Endpoint.php         ← REST API (set-cookie with rate limiting, search-posts)
-│   ├── Admin_Page.php            ← Tools page with tab navigation, URL CRUD, CSV export
-│   ├── Url_List_Table.php        ← WP_List_Table for the URLs tab
-│   ├── Campaign_List_Table.php   ← WP_List_Table for the Campaigns tab
+│   ├── Admin_Page.php            ← Tools page with merged view, URL CRUD, CSV export
+│   ├── Campaign_List_Table.php   ← WP_List_Table for campaign reporting
 │   ├── Csv_Exporter.php          ← CSV export with locale-aware formatting
 │   ├── Utm_Options.php           ← Predefined UTM source/medium options (filterable)
 │   ├── Cron.php                  ← Daily cleanup job, target page warnings
@@ -39,12 +38,13 @@ kntnt-ad-attribution/
 │   └── admin.js                  ← Admin: select2, page selector, UTM field auto-fill
 ├── css/
 │   └── admin.css                 ← Admin: styling for tabs, page selector, list tables
-├── tests/                        ← Integration test scripts (gitignored, local only)
-│   ├── test-v150-required-fields.sh
-│   ├── test-v150-click-recording.sh
-│   ├── test-v150-last-click-attribution.sh
-│   ├── test-v150-campaigns-aggregation.sh
-│   └── test-v150-csv-export.sh
+├── tests/                        ← Test suite (see docs/testing-strategy.md)
+│   ├── bootstrap.php
+│   ├── Pest.php
+│   ├── Helpers/
+│   ├── Unit/                    ← PHP unit tests (Pest + Brain Monkey)
+│   ├── JS/                      ← JavaScript unit tests (Vitest + happy-dom)
+│   └── Integration/             ← End-to-end tests (Bash + curl + Playground)
 ├── docs/                         ← Technical specifications
 │   ├── architecture.md
 │   ├── click-handling.md
@@ -58,7 +58,9 @@ kntnt-ad-attribution/
 │   ├── security.md
 │   ├── coding-standards.md
 │   ├── file-structure.md
-│   └── consent-example.md
+│   ├── consent-example.md
+│   ├── consent-scenarios.md
+│   └── testing-strategy.md
 └── languages/
     ├── kntnt-ad-attribution.pot          ← Translation template
     └── kntnt-ad-attribution-sv_SE.po     ← Swedish translation source

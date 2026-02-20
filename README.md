@@ -333,25 +333,19 @@ Note the `consentGiven` check: `wp_rcb_consent_given()` returns `cookieOptIn: fa
 
 #### PHP: Server-side cookie deletion on opt-out
 
-The `_ad_clicks` cookie is set with the `HttpOnly` flag for security, which prevents consent plugins from deleting it via client-side JavaScript. If your consent plugin provides a server-side hook for cookie deletion, use it to expire the cookie when consent is revoked.
+The `_ad_clicks` and `_ad_last_conv` cookies are set with the `HttpOnly` flag for security, which prevents consent plugins from deleting them via client-side JavaScript. The plugin provides a global function `kntnt_ad_attribution_delete_cookies()` that expires all plugin cookies with the correct attributes. Call it from your consent plugin's server-side opt-out hook.
 
 **Example with Real Cookie Banner:**
 
 ```php
 add_action( 'RCB/OptOut/ByHttpCookie', function ( string $name, string $host ): void {
-    if ( $name === '_ad_clicks' ) {
-        setcookie( '_ad_clicks', '', [
-            'expires'  => 1,
-            'path'     => '/',
-            'secure'   => true,
-            'httponly'  => true,
-            'samesite' => 'Lax',
-        ] );
+    if ( $name === '_ad_clicks' || $name === '_ad_last_conv' ) {
+        kntnt_ad_attribution_delete_cookies();
     }
 }, 10, 2 );
 ```
 
-This hook fires during the REST request that Real Cookie Banner makes when the visitor revokes consent, allowing the `HttpOnly` cookie to be expired server-side. For other consent plugins, consult their documentation for an equivalent server-side opt-out hook or event.
+The function expires `_ad_clicks` and `_ad_last_conv` (and any add-on cookies registered via the `kntnt_ad_attr_delete_cookies` filter). This hook fires during the REST request that Real Cookie Banner makes when the visitor revokes consent. For other consent plugins, consult their documentation for an equivalent server-side opt-out hook or event.
 
 #### JavaScript: Client-side deferred consent
 
@@ -603,6 +597,28 @@ Default:
 ]
 ```
 
+**`kntnt_ad_attr_delete_cookies`**
+
+Filters the list of cookie names expired by `kntnt_ad_attribution_delete_cookies()`. Default: `['_ad_clicks', '_ad_last_conv']`. Add-on plugins can append their own cookie names so they are all deleted in a single call from CMP opt-out hooks.
+
+```php
+add_filter( 'kntnt_ad_attr_delete_cookies', function ( array $names ): array {
+    $names[] = '_my_addon_cookie';
+    return $names;
+} );
+```
+
+#### Global Functions
+
+**`kntnt_ad_attribution_delete_cookies()`**
+
+Expires the plugin's HttpOnly cookies so CMP plugins can delete them from server-side opt-out hooks. Calls `Cookie_Manager::delete_cookies()` with the cookie names from the `kntnt_ad_attr_delete_cookies` filter. Defined in the main plugin file after `Plugin::get_instance()`. See [Connecting a Cookie Consent Plugin](#connecting-a-cookie-consent-plugin) for usage examples.
+
+```php
+// Example: call from a CMP opt-out hook
+kntnt_ad_attribution_delete_cookies();
+```
+
 #### Actions
 
 **`kntnt_ad_attr_admin_tab_{$tab}`**
@@ -658,12 +674,12 @@ Parameters:
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `$attributions` | `array<string, float>` | Hash => fractional attribution value (sums to 1.0). |
-| `$context` | `array` | Associative array with keys: `timestamp` (ISO 8601 UTC), `ip` (visitor IP), `user_agent` (visitor user-agent string), `page_url` (URL of the page where conversion occurred). |
+| `$context` | `array` | Associative array with keys: `timestamp` (ISO 8601 UTC), `ip` (visitor IP), `user_agent` (visitor user-agent string). |
 
 ```php
 add_action( 'kntnt_ad_attr_conversion_recorded', function ( array $attributions, array $context ): void {
     // $attributions = [ 'a1b2c3…' => 0.7, 'd4e5f6…' => 0.3 ]
-    // $context = [ 'timestamp' => '2025-02-15T14:30:00+00:00', 'ip' => '…', 'user_agent' => '…', 'page_url' => '…' ]
+    // $context = [ 'timestamp' => '2025-02-15T14:30:00+00:00', 'ip' => '…', 'user_agent' => '…' ]
 }, 10, 2 );
 ```
 
@@ -810,7 +826,7 @@ Requires `zip` and `msgfmt` (GNU gettext). With `--tag`: `git`. With `--update` 
 8. `Queue` — async job queue
 9. `Queue_Processor(Queue)` — queue job dispatcher
 10. `Click_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store)` — click processing & redirect
-11. `Conversion_Handler(Cookie_Manager, Bot_Detector, Click_ID_Store, Queue, Queue_Processor)` — conversion attribution
+11. `Conversion_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store, Queue, Queue_Processor)` — conversion attribution
 12. `Cron(Click_ID_Store, Queue)` — scheduled cleanup tasks
 13. `Admin_Page(Queue)` — admin UI orchestration
 14. `Rest_Endpoint(Cookie_Manager, Consent)` — REST API routes
@@ -988,6 +1004,8 @@ A comprehensive test strategy is documented in `docs/testing-strategy.md`, cover
 - The `kntnt_ad_attr_click` action fires for all non-bot clicks regardless of consent state, enabling companion plugins to capture platform-specific parameters even before consent is resolved.
 - Admin page is registered under Tools (`add_management_page`), not as a top-level menu item.
 - CSV export uses POST with its own nonce (`kntnt_ad_attr_export`) and reconstructs GET filter params from POST data for `Campaign_List_Table` compatibility.
+- The global `kntnt_ad_attribution_delete_cookies()` function (v1.7.0) is defined in `kntnt-ad-attribution.php` after `Plugin::get_instance()`. CMP plugins call it from server-side opt-out hooks to expire HttpOnly cookies. The cookie list is filterable via `kntnt_ad_attr_delete_cookies`.
+- `Conversion_Handler` requires `consent=true` before reading the `_ad_clicks` cookie (ePrivacy Art. 5(3)). Both `consent=false` and `consent=null` abort without attribution.
 
 ### Contributor FAQ
 

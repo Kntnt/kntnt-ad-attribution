@@ -77,18 +77,16 @@ wp_localize_script( 'kntnt-ad-attribution-admin', 'kntntAdAttrAdmin', [
 
 ```sql
 SELECT p.ID AS post_id,
-       c.hash,
+       pm_hash.meta_value AS hash,
        pm_target.meta_value AS target_post_id,
        pm_src.meta_value AS utm_source,
        pm_med.meta_value AS utm_medium,
        pm_camp.meta_value AS utm_campaign,
        COUNT(c.id) AS total_clicks,
        COALESCE(SUM(cv.fractional_conversion), 0) AS total_conversions
-FROM {prefix}kntnt_ad_attr_clicks c
+FROM {wpdb->posts} p
 INNER JOIN {wpdb->postmeta} pm_hash
-    ON pm_hash.meta_key = '_hash' AND pm_hash.meta_value = c.hash
-INNER JOIN {wpdb->posts} p
-    ON p.ID = pm_hash.post_id AND p.post_type = 'kntnt_ad_attr_url' AND p.post_status = 'publish'
+    ON pm_hash.post_id = p.ID AND pm_hash.meta_key = '_hash'
 INNER JOIN {wpdb->postmeta} pm_target
     ON pm_target.post_id = p.ID AND pm_target.meta_key = '_target_post_id'
 LEFT JOIN {wpdb->postmeta} pm_src
@@ -97,15 +95,19 @@ LEFT JOIN {wpdb->postmeta} pm_med
     ON pm_med.post_id = p.ID AND pm_med.meta_key = '_utm_medium'
 LEFT JOIN {wpdb->postmeta} pm_camp
     ON pm_camp.post_id = p.ID AND pm_camp.meta_key = '_utm_campaign'
+LEFT JOIN {prefix}kntnt_ad_attr_clicks c
+    ON c.hash = pm_hash.meta_value
 LEFT JOIN {prefix}kntnt_ad_attr_conversions cv
     ON cv.click_id = c.id
-WHERE c.clicked_at BETWEEN %s AND %s
+WHERE p.post_type = 'kntnt_ad_attr_url' AND p.post_status = 'publish'
 -- Additional WHERE clauses based on active filters
-GROUP BY c.hash, p.ID, pm_target.meta_value,
+GROUP BY p.ID, pm_hash.meta_value, pm_target.meta_value,
          pm_src.meta_value, pm_med.meta_value, pm_camp.meta_value
 ORDER BY total_clicks DESC
 LIMIT %d OFFSET %d
 ```
+
+Starting FROM posts ensures that tracking URLs with zero clicks are included in the list.
 
 **Trash view query** uses a simplified query without the clicks/conversions joins, since trashed URLs have no active traffic. It selects directly from the posts and postmeta tables with `post_status = 'trash'`.
 
@@ -117,7 +119,7 @@ LIMIT %d OFFSET %d
 
 ## CSV Export
 
-Button below the list table (visible only when conversion reporters are registered). Same query without LIMIT/OFFSET, streamed as `text/csv`.
+Button below the list table (visible on publish view). Same query without LIMIT/OFFSET, streamed as `text/csv`.
 
 **Character encoding:** UTF-8 with BOM (`\xEF\xBB\xBF`).
 

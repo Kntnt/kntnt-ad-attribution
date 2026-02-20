@@ -157,7 +157,7 @@ kntnt-ad-attribution/
 │   │   ├── WpStubs.php                 # Stub WP classes (WP_Post, WP_REST_*, WP_List_Table, etc.)
 │   │   └── TestFactory.php             # Factory methods for creating test doubles
 │   │
-│   ├── Unit/                           # Level 1: PHP unit tests (19 files)
+│   ├── Unit/                           # Level 1: PHP unit tests (18 files)
 │   │   ├── AdminPageTest.php
 │   │   ├── BotDetectorTest.php
 │   │   ├── CampaignListTableTest.php
@@ -175,7 +175,6 @@ kntnt-ad-attribution/
 │   │   ├── QueueTest.php
 │   │   ├── RestEndpointTest.php
 │   │   ├── UpdaterTest.php
-│   │   ├── UrlListTableTest.php
 │   │   └── UtmOptionsTest.php
 │   │
 │   ├── JS/                             # Level 1: JavaScript unit tests
@@ -402,15 +401,6 @@ The most complex class. Tests cover the full click flow:
 - `get_plugin_file()` throws if not set.
 - `authorize()` calls `wp_die()` when user lacks capability.
 - `deactivate()` clears cron hooks and flushes rewrite rules.
-
----
-
-#### Url_List_Table (`UrlListTableTest.php`)
-
-- `get_columns()` returns expected keys.
-- `get_sortable_columns()` returns expected keys.
-- `get_bulk_actions()` differs by view (All vs Trash).
-- SQL construction: UTM filter adds WHERE, search adds LIKE, trash status, orderby whitelist, order default.
 
 ---
 
@@ -826,11 +816,10 @@ curl ... | grep -i '^set-cookie:' || true
 | Rest_Endpoint | ~12 | rest-api |
 | Admin_Page | ~15 | admin-crud |
 | Csv_Exporter | ~7 | csv-export |
-| Url_List_Table | ~5 | admin-crud |
 | Campaign_List_Table | ~6 | campaign-report |
 | Utm_Options | ~3 | — |
 | Updater | ~4 | — |
 | Plugin | ~6 | activation |
 | pending-consent.js | ~16 | — |
 | admin.js | ~10 | — |
-| **Totals** | **~219 PHP + 28 JS** | **14 suites** |
+| **Totals** | **~214 PHP + 28 JS** | **14 suites** |
