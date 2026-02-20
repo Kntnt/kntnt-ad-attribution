@@ -818,6 +818,48 @@ describe('Click_Handler::handle_click()', function () {
         expect(fn () => $handler->handle_click())->toThrow(ExitException::class);
     });
 
+    it('does not check dedup cookie when dedup_seconds is 0 and consent is true', function () {
+        [$handler, $cm, $con, $bd, $cis] = make_click_handler();
+        $hash = TestFactory::hash('dedup-disabled');
+        $now  = 1700000000;
+
+        Functions\expect('get_query_var')->once()->andReturn($hash);
+        $cm->shouldReceive('validate_hash')->andReturn(true);
+
+        $wpdb = TestFactory::wpdb();
+        $row  = (object) ['ID' => 10, 'target_post_id' => '20'];
+        $wpdb->shouldReceive('prepare')->andReturn('SQL');
+        $wpdb->shouldReceive('get_row')->once()->andReturn($row);
+        $GLOBALS['wpdb'] = $wpdb;
+
+        Functions\expect('get_permalink')->once()->andReturn('https://example.com/');
+        Functions\when('wp_parse_url')->alias(fn ($url, $comp) => parse_url($url, $comp));
+        Functions\when('wp_parse_str')->alias(function ($str, &$result) { parse_str($str, $result); });
+        Functions\when('add_query_arg')->alias(fn ($args, $url) => $url);
+        $bd->shouldReceive('is_bot')->andReturn(false);
+        Functions\when('time')->justReturn($now);
+
+        // Consent granted but dedup disabled (default 0).
+        $con->shouldReceive('check')->once()->andReturn(true);
+        Filters\expectApplied('kntnt_ad_attr_dedup_seconds')->once()->andReturn(0);
+
+        Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
+        $wpdb->shouldReceive('insert')->once()->andReturn(true);
+        Functions\when('get_post_meta')->justReturn('existing');
+
+        // parse() should be called exactly once -- in set_cookie() for merging
+        // existing entries, NOT for dedup checking. The dedup branch is skipped
+        // entirely when dedup_seconds is 0.
+        $cm->shouldReceive('parse')->once()->andReturn([$hash => $now - 5000]);
+        $cm->shouldReceive('add')->once()->andReturn([$hash => $now]);
+        $cm->shouldReceive('set_clicks_cookie')->once();
+
+        Functions\expect('nocache_headers')->once();
+        Functions\expect('wp_redirect')->once()->andReturnUsing(fn () => throw new ExitException());
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class);
+    });
+
     it('skips DB insert on dedup hit when consent true and hash within dedup window', function () {
         [$handler, $cm, $con, $bd, $cis] = make_click_handler();
         $hash = TestFactory::hash('dedup-hit');

@@ -194,6 +194,59 @@ describe('Conversion_Handler::handle_conversion()', function () {
         expect(true)->toBeTrue();
     });
 
+    it('skips hash when click_id is not found in clicks table', function () {
+        [$handler, $cm, $con, $bd, $cis, $q, $qp] = make_conversion_handler();
+
+        $hash_missing = TestFactory::hash('no-click-id');
+        $hash_found   = TestFactory::hash('has-click-id');
+        $now          = 1700000000;
+
+        Functions\when('time')->justReturn($now);
+        Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
+
+        // Both hashes in cookie. hash_found is more recent.
+        $cm->shouldReceive('parse')->with('_ad_clicks')->once()->andReturn([
+            $hash_missing => $now - 7200,
+            $hash_found   => $now - 3600,
+        ]);
+
+        \Patchwork\redefine(
+            'Kntnt\Ad_Attribution\Post_Type::get_valid_hashes',
+            fn (array $hashes) => $hashes,
+        );
+
+        // Attribution gives full credit to the latest (hash_found).
+        // hash_missing gets 0.0 and is skipped by the value <= 0 check,
+        // so we test with a custom attribution that gives both hashes credit.
+        Filters\expectApplied('kntnt_ad_attr_attribution')
+            ->once()
+            ->andReturnUsing(fn ($attributions) => array_map(fn () => 0.5, $attributions));
+
+        $wpdb = TestFactory::wpdb();
+        $GLOBALS['wpdb'] = $wpdb;
+
+        $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
+        $wpdb->shouldReceive('prepare')->andReturn('SQL');
+
+        // First get_var for hash_missing returns null (click not found).
+        // Second get_var for hash_found returns a valid click ID.
+        $wpdb->shouldReceive('get_var')
+            ->twice()
+            ->andReturn(null, '42');
+
+        // Only one insert -- hash_missing is skipped because its click_id is null.
+        $wpdb->shouldReceive('insert')->once()->andReturn(true);
+        $wpdb->shouldReceive('query')->with('COMMIT')->once();
+
+        $_SERVER['REMOTE_ADDR']    = '127.0.0.1';
+        $_SERVER['HTTP_USER_AGENT'] = 'TestAgent';
+        $_SERVER['REQUEST_URI']    = '/';
+
+        $handler->handle_conversion();
+
+        expect(true)->toBeTrue();
+    });
+
     it('does not deduplicate when dedup_seconds is 0 (default)', function () {
         [$handler, $cm] = make_conversion_handler();
         $hash = TestFactory::hash('no-dedup');

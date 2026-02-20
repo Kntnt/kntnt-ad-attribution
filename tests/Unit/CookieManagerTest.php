@@ -477,4 +477,25 @@ describe('Cookie_Manager::delete_cookies()', function () {
         (new Cookie_Manager())->delete_cookies([]);
     });
 
+    it('deletes a single custom cookie name', function () {
+        $called = [];
+
+        Functions\expect('setcookie')
+            ->once()
+            ->andReturnUsing(function (string $name, string $value, array $options) use (&$called) {
+                $called[] = $name;
+                expect($value)->toBe('');
+                expect($options['expires'])->toBe(1);
+                expect($options['path'])->toBe('/');
+                expect($options['secure'])->toBeTrue();
+                expect($options['httponly'])->toBeTrue();
+                expect($options['samesite'])->toBe('Lax');
+                return true;
+            });
+
+        (new Cookie_Manager())->delete_cookies(['_custom_cookie']);
+
+        expect($called)->toBe(['_custom_cookie']);
+    });
+
 });

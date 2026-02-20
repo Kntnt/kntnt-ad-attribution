@@ -231,6 +231,37 @@ describe('Rest_Endpoint::set_cookie()', function () {
         expect($response->get_data()['success'])->toBeFalse();
     });
 
+    it('returns failure when consent is null (undetermined)', function () {
+        [$endpoint, $cm, $con] = make_rest_endpoint();
+        $hash = TestFactory::hash('null-consent');
+
+        $_SERVER['REMOTE_ADDR'] = '10.0.0.1';
+
+        Functions\expect('get_transient')->once()->andReturn(0);
+        Functions\expect('set_transient')->once();
+
+        $cm->shouldReceive('validate_hash')->andReturn(true);
+
+        \Patchwork\redefine(
+            'Kntnt\Ad_Attribution\Post_Type::get_valid_hashes',
+            fn (array $hashes) => $hashes,
+        );
+
+        // Consent undetermined -- check returns null.
+        $con->shouldReceive('check')->once()->andReturn(null);
+
+        // Cookie methods should NOT be called.
+        $cm->shouldNotReceive('parse');
+        $cm->shouldNotReceive('set_clicks_cookie');
+
+        $request = new WP_REST_Request('POST', '/set-cookie');
+        $request->set_param('hashes', [$hash]);
+
+        $response = $endpoint->set_cookie($request);
+
+        expect($response->get_data()['success'])->toBeFalse();
+    });
+
     it('sets cookie on success', function () {
         [$endpoint, $cm, $con] = make_rest_endpoint();
         $hash = TestFactory::hash('success');
