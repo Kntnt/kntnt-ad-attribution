@@ -92,6 +92,7 @@ describe('Rest_Endpoint::set_cookie()', function () {
 
     afterEach(function () {
         unset($_SERVER['REMOTE_ADDR']);
+        unset($GLOBALS['wpdb']);
     });
 
     it('returns 429 when rate limit exceeded', function () {
@@ -163,8 +164,17 @@ describe('Rest_Endpoint::set_cookie()', function () {
         );
 
         $con->shouldReceive('check')->andReturn(true);
+
+        // DB lookup returns the original click timestamp.
+        $wpdb = TestFactory::wpdb();
+        $GLOBALS['wpdb'] = $wpdb;
+        $wpdb->shouldReceive('prepare')->once()->andReturn('SQL');
+        $wpdb->shouldReceive('get_results')->once()->andReturn([
+            (object) ['hash' => $valid_hash, 'ts' => '1700000000'],
+        ]);
+
         $cm->shouldReceive('parse')->andReturn([]);
-        $cm->shouldReceive('add')->andReturn([$valid_hash => 1700000000]);
+        $cm->shouldReceive('add')->with([], $valid_hash, 1700000000)->andReturn([$valid_hash => 1700000000]);
         $cm->shouldReceive('set_clicks_cookie')->once();
 
         $request = new WP_REST_Request('POST', '/set-cookie');
@@ -280,9 +290,17 @@ describe('Rest_Endpoint::set_cookie()', function () {
 
         $con->shouldReceive('check')->once()->andReturn(true);
 
-        // Cookie merge flow.
+        // DB lookup returns the original click timestamp.
+        $wpdb = TestFactory::wpdb();
+        $GLOBALS['wpdb'] = $wpdb;
+        $wpdb->shouldReceive('prepare')->once()->andReturn('SQL');
+        $wpdb->shouldReceive('get_results')->once()->andReturn([
+            (object) ['hash' => $hash, 'ts' => '1700000000'],
+        ]);
+
+        // Cookie merge flow — now includes the looked-up timestamp.
         $cm->shouldReceive('parse')->once()->andReturn([]);
-        $cm->shouldReceive('add')->once()->with([], $hash)->andReturn([$hash => 1700000000]);
+        $cm->shouldReceive('add')->once()->with([], $hash, 1700000000)->andReturn([$hash => 1700000000]);
         $cm->shouldReceive('set_clicks_cookie')->once()->with([$hash => 1700000000]);
 
         $request = new WP_REST_Request('POST', '/set-cookie');
@@ -313,13 +331,21 @@ describe('Rest_Endpoint::set_cookie()', function () {
 
         $con->shouldReceive('check')->once()->andReturn(true);
 
+        // DB lookup returns the original click timestamp for the new hash.
+        $wpdb = TestFactory::wpdb();
+        $GLOBALS['wpdb'] = $wpdb;
+        $wpdb->shouldReceive('prepare')->once()->andReturn('SQL');
+        $wpdb->shouldReceive('get_results')->once()->andReturn([
+            (object) ['hash' => $new_hash, 'ts' => '1700000000'],
+        ]);
+
         // Existing cookie has one entry.
         $cm->shouldReceive('parse')->once()->andReturn([$existing_hash => 1699999000]);
 
-        // add() is called once for each hash.
+        // add() is called with the looked-up timestamp.
         $cm->shouldReceive('add')
             ->once()
-            ->with([$existing_hash => 1699999000], $new_hash)
+            ->with([$existing_hash => 1699999000], $new_hash, 1700000000)
             ->andReturn([$existing_hash => 1699999000, $new_hash => 1700000000]);
 
         $cm->shouldReceive('set_clicks_cookie')

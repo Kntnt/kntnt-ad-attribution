@@ -297,10 +297,36 @@ final class Rest_Endpoint {
 			return new WP_REST_Response( [ 'success' => false ] );
 		}
 
-		// Merge new hashes into existing cookie entries.
+		// Look up the actual click timestamps from the database so the cookie
+		// entries match the DB records. Without this, time() would be used,
+		// causing a mismatch when Conversion_Handler looks up clicks by hash
+		// and clicked_at.
+		global $wpdb;
+		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
+
+		$click_times = [];
+		if ( $hashes ) {
+			$placeholders = implode( ',', array_fill( 0, count( $hashes ), '%s' ) );
+			$rows = $wpdb->get_results( $wpdb->prepare(
+				"SELECT hash, UNIX_TIMESTAMP(clicked_at) AS ts
+				 FROM {$clicks_table}
+				 WHERE hash IN ({$placeholders})
+				 ORDER BY clicked_at DESC",
+				...$hashes,
+			) );
+
+			// Keep only the most recent click per hash.
+			foreach ( $rows as $row ) {
+				$click_times[ $row->hash ] ??= (int) $row->ts;
+			}
+		}
+
+		// Merge new hashes into existing cookie entries using the original
+		// click timestamps. Falls back to time() for hashes without a click
+		// record (defensive — should not happen in practice).
 		$entries = $this->cookie_manager->parse();
 		foreach ( $hashes as $hash ) {
-			$entries = $this->cookie_manager->add( $entries, $hash );
+			$entries = $this->cookie_manager->add( $entries, $hash, $click_times[ $hash ] ?? null );
 		}
 		$this->cookie_manager->set_clicks_cookie( $entries );
 
