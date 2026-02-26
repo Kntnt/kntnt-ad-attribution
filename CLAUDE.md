@@ -17,6 +17,7 @@ All machine-readable names use `kntnt-ad-attr` (hyphens) / `kntnt_ad_attr` (unde
 | Custom tables | `{prefix}kntnt_ad_attr_clicks`, `{prefix}kntnt_ad_attr_conversions`, `{prefix}kntnt_ad_attr_click_ids`, `{prefix}kntnt_ad_attr_queue` |
 | Capability | `kntnt_ad_attr` |
 | DB version option | `kntnt_ad_attr_version` |
+| Settings option | `kntnt_ad_attr_settings` |
 | Cron hooks | `kntnt_ad_attr_daily_cleanup`, `kntnt_ad_attr_process_queue` |
 | REST namespace | `kntnt-ad-attribution/v1` |
 | REST CPT base | `kntnt-ad-attr-urls` |
@@ -32,23 +33,26 @@ All machine-readable names use `kntnt-ad-attr` (hyphens) / `kntnt_ad_attr` (unde
 
 1. `Updater` — GitHub-based update checker
 2. `Migrator` — database migration runner
-3. `Post_Type` — CPT registration
-4. `Cookie_Manager` — cookie read/write operations (stateless)
-5. `Consent` — three-state consent resolution
-6. `Bot_Detector` — User-Agent filtering
-7. `Click_ID_Store` — platform-specific click ID storage (v1.2.0)
-8. `Queue` — async job queue (v1.2.0)
-9. `Queue_Processor(Queue)` — queue job dispatcher (v1.2.0)
-10. `Click_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store)` — click processing & redirect
-11. `Conversion_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store, Queue, Queue_Processor)` — conversion attribution
-12. `Cron(Click_ID_Store, Queue)` — scheduled cleanup tasks
-13. `Admin_Page(Queue)` — admin UI orchestration
-14. `Rest_Endpoint(Cookie_Manager, Consent)` — REST API routes
+3. `Settings` — centralized settings manager
+4. `Logger(Settings)` — shared diagnostic logger
+5. `Post_Type` — CPT registration
+6. `Cookie_Manager` — cookie read/write operations (stateless)
+7. `Consent` — three-state consent resolution
+8. `Bot_Detector` — User-Agent filtering
+9. `Click_ID_Store` — platform-specific click ID storage (v1.2.0)
+10. `Queue(Settings)` — async job queue with configurable retry (v1.2.0)
+11. `Queue_Processor(Queue, Logger)` — queue job dispatcher (v1.2.0)
+12. `Click_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store)` — click processing & redirect
+13. `Conversion_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store, Queue, Queue_Processor)` — conversion attribution
+14. `Cron(Click_ID_Store, Queue, Logger)` — scheduled cleanup tasks
+15. `Admin_Page(Queue, Queue_Processor)` — admin UI orchestration
+16. `Rest_Endpoint(Cookie_Manager, Consent)` — REST API routes
+17. `Settings_Page(Settings, Logger)` — settings page under Settings > Ad Attribution
 
 **Lifecycle files (not autoloaded):**
 
-- `install.php` — activation: grants `kntnt_ad_attr` capability to admin/editor, runs Migrator, registers CPT, flushes rewrite rules, schedules daily cron.
-- `uninstall.php` — complete data removal. Runs outside the plugin's namespace (no autoloader available), uses raw `$wpdb` queries. Drops all four custom tables, deletes CPT posts, removes capability from all roles, clears options/transients/cron.
+- `install.php` — activation: grants `kntnt_ad_attr` capability to admin/editor, runs Migrator, registers CPT, flushes rewrite rules, schedules daily cron, creates log directory (`wp-content/uploads/kntnt-ad-attribution/`) with `.htaccess` protection.
+- `uninstall.php` — complete data removal. Runs outside the plugin's namespace (no autoloader available), uses raw `$wpdb` queries. Drops all four custom tables, deletes CPT posts, removes capability from all roles, clears options (including `kntnt_ad_attr_settings`)/transients/cron, removes log directory.
 - `Plugin::deactivate()` — clears cron (`kntnt_ad_attr_daily_cleanup` and `kntnt_ad_attr_process_queue`), transients, and rewrite rules. Preserves data.
 
 **Migrator pattern:** Version-based migrations in `migrations/X.Y.Z.php`. Each file returns `function(\wpdb $wpdb): void`. Migrator compares `kntnt_ad_attr_version` option with the plugin header version on `plugins_loaded` and runs pending files in order.
@@ -57,7 +61,13 @@ All machine-readable names use `kntnt-ad-attr` (hyphens) / `kntnt_ad_attr` (unde
 
 **Shared utility methods (v1.5.1):** `Post_Type::get_valid_hashes(array $hashes)` returns hashes with published tracking URL posts (used by both `Conversion_Handler` and `Rest_Endpoint`). `Post_Type::get_distinct_meta_values(string $meta_key)` returns sorted distinct meta values for filter dropdowns (used by `Campaign_List_Table`).
 
-**Adapter infrastructure (v1.2.0):** Click_ID_Store, Queue, and Queue_Processor are instantiated in Plugin constructor and injected into Click_Handler (Click_ID_Store), Conversion_Handler (Consent, Bot_Detector, Click_ID_Store, Queue, Queue_Processor), Cron (Click_ID_Store, Queue), and Admin_Page (Queue). Two new filters: `kntnt_ad_attr_click_id_capturers` and `kntnt_ad_attr_conversion_reporters`. Queue processing via `kntnt_ad_attr_process_queue` cron hook. If no adapters are registered, zero overhead.
+**Adapter infrastructure (v1.2.0):** Click_ID_Store, Queue, and Queue_Processor are instantiated in Plugin constructor and injected into Click_Handler (Click_ID_Store), Conversion_Handler (Consent, Bot_Detector, Click_ID_Store, Queue, Queue_Processor), Cron (Click_ID_Store, Queue, Logger), and Admin_Page (Queue, Queue_Processor). Two new filters: `kntnt_ad_attr_click_id_capturers` and `kntnt_ad_attr_conversion_reporters`. Queue processing via `kntnt_ad_attr_process_queue` cron hook. If no adapters are registered, zero overhead.
+
+**Settings and Logger (v1.8.0):** `Settings` manages plugin-wide configuration in a single `kntnt_ad_attr_settings` option with filter-based defaults: cookie_lifetime, dedup_seconds, enable_logging, log file sizes, and queue retry parameters. `Logger` writes timestamped diagnostic entries to `wp-content/uploads/kntnt-ad-attribution/kntnt-ad-attribution.log`, shared by core and add-on plugins. Log methods: `info(string $prefix, string $message)` and `error(string $prefix, string $message)`. File auto-rotation between configurable max/min KB limits. `Settings_Page` under Settings > Ad Attribution provides UI for all settings across three sections: Cookies, Logging, Queue (Retry).
+
+**Queue management UI (v1.8.0):** `Queue_List_Table` (WP_List_Table subclass) displays pending/failed queue jobs with columns: Reporter, Description (label), Created, Next Retry, Attempts, Error. Row actions: "Run Now" (via `Queue_Processor::process_single()`) and "Delete" (via `Queue::delete()`). The `Queue::enqueue()` method accepts optional `label` and per-job `retry_params` (attempts_per_round, retry_delay, max_rounds, round_delay). Conversion reporters return structured items with `payload`, optional `label`, and optional `retry_params` keys.
+
+**Default date filter (v1.8.0):** `Campaign_List_Table::get_default_date_range()` computes the two most recent complete calendar weeks based on the WordPress "Week Starts On" setting. Used as the default when no date filter is provided.
 
 **Merged admin view (v1.6.0):** The admin page is a single merged view (no tabs). Add-on plugins can still register custom views via `kntnt_ad_attr_admin_tabs` filter; when `?tab=<slug>` is passed, the `kntnt_ad_attr_admin_tab_{$tab}` action fires for rendering.
 
@@ -87,7 +97,7 @@ The test suite has three levels. See `docs/testing-strategy.md` for full details
 
 | Level | Framework | Tests | What it covers |
 |-------|-----------|-------|----------------|
-| PHP unit | Pest + Brain Monkey + Mockery | 225 | Individual class methods in isolation |
+| PHP unit | Pest + Brain Monkey + Mockery | 252 | Individual class methods in isolation |
 | JS unit | Vitest + happy-dom | 28 | `pending-consent.js` and `admin.js` |
 | Integration | Bash + curl + WordPress Playground | 14 suites | End-to-end flows: click, conversion, admin, REST, cron |
 

@@ -99,8 +99,8 @@ After the `kntnt_ad_attr_conversion_recorded` action fires, the handler checks f
 1. **Look up click IDs** — calls `Click_ID_Store::get_for_hashes()` to retrieve platform-specific click IDs for all attributed hashes.
 2. **Look up campaign data** — calls `get_campaign_data()` to retrieve Source/Medium/Campaign from postmeta and Content/Term/Id/Group from the clicks table for all attributed hashes.
 3. **Build context** — assembles timestamp, IP, user-agent, and page URL.
-4. **Call each reporter's `enqueue` callback** — passes `$attributions`, `$click_ids`, `$campaigns`, and `$context`. Each reporter returns an array of payloads.
-5. **Enqueue payloads** — each payload is JSON-encoded and inserted into the `kntnt_ad_attr_queue` table with `status = 'pending'`.
+4. **Call each reporter's `enqueue` callback** — passes `$attributions`, `$click_ids`, `$campaigns`, and `$context`. Each reporter returns an array of structured items (with `payload`, optional `label`, and optional `retry_params` keys) or raw payload arrays (legacy format).
+5. **Enqueue items** — each item's payload is JSON-encoded and inserted into the `kntnt_ad_attr_queue` table with `status = 'pending'`, along with optional `label` and per-job retry parameters.
 6. **Schedule processing** — calls `Queue_Processor::schedule()` to trigger a cron event.
 
 If no reporters are registered (default), the filter returns `[]`, the `! empty()` check exits immediately, and no database queries are made against the click_ids or queue tables.
@@ -113,5 +113,7 @@ Queue jobs are processed by `Queue_Processor::process()`, triggered by the `kntn
 2. Dequeues up to 10 pending jobs (atomically updated to `processing` status).
 3. For each job, finds the matching reporter by `$item->reporter` key and calls its `process` callback with the decoded payload.
 4. On success (`true`): marks the job as `done`.
-5. On failure (`false` or exception): increments the attempt counter. After 3 failed attempts, the job is marked as `failed` with the error message. Otherwise, it returns to `pending` for retry.
+5. On failure (`false` or exception): increments the attempt counter. Retry logic is configurable per job via `attempts_per_round`, `retry_delay`, `max_rounds`, and `round_delay` (with global defaults from `Settings`). When all rounds are exhausted, the job is marked as `failed` with the error message. Otherwise, it returns to `pending` with a `retry_after` timestamp.
 6. If pending jobs remain after processing, schedules another cron run.
+
+Individual jobs can be run immediately via `Queue_Processor::process_single()` or deleted via `Queue::delete()`, both accessible from the admin queue management UI.

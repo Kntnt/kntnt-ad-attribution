@@ -14,6 +14,8 @@ kntnt-ad-attribution/
 │   ├── Plugin.php                ← Singleton, component wiring, hooks, path helpers
 │   ├── Updater.php               ← GitHub release update checker
 │   ├── Migrator.php              ← Database migration runner (version-based)
+│   ├── Settings.php              ← Centralized settings manager (kntnt_ad_attr_settings option)
+│   ├── Logger.php                ← Shared diagnostic logger (file-based, credential masking)
 │   ├── Post_Type.php             ← CPT registration, shared query helpers (v1.5.1)
 │   ├── Click_Handler.php         ← Ad click processing, redirect, parameter forwarding
 │   ├── Conversion_Handler.php    ← Conversion attribution, reporter enqueueing
@@ -23,16 +25,19 @@ kntnt-ad-attribution/
 │   ├── Rest_Endpoint.php         ← REST API (set-cookie with rate limiting, search-posts)
 │   ├── Admin_Page.php            ← Tools page with merged view, URL CRUD, CSV export
 │   ├── Campaign_List_Table.php   ← WP_List_Table for campaign reporting
+│   ├── Queue_List_Table.php      ← WP_List_Table for queue job management (run/delete)
 │   ├── Csv_Exporter.php          ← CSV export with locale-aware formatting
 │   ├── Utm_Options.php           ← Predefined UTM source/medium options (filterable)
+│   ├── Settings_Page.php         ← Settings page under Settings > Ad Attribution
 │   ├── Cron.php                  ← Daily cleanup job, target page warnings
 │   ├── Click_ID_Store.php        ← Platform-specific click ID storage (v1.2.0)
-│   ├── Queue.php                 ← Async job queue with retry logic (v1.2.0)
+│   ├── Queue.php                 ← Async job queue with configurable per-job retry (v1.2.0)
 │   └── Queue_Processor.php       ← Queue processing via cron (v1.2.0)
 ├── migrations/
 │   ├── 1.0.0.php                 ← No-op (legacy stats table, superseded by 1.5.0)
 │   ├── 1.2.0.php                 ← Click ID and queue tables
-│   └── 1.5.0.php                 ← Clicks + conversions tables, drops stats
+│   ├── 1.5.0.php                 ← Clicks + conversions tables, drops stats
+│   └── 1.8.0.php                 ← Per-job retry columns and index on queue table
 ├── js/
 │   ├── pending-consent.js        ← Client-side: pending consent, sessionStorage, REST call
 │   └── admin.js                  ← Admin: select2, page selector, UTM field auto-fill

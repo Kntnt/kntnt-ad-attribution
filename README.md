@@ -26,7 +26,10 @@ The plugin does not hardcode integrations with any specific consent management o
 - **Filterable last-click attribution** — by default, the most recently clicked ad receives full conversion credit. The attribution model is filterable via the `kntnt_ad_attr_attribution` hook, enabling multi-touch models (e.g. time-weighted, linear, position-based).
 - **Deduplication** — per-hash deduplication prevents the same tracking URL from generating duplicate conversions within a configurable window. Disabled by default (`kntnt_ad_attr_dedup_seconds` = 0); when enabled, each hash is independently checked against its last conversion timestamp.
 - **Cookie size management** — stores a maximum of 50 ad hashes per visitor, pruning the oldest when the limit is reached.
-- **Campaign dashboard** — view clicks, conversions, and fractional attribution per campaign for any date range, with CSV export. Individual click records include per-click Content, Term, Id, and Group fields.
+- **Campaign dashboard** — view clicks, conversions, and fractional attribution per campaign for any date range, with CSV export. The date filter defaults to the two most recent complete calendar weeks (based on the WordPress "Week Starts On" setting). Individual click records include per-click Content, Term, Id, and Group fields.
+- **Settings page** — configure cookie lifetime, deduplication, diagnostic logging, and queue retry parameters under **Settings > Ad Attribution**. Filter-based defaults can be overridden via the UI.
+- **Shared diagnostic logging** — timestamped log file at `wp-content/uploads/kntnt-ad-attribution/kntnt-ad-attribution.log`, shared by core and add-on plugins. Controlled via the settings page. Sensitive values are masked.
+- **Queue management UI** — view, retry, and delete individual queue jobs from the Report Queue table on the admin page.
 - **Three-state consent model** — integrates with any cookie consent plugin via a filter hook, supporting yes, no, and undefined consent states with a transport mechanism for deferred consent.
 - **Platform-agnostic form support** — integrates with any form plugin via an action hook.
 - **Bot detection** — filters out known bots via User-Agent matching and `robots.txt` rules.
@@ -503,8 +506,16 @@ Reporter definition:
 | Key | Type | Description |
 |-----|------|-------------|
 | `label` | `string` | Name for logging and admin UI. |
-| `enqueue` | `callable` | Called at conversion time. Signature: `( array $attributions, array $click_ids, array $campaigns, array $context ) → array` of payloads. |
+| `enqueue` | `callable` | Called at conversion time. Signature: `( array $attributions, array $click_ids, array $campaigns, array $context ) → array` of items. Each item is either a structured array with `payload`, optional `label`, and optional `retry_params` keys, or a raw payload array (legacy format). |
 | `process` | `callable` | Called by queue processor. Signature: `( array $payload ) → bool`. |
+
+Structured item keys:
+
+| Key | Type | Required | Description |
+|-----|------|----------|-------------|
+| `payload` | `array` | Yes | The data to be processed by the `process` callback. |
+| `label` | `string` | No | Human-readable description shown in the queue management UI. |
+| `retry_params` | `array` | No | Per-job retry overrides: `attempts_per_round`, `retry_delay`, `max_rounds`, `round_delay`. |
 
 See [Adapter System](#adapter-system) for full examples and documentation.
 
@@ -704,7 +715,7 @@ The core handles sanitization, validation, and storage. Click IDs are stored in 
 
 A *conversion reporter* tells the core how to report a conversion to an external service. Each reporter defines two callbacks:
 
-- **`enqueue`** — called synchronously at conversion time. Receives attribution data, click IDs, campaign data, and context. Returns an array of payloads to be queued for async processing.
+- **`enqueue`** — called synchronously at conversion time. Receives attribution data, click IDs, campaign data, and context. Returns an array of structured items (with `payload`, optional `label`, and optional `retry_params` keys) to be queued for async processing.
 - **`process`** — called asynchronously by the queue processor. Receives a single payload and performs the actual API call. Returns `true` on success, `false` on failure.
 
 ```php
@@ -712,19 +723,22 @@ add_filter( 'kntnt_ad_attr_conversion_reporters', function ( array $reporters ):
     $reporters['my_platform'] = [
         'label'   => 'My Platform',
         'enqueue' => function ( array $attributions, array $click_ids, array $campaigns, array $context ): array {
-            // Build payloads for each attributed hash that has a click ID.
-            $payloads = [];
+            // Build structured items for each attributed hash that has a click ID.
+            $items = [];
             foreach ( $attributions as $hash => $value ) {
                 $click_id = $click_ids[ $hash ]['my_platform'] ?? '';
                 if ( $click_id !== '' ) {
-                    $payloads[] = [
-                        'click_id'  => $click_id,
-                        'value'     => $value,
-                        'timestamp' => $context['timestamp'],
+                    $items[] = [
+                        'payload' => [
+                            'click_id'  => $click_id,
+                            'value'     => $value,
+                            'timestamp' => $context['timestamp'],
+                        ],
+                        'label' => sprintf( 'click %s', substr( $click_id, 0, 12 ) . '…' ),
                     ];
                 }
             }
-            return $payloads;
+            return $items;
         },
         'process' => function ( array $payload ): bool {
             // Make HTTP request to external API.
@@ -738,7 +752,7 @@ add_filter( 'kntnt_ad_attr_conversion_reporters', function ( array $reporters ):
 } );
 ```
 
-The core handles infrastructure: storage, queueing, retry logic (max 3 attempts), and daily cleanup. The adapter handles only the platform-specific logic. A simple click-ID capturer requires ~5 lines of PHP. A full HTTP-based reporter requires ~60 lines. Integrations that require Composer dependencies (e.g. Google Ads API client library) should be implemented as separate plugins.
+The core handles infrastructure: storage, queueing, configurable retry logic, and daily cleanup. The adapter handles only the platform-specific logic. A simple click-ID capturer requires ~5 lines of PHP. A full HTTP-based reporter requires ~60 lines. Integrations that require Composer dependencies (e.g. Google Ads API client library) should be implemented as separate plugins.
 
 If no adapters are registered, the plugin behaves identically to previous versions — the adapter infrastructure adds zero overhead.
 
@@ -818,26 +832,29 @@ Requires `zip` and `msgfmt` (GNU gettext). With `--tag`: `git`. With `--update` 
 
 1. `Updater` — GitHub-based update checker
 2. `Migrator` — database migration runner
-3. `Post_Type` — CPT registration
-4. `Cookie_Manager` — cookie read/write operations (stateless)
-5. `Consent` — three-state consent resolution
-6. `Bot_Detector` — User-Agent filtering
-7. `Click_ID_Store` — platform-specific click ID storage
-8. `Queue` — async job queue
-9. `Queue_Processor(Queue)` — queue job dispatcher
-10. `Click_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store)` — click processing & redirect
-11. `Conversion_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store, Queue, Queue_Processor)` — conversion attribution
-12. `Cron(Click_ID_Store, Queue)` — scheduled cleanup tasks
-13. `Admin_Page(Queue)` — admin UI orchestration
-14. `Rest_Endpoint(Cookie_Manager, Consent)` — REST API routes
+3. `Settings` — centralized settings manager
+4. `Logger(Settings)` — shared diagnostic logger
+5. `Post_Type` — CPT registration
+6. `Cookie_Manager` — cookie read/write operations (stateless)
+7. `Consent` — three-state consent resolution
+8. `Bot_Detector` — User-Agent filtering
+9. `Click_ID_Store` — platform-specific click ID storage
+10. `Queue(Settings)` — async job queue with configurable retry
+11. `Queue_Processor(Queue, Logger)` — queue job dispatcher
+12. `Click_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store)` — click processing & redirect
+13. `Conversion_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store, Queue, Queue_Processor)` — conversion attribution
+14. `Cron(Click_ID_Store, Queue, Logger)` — scheduled cleanup tasks
+15. `Admin_Page(Queue, Queue_Processor)` — admin UI orchestration
+16. `Rest_Endpoint(Cookie_Manager, Consent)` — REST API routes
+17. `Settings_Page(Settings, Logger)` — settings page under Settings > Ad Attribution
 
 **Data model:** Tracking URLs are stored as a custom post type `kntnt_ad_attr_url` (with meta `_hash`, `_target_post_id`, `_utm_source`, `_utm_medium`, `_utm_campaign`). Individual clicks are stored in `{prefix}kntnt_ad_attr_clicks` with per-click UTM fields. Conversions are stored in `{prefix}kntnt_ad_attr_conversions` linked to specific clicks via `click_id`, with fractional attribution values. Platform-specific click IDs are stored in `{prefix}kntnt_ad_attr_click_ids` with composite PK `(hash, platform)`. Async report jobs are stored in `{prefix}kntnt_ad_attr_queue` with auto-increment PK and status-based processing.
 
-**Lifecycle:** On activation, the plugin grants capabilities, runs migrations, registers rewrite rules, and schedules cron. On deactivation, it clears cron, transients, and rewrite rules but preserves all data. On uninstallation, it performs complete data removal — dropping all custom tables, deleting CPT posts, removing capabilities, and clearing options.
+**Lifecycle:** On activation, the plugin grants capabilities, runs migrations, registers rewrite rules, schedules cron, and creates the log directory (`wp-content/uploads/kntnt-ad-attribution/`) with `.htaccess` protection. On deactivation, it clears cron, transients, and rewrite rules but preserves all data. On uninstallation, it performs complete data removal — dropping all custom tables, deleting CPT posts, removing capabilities, clearing options (including `kntnt_ad_attr_settings`), and removing the log directory.
 
 **Migrator pattern:** Version-based migrations in `migrations/X.Y.Z.php`. Each file returns `function(\wpdb $wpdb): void`. The Migrator compares `kntnt_ad_attr_version` option with the plugin header version on `plugins_loaded` and runs pending files in order.
 
-**Daily cron job** (`kntnt_ad_attr_daily_cleanup`) performs six cleanup tasks: deleting expired click records and their linked conversions, removing orphaned conversions, cleaning up records for deleted tracking URLs, detecting tracking URLs whose target pages no longer exist (setting them to draft with an admin notice), cleaning up old click IDs, and purging completed/failed queue jobs.
+**Daily cron job** (`kntnt_ad_attr_daily_cleanup`) performs six cleanup tasks: deleting expired click records and their linked conversions, removing orphaned conversions, cleaning up records for deleted tracking URLs, detecting tracking URLs whose target pages no longer exist (setting them to draft with an admin notice), cleaning up old click IDs, and purging completed/failed queue jobs. Diagnostic output is written to the shared log file via `Logger`.
 
 ### File Structure
 
@@ -853,6 +870,8 @@ kntnt-ad-attribution/
 │   ├── Plugin.php                ← Singleton, component wiring, hooks, path helpers
 │   ├── Updater.php               ← GitHub release update checker
 │   ├── Migrator.php              ← Database migration runner (version-based)
+│   ├── Settings.php              ← Centralized settings manager (kntnt_ad_attr_settings option)
+│   ├── Logger.php                ← Shared diagnostic logger (file-based, credential masking)
 │   ├── Post_Type.php             ← CPT registration, shared query helpers
 │   ├── Click_Handler.php         ← Ad click processing, redirect, parameter forwarding
 │   ├── Conversion_Handler.php    ← Conversion attribution, reporter enqueueing
@@ -862,16 +881,19 @@ kntnt-ad-attribution/
 │   ├── Rest_Endpoint.php         ← REST API (set-cookie with rate limiting, search-posts)
 │   ├── Admin_Page.php            ← Tools page with merged view, URL CRUD, CSV export
 │   ├── Campaign_List_Table.php   ← WP_List_Table for the campaign list with bulk actions
+│   ├── Queue_List_Table.php      ← WP_List_Table for queue job management (run/delete)
 │   ├── Csv_Exporter.php          ← CSV export with locale-aware formatting
 │   ├── Utm_Options.php           ← Predefined UTM source/medium options (filterable)
+│   ├── Settings_Page.php         ← Settings page under Settings > Ad Attribution
 │   ├── Cron.php                  ← Daily cleanup job, target page warnings
 │   ├── Click_ID_Store.php        ← Platform-specific click ID storage
-│   ├── Queue.php                 ← Async job queue with retry logic
+│   ├── Queue.php                 ← Async job queue with configurable per-job retry
 │   └── Queue_Processor.php       ← Queue processing via cron
 ├── migrations/
 │   ├── 1.0.0.php                 ← No-op (legacy stats table, superseded by 1.5.0)
 │   ├── 1.2.0.php                 ← Click ID and queue tables
-│   └── 1.5.0.php                 ← Clicks + conversions tables, drops stats
+│   ├── 1.5.0.php                 ← Clicks + conversions tables, drops stats
+│   └── 1.8.0.php                 ← Per-job retry columns and index on queue table
 ├── js/
 │   ├── pending-consent.js        ← Client-side: pending consent, sessionStorage, REST call
 │   └── admin.js                  ← Admin: select2, page selector, UTM field auto-fill
@@ -916,6 +938,7 @@ All machine-readable names use `kntnt-ad-attr` (hyphens) / `kntnt_ad_attr` (unde
 | Custom tables | `{prefix}kntnt_ad_attr_clicks`, `{prefix}kntnt_ad_attr_conversions`, `{prefix}kntnt_ad_attr_click_ids`, `{prefix}kntnt_ad_attr_queue` |
 | Capability | `kntnt_ad_attr` |
 | DB version option | `kntnt_ad_attr_version` |
+| Settings option | `kntnt_ad_attr_settings` |
 | Cron hooks | `kntnt_ad_attr_daily_cleanup`, `kntnt_ad_attr_process_queue` |
 | REST namespace | `kntnt-ad-attribution/v1` |
 | REST CPT base | `kntnt-ad-attr-urls` |

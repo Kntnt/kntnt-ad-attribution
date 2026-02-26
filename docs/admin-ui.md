@@ -69,7 +69,7 @@ wp_localize_script( 'kntnt-ad-attribution-admin', 'kntntAdAttrAdmin', [
 ] );
 ```
 
-**Filtering:** Search field + dropdown filter per UTM dimension. Date range filter with two HTML5 `<input type="date">` fields. Page reload.
+**Filtering:** Search field + dropdown filter per UTM dimension. Date range filter with two HTML5 `<input type="date">` fields — defaults to the two most recent complete calendar weeks based on the WordPress "Week Starts On" setting. Page reload.
 
 **Pagination:** Built into `WP_List_Table`. Default 20 rows (configurable via Screen Options).
 

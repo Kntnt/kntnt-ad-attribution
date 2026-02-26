@@ -11,6 +11,7 @@ All machine-readable names use `kntnt-ad-attr` (hyphens) / `kntnt_ad_attr` (unde
 | Custom tables | `{prefix}kntnt_ad_attr_clicks`, `{prefix}kntnt_ad_attr_conversions`, `{prefix}kntnt_ad_attr_click_ids`, `{prefix}kntnt_ad_attr_queue` |
 | Capability | `kntnt_ad_attr` |
 | DB version option | `kntnt_ad_attr_version` |
+| Settings option | `kntnt_ad_attr_settings` |
 | Cron hooks | `kntnt_ad_attr_daily_cleanup`, `kntnt_ad_attr_process_queue` |
 | REST namespace | `kntnt-ad-attribution/v1` |
 | REST CPT base | `kntnt-ad-attr-urls` |
@@ -155,20 +156,26 @@ The `kntnt_ad_attr_queue` table provides an asynchronous job queue for conversio
 
 ```sql
 CREATE TABLE {prefix}kntnt_ad_attr_queue (
-    id            BIGINT UNSIGNED  NOT NULL AUTO_INCREMENT,
-    reporter      VARCHAR(50)      NOT NULL,
-    payload       TEXT             NOT NULL,
-    status        VARCHAR(20)      NOT NULL DEFAULT 'pending',
-    attempts      TINYINT UNSIGNED NOT NULL DEFAULT 0,
-    created_at    DATETIME         NOT NULL,
-    processed_at  DATETIME         NULL,
-    error_message TEXT             NULL,
+    id                 BIGINT UNSIGNED  NOT NULL AUTO_INCREMENT,
+    reporter           VARCHAR(50)      NOT NULL,
+    payload            TEXT             NOT NULL,
+    status             VARCHAR(20)      NOT NULL DEFAULT 'pending',
+    attempts           TINYINT UNSIGNED NOT NULL DEFAULT 0,
+    created_at         DATETIME         NOT NULL,
+    processed_at       DATETIME         NULL,
+    error_message      TEXT             NULL,
+    retry_after        DATETIME         NULL,
+    label              VARCHAR(255)     NULL,
+    attempts_per_round TINYINT UNSIGNED NULL,
+    retry_delay        INT UNSIGNED     NULL,
+    max_rounds         TINYINT UNSIGNED NULL,
+    round_delay        INT UNSIGNED     NULL,
     PRIMARY KEY (id),
-    INDEX idx_status (status, created_at)
+    INDEX idx_status_retry (status, retry_after, created_at)
 ) {charset}
 ```
 
-Status transitions: `pending` → `processing` → `done` | `failed`. `status` is `VARCHAR(20)` instead of `ENUM` to avoid schema changes if new statuses are added. Jobs are retried up to 3 times before being marked as `failed`. Completed jobs are cleaned up after 30 days, failed jobs after 90 days.
+Status transitions: `pending` → `processing` → `done` | `failed`. `status` is `VARCHAR(20)` instead of `ENUM` to avoid schema changes if new statuses are added. Retry logic is configurable per job via `attempts_per_round`, `retry_delay`, `max_rounds`, and `round_delay` columns (with global defaults from `Settings`). The `label` column stores a human-readable job description for the admin queue management UI. Completed jobs are cleaned up after 30 days, failed jobs after 90 days.
 
 ### Target URL — Dynamic Resolving
 

@@ -138,8 +138,18 @@ Each reporter definition is an associative array with three keys:
 | Key | Type | Description |
 |-----|------|-------------|
 | `label` | `string` | Name for logging and admin UI. |
-| `enqueue` | `callable` | Called at conversion time. Signature: `( array $attributions, array $click_ids, array $campaigns, array $context ) → array`. Returns array of payloads. |
+| `enqueue` | `callable` | Called at conversion time. Signature: `( array $attributions, array $click_ids, array $campaigns, array $context ) → array`. Returns array of structured items. |
 | `process` | `callable` | Called by queue processor. Signature: `( array $payload ) → bool`. Returns `true` on success, `false` on failure. |
+
+Each item returned by `enqueue` is either a structured array or a raw payload (legacy format):
+
+| Key | Type | Required | Description |
+|-----|------|----------|-------------|
+| `payload` | `array` | Yes | The data to be processed by the `process` callback. |
+| `label` | `string` | No | Human-readable description shown in the queue management UI. |
+| `retry_params` | `array` | No | Per-job retry overrides: `attempts_per_round`, `retry_delay`, `max_rounds`, `round_delay`. |
+
+If an item lacks a `payload` key, the entire array is treated as the raw payload (backwards compatible).
 
 `enqueue` callback parameters:
 
@@ -153,20 +163,23 @@ add_filter( 'kntnt_ad_attr_conversion_reporters', function ( array $reporters ):
     $reporters['my_platform'] = [
         'label'   => 'My Platform',
         'enqueue' => function ( array $attributions, array $click_ids, array $campaigns, array $context ): array {
-            $payloads = [];
+            $items = [];
             foreach ( $attributions as $hash => $value ) {
                 $click_id = $click_ids[ $hash ]['my_platform'] ?? '';
                 if ( $click_id === '' ) {
                     continue;
                 }
-                $payloads[] = [
-                    'click_id'    => $click_id,
-                    'value'       => $value,
-                    'campaign'    => $campaigns[ $hash ]['utm_campaign'] ?? '',
-                    'timestamp'   => $context['timestamp'],
+                $items[] = [
+                    'payload' => [
+                        'click_id'    => $click_id,
+                        'value'       => $value,
+                        'campaign'    => $campaigns[ $hash ]['utm_campaign'] ?? '',
+                        'timestamp'   => $context['timestamp'],
+                    ],
+                    'label' => sprintf( 'click %s', substr( $click_id, 0, 12 ) . '…' ),
                 ];
             }
-            return $payloads;
+            return $items;
         },
         'process' => function ( array $payload ): bool {
             // Call external API with $payload.
