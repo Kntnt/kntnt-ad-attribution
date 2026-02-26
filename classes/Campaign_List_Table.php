@@ -468,6 +468,32 @@ final class Campaign_List_Table extends WP_List_Table {
 	}
 
 	/**
+	 * Calculates the default date range: the two most recent complete calendar weeks.
+	 *
+	 * Uses the WordPress "Week Starts On" setting to determine week boundaries.
+	 * Integer arithmetic only — no strtotime — so gmdate can be stubbed in tests.
+	 *
+	 * @return array{start: string, end: string} ISO-8601 date strings.
+	 * @since 1.8.0
+	 */
+	private function get_default_date_range(): array {
+		$start_of_week  = (int) get_option( 'start_of_week', 0 );
+		$today_dow      = (int) gmdate( 'w' ); // 0=Sun … 6=Sat
+		$days_into_week = ( $today_dow - $start_of_week + 7 ) % 7;
+
+		// Start of the current (possibly incomplete) week, as Unix timestamp.
+		$today              = (int) gmdate( 'U' );
+		$today_midnight     = $today - ( $today % 86400 );
+		$current_week_start = $today_midnight - $days_into_week * 86400;
+
+		// Two complete weeks ending the day before the current week started.
+		$default_end   = gmdate( 'Y-m-d', $current_week_start - 86400 );
+		$default_start = gmdate( 'Y-m-d', $current_week_start - 14 * 86400 );
+
+		return [ 'start' => $default_start, 'end' => $default_end ];
+	}
+
+	/**
 	 * Returns sanitized filter parameters from the current request.
 	 *
 	 * Used internally and exposed publicly so Csv_Exporter can access
@@ -480,10 +506,16 @@ final class Campaign_List_Table extends WP_List_Table {
 		$date_start = sanitize_text_field( wp_unslash( $_GET['date_start'] ?? '' ) );
 		$date_end   = sanitize_text_field( wp_unslash( $_GET['date_end'] ?? '' ) );
 
-		// Validate ISO-8601 date format; fall back to open-ended defaults.
+		// Validate ISO-8601 date format; fall back to two-week default.
 		$date_pattern = '/^\d{4}-\d{2}-\d{2}$/';
-		$date_start   = preg_match( $date_pattern, $date_start ) ? $date_start : '1970-01-01';
-		$date_end     = preg_match( $date_pattern, $date_end ) ? $date_end : '9999-12-31';
+		$valid_start  = preg_match( $date_pattern, $date_start );
+		$valid_end    = preg_match( $date_pattern, $date_end );
+
+		if ( ! $valid_start || ! $valid_end ) {
+			$defaults   = $this->get_default_date_range();
+			$date_start = $valid_start ? $date_start : $defaults['start'];
+			$date_end   = $valid_end ? $date_end : $defaults['end'];
+		}
 
 		return [
 			'date_start'   => $date_start,
@@ -672,9 +704,9 @@ final class Campaign_List_Table extends WP_List_Table {
 
 		echo '<div class="alignleft actions kntnt-ad-attr-filters">';
 
-		// Date range inputs.
-		$date_start_value = $params['date_start'] !== '1970-01-01' ? $params['date_start'] : '';
-		$date_end_value   = $params['date_end'] !== '9999-12-31' ? $params['date_end'] : '';
+		// Date range inputs — always show the active interval.
+		$date_start_value = $params['date_start'];
+		$date_end_value   = $params['date_end'];
 
 		echo '<input type="date" name="date_start" value="' . esc_attr( $date_start_value ) . '" placeholder="' . esc_attr__( 'Start date', 'kntnt-ad-attr' ) . '">';
 		echo '<input type="date" name="date_end" value="' . esc_attr( $date_end_value ) . '" placeholder="' . esc_attr__( 'End date', 'kntnt-ad-attr' ) . '">';

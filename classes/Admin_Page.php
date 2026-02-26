@@ -33,6 +33,14 @@ final class Admin_Page {
 	private readonly Queue $queue;
 
 	/**
+	 * Queue processor for running individual jobs.
+	 *
+	 * @var Queue_Processor
+	 * @since 1.8.0
+	 */
+	private readonly Queue_Processor $queue_processor;
+
+	/**
 	 * The hook suffix returned by add_management_page().
 	 *
 	 * Used for targeting admin_enqueue_scripts and load-{$hook_suffix}.
@@ -45,12 +53,14 @@ final class Admin_Page {
 	/**
 	 * Initializes the admin page with its dependencies.
 	 *
-	 * @param Queue $queue Async job queue for status display.
+	 * @param Queue           $queue           Async job queue for status display.
+	 * @param Queue_Processor $queue_processor Queue processor for single-job actions.
 	 *
 	 * @since 1.2.0
 	 */
-	public function __construct( Queue $queue ) {
-		$this->queue = $queue;
+	public function __construct( Queue $queue, Queue_Processor $queue_processor ) {
+		$this->queue           = $queue;
+		$this->queue_processor = $queue_processor;
 	}
 
 	/**
@@ -271,10 +281,10 @@ final class Admin_Page {
 			do_action( "kntnt_ad_attr_admin_tab_{$tab}" );
 		}
 
-		// Show queue status only when reporters are registered.
+		// Show queue table only when reporters are registered.
 		$reporters = apply_filters( 'kntnt_ad_attr_conversion_reporters', [] );
 		if ( ! empty( $reporters ) ) {
-			$this->render_queue_status();
+			$this->render_queue_table();
 		}
 
 		echo '</div>';
@@ -342,42 +352,25 @@ final class Admin_Page {
 	}
 
 	/**
-	 * Renders the queue status section in the admin page.
+	 * Renders the queue table section in the admin page.
 	 *
-	 * Displays the number of pending and failed jobs, and the last error
-	 * message if any. Only called when reporters are registered.
+	 * Displays a full WP_List_Table of pending and failed jobs with
+	 * row actions for running and deleting individual jobs.
 	 *
 	 * @return void
-	 * @since 1.2.0
+	 * @since 1.8.0
 	 */
-	private function render_queue_status(): void {
-		$status = $this->queue->get_status();
-
-		echo '<div class="kntnt-ad-attr-queue-status">';
+	private function render_queue_table(): void {
+		echo '<div class="kntnt-ad-attr-queue-status" style="margin-top:2em;padding-top:1.5em;border-top:1px solid #c3c4c7">';
 		echo '<h3>' . esc_html__( 'Report Queue', 'kntnt-ad-attr' ) . '</h3>';
+		echo '<p class="description">'
+			. esc_html__( 'Conversions waiting to be reported to external platforms. Failed jobs are retried automatically.', 'kntnt-ad-attr' )
+			. '</p>';
 
-		echo '<table class="widefat striped" style="max-width:500px">';
-		echo '<tbody>';
+		$table = new Queue_List_Table( $this->queue );
+		$table->prepare_items();
+		$table->display();
 
-		echo '<tr>';
-		echo '<td>' . esc_html__( 'Pending jobs', 'kntnt-ad-attr' ) . '</td>';
-		echo '<td>' . esc_html( (string) $status['pending'] ) . '</td>';
-		echo '</tr>';
-
-		echo '<tr>';
-		echo '<td>' . esc_html__( 'Failed jobs', 'kntnt-ad-attr' ) . '</td>';
-		echo '<td>' . esc_html( (string) $status['failed'] ) . '</td>';
-		echo '</tr>';
-
-		if ( $status['last_error'] !== null ) {
-			echo '<tr>';
-			echo '<td>' . esc_html__( 'Last error', 'kntnt-ad-attr' ) . '</td>';
-			echo '<td>' . esc_html( $status['last_error'] ) . '</td>';
-			echo '</tr>';
-		}
-
-		echo '</tbody>';
-		echo '</table>';
 		echo '</div>';
 	}
 
@@ -464,10 +457,13 @@ final class Admin_Page {
 		$message = sanitize_text_field( wp_unslash( $_GET['message'] ?? '' ) );
 
 		$notices = [
-			'created'  => [ 'success', __( 'Tracking URL created.', 'kntnt-ad-attr' ) ],
-			'trashed'  => [ 'success', __( 'Tracking URL moved to Trash.', 'kntnt-ad-attr' ) ],
-			'restored' => [ 'success', __( 'Tracking URL restored.', 'kntnt-ad-attr' ) ],
-			'deleted'  => [ 'success', __( 'Tracking URL permanently deleted.', 'kntnt-ad-attr' ) ],
+			'created'        => [ 'success', __( 'Tracking URL created.', 'kntnt-ad-attr' ) ],
+			'trashed'        => [ 'success', __( 'Tracking URL moved to Trash.', 'kntnt-ad-attr' ) ],
+			'restored'       => [ 'success', __( 'Tracking URL restored.', 'kntnt-ad-attr' ) ],
+			'deleted'        => [ 'success', __( 'Tracking URL permanently deleted.', 'kntnt-ad-attr' ) ],
+			'queue_run_ok'   => [ 'success', __( 'Job processed successfully.', 'kntnt-ad-attr' ) ],
+			'queue_run_fail' => [ 'error', __( 'Job processing failed.', 'kntnt-ad-attr' ) ],
+			'queue_deleted'  => [ 'success', __( 'Job deleted.', 'kntnt-ad-attr' ) ],
 		];
 
 		// Bulk action notices with plural support.
@@ -524,6 +520,13 @@ final class Admin_Page {
 			}
 		}
 
+		// GET: queue actions (run now, delete job).
+		$queue_action = sanitize_text_field( wp_unslash( $_GET['queue_action'] ?? '' ) );
+		if ( $queue_action !== '' ) {
+			$this->handle_queue_action( $queue_action );
+			return;
+		}
+
 		// GET: trash, restore, and delete actions.
 		$action = sanitize_text_field( wp_unslash( $_GET['action'] ?? '' ) );
 		if ( $action === '-1' ) {
@@ -543,6 +546,50 @@ final class Admin_Page {
 			'delete'  => $this->delete_url(),
 			default   => null,
 		};
+	}
+
+	/**
+	 * Handles queue row actions (run now, delete).
+	 *
+	 * @param string $action The queue action: 'run_now' or 'delete_job'.
+	 *
+	 * @return void
+	 * @since 1.8.0
+	 */
+	private function handle_queue_action( string $action ): void {
+		$job_id = (int) ( $_GET['job_id'] ?? 0 );
+
+		if ( $job_id <= 0 ) {
+			return;
+		}
+
+		Plugin::authorize();
+
+		$redirect_args = [ 'page' => Plugin::get_slug() ];
+
+		if ( $action === 'run_now' ) {
+			check_admin_referer( "queue_run_{$job_id}" );
+
+			// Determine if this is a failed job (one-shot) or pending (normal retry).
+			global $wpdb;
+			$table  = $wpdb->prefix . 'kntnt_ad_attr_queue';
+			$status = $wpdb->get_var( $wpdb->prepare(
+				"SELECT status FROM {$table} WHERE id = %d",
+				$job_id,
+			) );
+
+			$is_failed = $status === 'failed';
+			$success   = $this->queue_processor->process_single( $job_id, $is_failed );
+
+			$redirect_args['message'] = $success ? 'queue_run_ok' : 'queue_run_fail';
+		} elseif ( $action === 'delete_job' ) {
+			check_admin_referer( "queue_delete_{$job_id}" );
+			$this->queue->delete( $job_id );
+			$redirect_args['message'] = 'queue_deleted';
+		}
+
+		wp_safe_redirect( add_query_arg( $redirect_args, admin_url( 'tools.php' ) ) );
+		exit;
 	}
 
 	/**

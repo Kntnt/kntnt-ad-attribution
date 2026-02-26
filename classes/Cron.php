@@ -41,16 +41,26 @@ final class Cron {
 	private readonly Queue $queue;
 
 	/**
+	 * Logger instance for diagnostic output.
+	 *
+	 * @var Logger|null
+	 * @since 1.8.0
+	 */
+	private readonly ?Logger $logger;
+
+	/**
 	 * Initializes the cron handler with its dependencies.
 	 *
 	 * @param Click_ID_Store $click_id_store Platform-specific click ID storage.
 	 * @param Queue          $queue          Async job queue.
+	 * @param Logger|null    $logger         Optional diagnostic logger.
 	 *
 	 * @since 1.2.0
 	 */
-	public function __construct( Click_ID_Store $click_id_store, Queue $queue ) {
+	public function __construct( Click_ID_Store $click_id_store, Queue $queue, ?Logger $logger = null ) {
 		$this->click_id_store = $click_id_store;
 		$this->queue          = $queue;
+		$this->logger         = $logger;
 	}
 
 	/**
@@ -82,7 +92,10 @@ final class Cron {
 
 		// Clean up adapter infrastructure tables.
 		$this->click_id_store->cleanup( 120 );
-		$this->queue->cleanup( 30, 90 );
+
+		$done_days   = (int) apply_filters( 'kntnt_ad_attr_queue_done_retention_days', 30 );
+		$failed_days = (int) apply_filters( 'kntnt_ad_attr_queue_failed_retention_days', 90 );
+		$this->queue->cleanup( $done_days, $failed_days );
 	}
 
 	/**
@@ -121,7 +134,7 @@ final class Cron {
 		) );
 
 		if ( $deleted > 0 ) {
-			error_log( sprintf( 'Kntnt Ad Attribution: Deleted %d expired click(s).', $deleted ) );
+			$this->logger?->info( 'CORE', sprintf( 'Deleted %d expired click(s).', $deleted ) );
 		}
 	}
 
@@ -150,7 +163,7 @@ final class Cron {
 		);
 
 		if ( $deleted > 0 ) {
-			error_log( sprintf( 'Kntnt Ad Attribution: Deleted %d orphaned conversion(s).', $deleted ) );
+			$this->logger?->info( 'CORE', sprintf( 'Deleted %d orphaned conversion(s).', $deleted ) );
 		}
 	}
 
@@ -195,7 +208,7 @@ final class Cron {
 		);
 
 		if ( $deleted > 0 ) {
-			error_log( sprintf( 'Kntnt Ad Attribution: Deleted %d orphaned click(s).', $deleted ) );
+			$this->logger?->info( 'CORE', sprintf( 'Deleted %d orphaned click(s).', $deleted ) );
 		}
 	}
 

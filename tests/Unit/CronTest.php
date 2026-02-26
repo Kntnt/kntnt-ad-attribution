@@ -127,8 +127,7 @@ describe('Cron::run_daily_cleanup()', function () {
         $wpdb->shouldReceive('query')
             ->andReturn(0, 5, 0, 0, 0);
 
-        // error_log should be called for the 5 deleted clicks.
-        Functions\expect('error_log')->once()->with(Mockery::pattern('/Deleted 5 expired click/'));
+        // Logger is null in tests, so the info() call is a no-op.
 
         Functions\expect('get_posts')->once()->andReturn([]);
 

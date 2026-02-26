@@ -10,6 +10,7 @@ declare(strict_types=1);
 
 use Kntnt\Ad_Attribution\Admin_Page;
 use Kntnt\Ad_Attribution\Queue;
+use Kntnt\Ad_Attribution\Queue_Processor;
 use Kntnt\Ad_Attribution\Plugin;
 use Brain\Monkey\Functions;
 use Brain\Monkey\Actions;
@@ -22,13 +23,14 @@ use Tests\Helpers\TestFactory;
 class AdminExitException extends \RuntimeException {}
 
 /**
- * Creates an Admin_Page instance with mocked Queue dependency.
+ * Creates an Admin_Page instance with mocked dependencies.
  *
  * @return array{0: Admin_Page, 1: Mockery\MockInterface}
  */
 function make_admin_page(): array {
     $queue = Mockery::mock(Queue::class);
-    return [new Admin_Page($queue), $queue];
+    $queue_processor = Mockery::mock(Queue_Processor::class);
+    return [new Admin_Page($queue, $queue_processor), $queue];
 }
 
 /**
@@ -60,6 +62,20 @@ function setup_render_env(): array {
     Functions\when('wp_nonce_field')->justReturn('');
     Functions\when('submit_button')->alias(function () {
         echo '<button>Submit</button>';
+    });
+
+    // Campaign_List_Table::get_default_date_range() stubs.
+    Functions\when('get_option')->alias(fn (string $opt, mixed $default = false) => $opt === 'start_of_week' ? 1 : $default);
+
+    \Patchwork\redefine('gmdate', function (string $format, ?int $ts = null) {
+        if ($ts === null) {
+            return match ($format) {
+                'w' => '4',
+                'U' => (string) strtotime('2026-02-26 12:00:00 UTC'),
+                default => (new \DateTimeImmutable('2026-02-26', new \DateTimeZone('UTC')))->format($format),
+            };
+        }
+        return (new \DateTimeImmutable("@{$ts}", new \DateTimeZone('UTC')))->format($format);
     });
 
     return [$page, $queue];
@@ -241,23 +257,18 @@ describe('Admin_Page::render_page()', function () {
     it('renders queue status when reporters registered', function () {
         [$page, $queue] = setup_render_env();
 
-        // Reporters are registered → queue status is displayed.
+        // Reporters are registered → queue table is displayed.
         Filters\expectApplied('kntnt_ad_attr_conversion_reporters')->andReturn([
             'test-reporter' => fn () => null,
         ]);
 
-        $queue->shouldReceive('get_status')->once()->andReturn([
-            'pending'    => 3,
-            'failed'     => 1,
-            'last_error' => 'Test error',
-        ]);
+        $queue->shouldReceive('get_active_jobs')->once()->andReturn([]);
 
         ob_start();
         $page->render_page();
         $output = ob_get_clean();
 
         expect($output)->toContain('Report Queue');
-        expect($output)->toContain('Test error');
     });
 
     it('outputs Create Tracking URL button on main view', function () {

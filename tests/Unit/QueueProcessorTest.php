@@ -106,8 +106,6 @@ describe('Queue_Processor::process()', function () {
             ->with('kntnt_ad_attr_conversion_reporters', [])
             ->andReturn($reporters);
 
-        Functions\expect('error_log')->once();
-
         $item = (object) ['id' => 1, 'reporter' => 'throws', 'payload' => []];
 
         $queue->shouldReceive('dequeue')->once()->andReturn([$item]);
@@ -180,6 +178,7 @@ describe('Queue_Processor::process()', function () {
 
         $queue->shouldReceive('dequeue')->andReturn([]);
         $queue->shouldReceive('get_status')->andReturn(['pending' => 5]);
+        $queue->shouldReceive('get_next_retry_time')->once()->andReturn(null);
 
         Functions\expect('wp_next_scheduled')
             ->once()

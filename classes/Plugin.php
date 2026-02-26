@@ -122,6 +122,22 @@ final class Plugin {
 	public readonly Cron $cron;
 
 	/**
+	 * Settings component instance.
+	 *
+	 * @var Settings
+	 * @since 1.8.0
+	 */
+	public readonly Settings $settings;
+
+	/**
+	 * Logger component instance.
+	 *
+	 * @var Logger
+	 * @since 1.8.0
+	 */
+	public readonly Logger $logger;
+
+	/**
 	 * Click ID store component instance.
 	 *
 	 * @var Click_ID_Store
@@ -144,6 +160,14 @@ final class Plugin {
 	 * @since 1.2.0
 	 */
 	public readonly Queue_Processor $queue_processor;
+
+	/**
+	 * Settings page component instance.
+	 *
+	 * @var Settings_Page
+	 * @since 1.8.0
+	 */
+	public readonly Settings_Page $settings_page;
 
 	/**
 	 * Cached plugin metadata from header.
@@ -181,18 +205,21 @@ final class Plugin {
 		// Initialize plugin components.
 		$this->updater              = new Updater();
 		$this->migrator             = new Migrator();
+		$this->settings             = new Settings();
+		$this->logger               = new Logger( $this->settings );
 		$this->post_type            = new Post_Type();
 		$this->cookie_manager       = new Cookie_Manager();
 		$this->consent              = new Consent();
 		$this->bot_detector         = new Bot_Detector();
 		$this->click_id_store       = new Click_ID_Store();
-		$this->queue                = new Queue();
-		$this->queue_processor      = new Queue_Processor( $this->queue );
+		$this->queue                = new Queue( $this->settings );
+		$this->queue_processor      = new Queue_Processor( $this->queue, $this->logger );
 		$this->click_handler        = new Click_Handler( $this->cookie_manager, $this->consent, $this->bot_detector, $this->click_id_store );
 		$this->conversion_handler   = new Conversion_Handler( $this->cookie_manager, $this->consent, $this->bot_detector, $this->click_id_store, $this->queue, $this->queue_processor );
-		$this->cron                 = new Cron( $this->click_id_store, $this->queue );
-		$this->admin_page           = new Admin_Page( $this->queue );
+		$this->cron                 = new Cron( $this->click_id_store, $this->queue, $this->logger );
+		$this->admin_page           = new Admin_Page( $this->queue, $this->queue_processor );
 		$this->rest_endpoint        = new Rest_Endpoint( $this->cookie_manager, $this->consent );
+		$this->settings_page        = new Settings_Page( $this->settings, $this->logger );
 
 		// Register WordPress hooks.
 		$this->register_hooks();
@@ -368,6 +395,18 @@ final class Plugin {
 		// Run pending database migrations before other components initialize.
 		add_action( 'plugins_loaded', [ $this->migrator, 'run' ] );
 
+		// Cache filter defaults BEFORE override filters are registered,
+		// so settings page placeholders show external filter values.
+		$this->settings->get_filter_defaults();
+
+		// Override filters for backward compatibility: when a value is saved
+		// in settings, it takes precedence over the default filter value.
+		add_filter( 'kntnt_ad_attr_cookie_lifetime', fn( $v ) => $this->settings_override( 'cookie_lifetime', $v ), PHP_INT_MAX );
+		add_filter( 'kntnt_ad_attr_dedup_seconds', fn( $v ) => $this->settings_override( 'dedup_seconds', $v ), PHP_INT_MAX );
+
+		// Register settings page hooks.
+		$this->settings_page->register();
+
 		// Register custom post type and load translations.
 		add_action( 'init', [ $this->post_type, 'register' ] );
 		add_action( 'init', [ $this, 'load_textdomain' ] );
@@ -424,10 +463,38 @@ final class Plugin {
 	 * @since 1.0.0
 	 */
 	public function add_action_link( array $links ): array {
-		$url  = admin_url( 'tools.php?page=' . self::get_slug() );
-		$link = '<a href="' . esc_url( $url ) . '">' . esc_html__( 'Ad Attribution', 'kntnt-ad-attr' ) . '</a>';
-		array_unshift( $links, $link );
+		$tools_url  = admin_url( 'tools.php?page=' . self::get_slug() );
+		$tools_link = '<a href="' . esc_url( $tools_url ) . '">' . esc_html__( 'Ad Attribution', 'kntnt-ad-attr' ) . '</a>';
+		array_unshift( $links, $tools_link );
+
+		$settings_url  = admin_url( 'options-general.php?page=kntnt-ad-attr' );
+		$settings_link = '<a href="' . esc_url( $settings_url ) . '">' . esc_html__( 'Settings', 'kntnt-ad-attr' ) . '</a>';
+		array_splice( $links, 1, 0, [ $settings_link ] );
+
 		return $links;
+	}
+
+	/**
+	 * Returns the saved setting value if it exists, otherwise the filter value.
+	 *
+	 * Used as a PHP_INT_MAX priority filter callback so that saved settings
+	 * override any earlier filter values while preserving the filter chain
+	 * for non-saved keys.
+	 *
+	 * @param string    $key           Setting key.
+	 * @param int|float $filter_value  Current filter value.
+	 *
+	 * @return int|float Saved value or pass-through.
+	 * @since 1.8.0
+	 */
+	private function settings_override( string $key, int|float $filter_value ): int|float {
+		$saved = $this->settings->get_saved();
+
+		if ( isset( $saved[ $key ] ) && $saved[ $key ] !== '' ) {
+			return (int) $saved[ $key ];
+		}
+
+		return $filter_value;
 	}
 
 	/**

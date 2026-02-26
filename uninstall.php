@@ -41,8 +41,9 @@ foreach ( $post_ids as $post_id ) {
 	wp_delete_post( (int) $post_id, true );
 }
 
-// Delete the stored schema version.
+// Delete the stored schema version and settings.
 delete_option( 'kntnt_ad_attr_version' );
+delete_option( 'kntnt_ad_attr_settings' );
 
 // Remove plugin transients.
 $wpdb->query(
@@ -58,3 +59,10 @@ $wpdb->query(
 // Remove scheduled cron jobs.
 wp_clear_scheduled_hook( 'kntnt_ad_attr_daily_cleanup' );
 wp_clear_scheduled_hook( 'kntnt_ad_attr_process_queue' );
+
+// Remove the diagnostic log directory and its contents.
+$log_dir = wp_upload_dir()['basedir'] . '/kntnt-ad-attribution';
+if ( is_dir( $log_dir ) ) {
+	array_map( 'wp_delete_file', glob( $log_dir . '/*' ) );
+	rmdir( $log_dir );
+}

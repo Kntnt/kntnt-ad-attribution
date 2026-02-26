@@ -9,6 +9,7 @@
 declare(strict_types=1);
 
 use Kntnt\Ad_Attribution\Queue;
+use Kntnt\Ad_Attribution\Settings;
 use Brain\Monkey\Functions;
 use Tests\Helpers\TestFactory;
 
@@ -19,6 +20,12 @@ describe('Queue::enqueue()', function () {
     it('inserts with status pending and attempts 0', function () {
         $wpdb = TestFactory::wpdb();
         $GLOBALS['wpdb'] = $wpdb;
+
+        $settings = Mockery::mock(Settings::class);
+        $settings->shouldReceive('get')->with('attempts_per_round')->andReturn(3);
+        $settings->shouldReceive('get')->with('retry_delay')->andReturn(60);
+        $settings->shouldReceive('get')->with('max_rounds')->andReturn(3);
+        $settings->shouldReceive('get')->with('round_delay')->andReturn(21600);
 
         Functions\expect('wp_json_encode')
             ->once()
@@ -34,12 +41,18 @@ describe('Queue::enqueue()', function () {
                 return true;
             });
 
-        (new Queue())->enqueue('test_reporter', ['key' => 'value']);
+        (new Queue($settings))->enqueue('test_reporter', ['key' => 'value']);
     });
 
     it('JSON-encodes the payload', function () {
         $wpdb = TestFactory::wpdb();
         $GLOBALS['wpdb'] = $wpdb;
+
+        $settings = Mockery::mock(Settings::class);
+        $settings->shouldReceive('get')->with('attempts_per_round')->andReturn(3);
+        $settings->shouldReceive('get')->with('retry_delay')->andReturn(60);
+        $settings->shouldReceive('get')->with('max_rounds')->andReturn(3);
+        $settings->shouldReceive('get')->with('round_delay')->andReturn(21600);
 
         $payload = ['attribution' => [1.0], 'context' => 'test'];
 
@@ -55,7 +68,7 @@ describe('Queue::enqueue()', function () {
                 return true;
             });
 
-        (new Queue())->enqueue('reporter', $payload);
+        (new Queue($settings))->enqueue('reporter', $payload);
     });
 
 });
@@ -68,6 +81,8 @@ describe('Queue::dequeue()', function () {
         $wpdb = TestFactory::wpdb();
         $GLOBALS['wpdb'] = $wpdb;
 
+        $settings = Mockery::mock(Settings::class)->shouldIgnoreMissing();
+
         $wpdb->shouldReceive('prepare')
             ->once()
             ->andReturn('prepared-sql');
@@ -77,7 +92,7 @@ describe('Queue::dequeue()', function () {
             ->with('prepared-sql')
             ->andReturn([]);
 
-        $result = (new Queue())->dequeue();
+        $result = (new Queue($settings))->dequeue();
 
         expect($result)->toBe([]);
     });
@@ -86,7 +101,9 @@ describe('Queue::dequeue()', function () {
         $wpdb = TestFactory::wpdb();
         $GLOBALS['wpdb'] = $wpdb;
 
-        $row = (object) ['id' => '1', 'reporter' => 'test', 'payload' => '{"key":"val"}'];
+        $settings = Mockery::mock(Settings::class)->shouldIgnoreMissing();
+
+        $row = (object) ['id' => '1', 'reporter' => 'test', 'payload' => '{"key":"val"}', 'attempts' => '0', 'attempts_per_round' => null, 'retry_delay' => null, 'max_rounds' => null, 'round_delay' => null];
 
         // First prepare call = SELECT
         $wpdb->shouldReceive('prepare')
@@ -102,21 +119,23 @@ describe('Queue::dequeue()', function () {
             ->once()
             ->with('update-sql');
 
-        (new Queue())->dequeue();
+        (new Queue($settings))->dequeue();
     });
 
     it('JSON-decodes payload in returned items', function () {
         $wpdb = TestFactory::wpdb();
         $GLOBALS['wpdb'] = $wpdb;
 
+        $settings = Mockery::mock(Settings::class)->shouldIgnoreMissing();
+
         $payload = ['key' => 'val'];
-        $row = (object) ['id' => '1', 'reporter' => 'test', 'payload' => json_encode($payload)];
+        $row = (object) ['id' => '1', 'reporter' => 'test', 'payload' => json_encode($payload), 'attempts' => '0', 'attempts_per_round' => null, 'retry_delay' => null, 'max_rounds' => null, 'round_delay' => null];
 
         $wpdb->shouldReceive('prepare')->andReturn('sql');
         $wpdb->shouldReceive('get_results')->andReturn([$row]);
         $wpdb->shouldReceive('query');
 
-        $result = (new Queue())->dequeue();
+        $result = (new Queue($settings))->dequeue();
 
         expect($result[0]->payload)->toBe($payload);
     });
@@ -124,6 +143,8 @@ describe('Queue::dequeue()', function () {
     it('respects limit parameter in SQL', function () {
         $wpdb = TestFactory::wpdb();
         $GLOBALS['wpdb'] = $wpdb;
+
+        $settings = Mockery::mock(Settings::class)->shouldIgnoreMissing();
 
         $wpdb->shouldReceive('prepare')
             ->withArgs(function (string $sql, int $limit) {
@@ -136,7 +157,7 @@ describe('Queue::dequeue()', function () {
         $wpdb->shouldReceive('get_results')
             ->andReturn([]);
 
-        (new Queue())->dequeue(5);
+        (new Queue($settings))->dequeue(5);
     });
 
 });
@@ -149,6 +170,8 @@ describe('Queue::complete()', function () {
         $wpdb = TestFactory::wpdb();
         $GLOBALS['wpdb'] = $wpdb;
 
+        $settings = Mockery::mock(Settings::class)->shouldIgnoreMissing();
+
         $wpdb->shouldReceive('update')
             ->once()
             ->withArgs(function (string $table, array $data, array $where) {
@@ -159,7 +182,7 @@ describe('Queue::complete()', function () {
                 return true;
             });
 
-        (new Queue())->complete(42);
+        (new Queue($settings))->complete(42);
     });
 
 });
@@ -172,10 +195,22 @@ describe('Queue::fail()', function () {
         $wpdb = TestFactory::wpdb();
         $GLOBALS['wpdb'] = $wpdb;
 
+        $settings = Mockery::mock(Settings::class);
+        $settings->shouldReceive('get')->with('attempts_per_round')->andReturn(3);
+        $settings->shouldReceive('get')->with('retry_delay')->andReturn(60);
+        $settings->shouldReceive('get')->with('max_rounds')->andReturn(3);
+        $settings->shouldReceive('get')->with('round_delay')->andReturn(21600);
+
         $wpdb->shouldReceive('prepare')->andReturn('sql');
-        $wpdb->shouldReceive('get_var')
+        $wpdb->shouldReceive('get_row')
             ->once()
-            ->andReturn('1'); // current attempts = 1
+            ->andReturn((object) [
+                'attempts'           => '1',
+                'attempts_per_round' => null,
+                'retry_delay'        => null,
+                'max_rounds'         => null,
+                'round_delay'        => null,
+            ]);
 
         $wpdb->shouldReceive('update')
             ->once()
@@ -184,32 +219,65 @@ describe('Queue::fail()', function () {
                 return true;
             });
 
-        (new Queue())->fail(1, 'Some error');
+        (new Queue($settings))->fail(1, 'Some error');
     });
 
-    it('sets status pending for retry when attempts < 3', function () {
+    it('sets status pending with retry_after for mid-round retry', function () {
         $wpdb = TestFactory::wpdb();
         $GLOBALS['wpdb'] = $wpdb;
 
+        // With defaults: attempts_per_round=3, max_rounds=3, max_total=9.
+        // attempts=1, k=2 → 2 < 9 and 2%3≠0 → pending with retry_delay.
+        $settings = Mockery::mock(Settings::class);
+        $settings->shouldReceive('get')->with('attempts_per_round')->andReturn(3);
+        $settings->shouldReceive('get')->with('retry_delay')->andReturn(60);
+        $settings->shouldReceive('get')->with('max_rounds')->andReturn(3);
+        $settings->shouldReceive('get')->with('round_delay')->andReturn(21600);
+
         $wpdb->shouldReceive('prepare')->andReturn('sql');
-        $wpdb->shouldReceive('get_var')->andReturn('1'); // attempts=1, new=2 < 3
+        $wpdb->shouldReceive('get_row')
+            ->once()
+            ->andReturn((object) [
+                'attempts'           => '1',
+                'attempts_per_round' => null,
+                'retry_delay'        => null,
+                'max_rounds'         => null,
+                'round_delay'        => null,
+            ]);
 
         $wpdb->shouldReceive('update')
             ->once()
             ->withArgs(function (string $table, array $data) {
                 expect($data['status'])->toBe('pending');
+                expect($data)->toHaveKey('retry_after');
                 return true;
             });
 
-        (new Queue())->fail(1, 'Retry error');
+        (new Queue($settings))->fail(1, 'Retry error');
     });
 
-    it('sets status failed when attempts >= MAX_ATTEMPTS (3)', function () {
+    it('sets status failed when all rounds exhausted', function () {
         $wpdb = TestFactory::wpdb();
         $GLOBALS['wpdb'] = $wpdb;
 
+        // With defaults: attempts_per_round=3, max_rounds=3, max_total=9.
+        // attempts=8, k=9 → 9 >= 9 → failed with processed_at.
+        $settings = Mockery::mock(Settings::class);
+        $settings->shouldReceive('get')->with('attempts_per_round')->andReturn(3);
+        $settings->shouldReceive('get')->with('retry_delay')->andReturn(60);
+        $settings->shouldReceive('get')->with('max_rounds')->andReturn(3);
+        $settings->shouldReceive('get')->with('round_delay')->andReturn(21600);
+
         $wpdb->shouldReceive('prepare')->andReturn('sql');
-        $wpdb->shouldReceive('get_var')->andReturn('2'); // attempts=2, new=3 >= 3
+        $wpdb->shouldReceive('get_row')
+            ->once()
+            ->andReturn((object) [
+                'attempts'           => '8',
+                'attempts_per_round' => null,
+                'retry_delay'        => null,
+                'max_rounds'         => null,
+                'round_delay'        => null,
+            ]);
 
         $wpdb->shouldReceive('update')
             ->once()
@@ -219,15 +287,29 @@ describe('Queue::fail()', function () {
                 return true;
             });
 
-        (new Queue())->fail(1, 'Final failure');
+        (new Queue($settings))->fail(1, 'Final failure');
     });
 
     it('stores error message in the update', function () {
         $wpdb = TestFactory::wpdb();
         $GLOBALS['wpdb'] = $wpdb;
 
+        $settings = Mockery::mock(Settings::class);
+        $settings->shouldReceive('get')->with('attempts_per_round')->andReturn(3);
+        $settings->shouldReceive('get')->with('retry_delay')->andReturn(60);
+        $settings->shouldReceive('get')->with('max_rounds')->andReturn(3);
+        $settings->shouldReceive('get')->with('round_delay')->andReturn(21600);
+
         $wpdb->shouldReceive('prepare')->andReturn('sql');
-        $wpdb->shouldReceive('get_var')->andReturn('0');
+        $wpdb->shouldReceive('get_row')
+            ->once()
+            ->andReturn((object) [
+                'attempts'           => '0',
+                'attempts_per_round' => null,
+                'retry_delay'        => null,
+                'max_rounds'         => null,
+                'round_delay'        => null,
+            ]);
 
         $wpdb->shouldReceive('update')
             ->once()
@@ -236,7 +318,7 @@ describe('Queue::fail()', function () {
                 return true;
             });
 
-        (new Queue())->fail(1, 'Connection timeout');
+        (new Queue($settings))->fail(1, 'Connection timeout');
     });
 
 });
@@ -248,6 +330,8 @@ describe('Queue::cleanup()', function () {
     it('deletes done jobs older than specified days', function () {
         $wpdb = TestFactory::wpdb();
         $GLOBALS['wpdb'] = $wpdb;
+
+        $settings = Mockery::mock(Settings::class)->shouldIgnoreMissing();
 
         $wpdb->shouldReceive('prepare')
             ->twice()
@@ -263,7 +347,7 @@ describe('Queue::cleanup()', function () {
                 return 1;
             });
 
-        (new Queue())->cleanup(30, 90);
+        (new Queue($settings))->cleanup(30, 90);
 
         expect($calls[0])->toContain("status = 'done'");
     });
@@ -271,6 +355,8 @@ describe('Queue::cleanup()', function () {
     it('deletes failed jobs older than specified days', function () {
         $wpdb = TestFactory::wpdb();
         $GLOBALS['wpdb'] = $wpdb;
+
+        $settings = Mockery::mock(Settings::class)->shouldIgnoreMissing();
 
         $wpdb->shouldReceive('prepare')
             ->twice()
@@ -284,7 +370,7 @@ describe('Queue::cleanup()', function () {
                 return 1;
             });
 
-        (new Queue())->cleanup(30, 90);
+        (new Queue($settings))->cleanup(30, 90);
 
         expect($calls[1])->toContain("status = 'failed'");
     });
@@ -299,6 +385,8 @@ describe('Queue::get_status()', function () {
         $wpdb = TestFactory::wpdb();
         $GLOBALS['wpdb'] = $wpdb;
 
+        $settings = Mockery::mock(Settings::class)->shouldIgnoreMissing();
+
         $wpdb->shouldReceive('get_results')
             ->once()
             ->andReturn([
@@ -311,7 +399,7 @@ describe('Queue::get_status()', function () {
             ->once()
             ->andReturn(null);
 
-        $status = (new Queue())->get_status();
+        $status = (new Queue($settings))->get_status();
 
         expect($status['pending'])->toBe(5);
         expect($status['done'])->toBe(10);
@@ -323,6 +411,8 @@ describe('Queue::get_status()', function () {
         $wpdb = TestFactory::wpdb();
         $GLOBALS['wpdb'] = $wpdb;
 
+        $settings = Mockery::mock(Settings::class)->shouldIgnoreMissing();
+
         $wpdb->shouldReceive('get_results')
             ->once()
             ->andReturn([]);
@@ -331,7 +421,7 @@ describe('Queue::get_status()', function () {
             ->once()
             ->andReturn('API rate limited');
 
-        $status = (new Queue())->get_status();
+        $status = (new Queue($settings))->get_status();
 
         expect($status['last_error'])->toBe('API rate limited');
     });

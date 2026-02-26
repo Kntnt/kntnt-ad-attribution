@@ -14,6 +14,35 @@ use Kntnt\Ad_Attribution\Post_Type;
 use Brain\Monkey\Functions;
 use Tests\Helpers\TestFactory;
 
+/**
+ * Stubs gmdate and get_option so get_default_date_range() resolves to a
+ * fixed two-week window. Use in tests that leave $_GET dates empty.
+ *
+ * @param int    $startOfWeek WordPress "Week Starts On" value (0=Sun … 6=Sat).
+ * @param string $todayDate   ISO-8601 date string for "today" (e.g. '2026-02-26').
+ * @param int    $todayDow    Day-of-week number for "today" (0=Sun … 6=Sat).
+ */
+function stub_default_dates(int $startOfWeek = 1, string $todayDate = '2026-02-26', int $todayDow = 4): void {
+    Functions\when('get_option')->alias(function (string $option, mixed $default = false) use ($startOfWeek) {
+        return $option === 'start_of_week' ? $startOfWeek : $default;
+    });
+
+    \Patchwork\redefine('gmdate', function (string $format, ?int $ts = null) use ($todayDate, $todayDow) {
+
+        // Calls without a timestamp come from the "what day is today?" logic.
+        if ($ts === null) {
+            return match ($format) {
+                'w' => (string) $todayDow,
+                'U' => (string) strtotime("{$todayDate} 12:00:00 UTC"),
+                default => (new \DateTimeImmutable($todayDate, new \DateTimeZone('UTC')))->format($format),
+            };
+        }
+
+        // Calls with a timestamp format a specific UTC date.
+        return (new \DateTimeImmutable("@{$ts}", new \DateTimeZone('UTC')))->format($format);
+    });
+}
+
 // ─── get_columns() ───
 
 describe('Campaign_List_Table::get_columns()', function () {
@@ -99,14 +128,16 @@ describe('Campaign_List_Table::get_filter_params()', function () {
         $_GET = [];
     });
 
-    it('returns default dates for empty input', function () {
+    it('returns two-week default dates for empty input', function () {
         $_GET = [];
+
+        stub_default_dates(startOfWeek: 1, todayDate: '2026-02-26', todayDow: 4);
 
         $table  = new Campaign_List_Table();
         $params = $table->get_filter_params();
 
-        expect($params['date_start'])->toBe('1970-01-01');
-        expect($params['date_end'])->toBe('9999-12-31');
+        expect($params['date_start'])->toBe('2026-02-09');
+        expect($params['date_end'])->toBe('2026-02-22');
     });
 
     it('accepts valid ISO-8601 dates', function () {
@@ -124,20 +155,24 @@ describe('Campaign_List_Table::get_filter_params()', function () {
         $_GET['date_start'] = 'not-a-date';
         $_GET['date_end']   = '2024/12/31';
 
+        stub_default_dates(startOfWeek: 1, todayDate: '2026-02-26', todayDow: 4);
+
         $table  = new Campaign_List_Table();
         $params = $table->get_filter_params();
 
-        expect($params['date_start'])->toBe('1970-01-01');
-        expect($params['date_end'])->toBe('9999-12-31');
+        expect($params['date_start'])->toBe('2026-02-09');
+        expect($params['date_end'])->toBe('2026-02-22');
     });
 
     it('falls back for partial date (missing day)', function () {
         $_GET['date_start'] = '2024-06';
 
+        stub_default_dates(startOfWeek: 1, todayDate: '2026-02-26', todayDow: 4);
+
         $table  = new Campaign_List_Table();
         $params = $table->get_filter_params();
 
-        expect($params['date_start'])->toBe('1970-01-01');
+        expect($params['date_start'])->toBe('2026-02-09');
     });
 
     it('passes through UTM filter values', function () {
@@ -145,6 +180,8 @@ describe('Campaign_List_Table::get_filter_params()', function () {
         $_GET['utm_medium']   = 'cpc';
         $_GET['utm_campaign'] = 'summer';
         $_GET['s']            = 'search term';
+
+        stub_default_dates();
 
         $table  = new Campaign_List_Table();
         $params = $table->get_filter_params();
@@ -158,6 +195,8 @@ describe('Campaign_List_Table::get_filter_params()', function () {
     it('returns empty strings for missing UTM filters', function () {
         $_GET = [];
 
+        stub_default_dates();
+
         $table  = new Campaign_List_Table();
         $params = $table->get_filter_params();
 
@@ -165,6 +204,86 @@ describe('Campaign_List_Table::get_filter_params()', function () {
         expect($params['utm_medium'])->toBe('');
         expect($params['utm_campaign'])->toBe('');
         expect($params['search'])->toBe('');
+    });
+
+});
+
+// ─── get_default_date_range() via get_filter_params() ───
+
+describe('Campaign_List_Table default date range', function () {
+
+    afterEach(function () {
+        $_GET = [];
+    });
+
+    it('returns two complete weeks when week starts Monday and today is Thursday', function () {
+        $_GET = [];
+
+        stub_default_dates(startOfWeek: 1, todayDate: '2026-02-26', todayDow: 4);
+
+        $params = (new Campaign_List_Table())->get_filter_params();
+
+        expect($params['date_start'])->toBe('2026-02-09');
+        expect($params['date_end'])->toBe('2026-02-22');
+    });
+
+    it('returns two complete weeks when week starts Sunday and today is Thursday', function () {
+        $_GET = [];
+
+        stub_default_dates(startOfWeek: 0, todayDate: '2026-02-26', todayDow: 4);
+
+        $params = (new Campaign_List_Table())->get_filter_params();
+
+        expect($params['date_start'])->toBe('2026-02-08');
+        expect($params['date_end'])->toBe('2026-02-21');
+    });
+
+    it('returns two complete weeks when today is the first day of the week', function () {
+        $_GET = [];
+
+        // Monday 2026-02-23, week starts Monday → current week just started.
+        stub_default_dates(startOfWeek: 1, todayDate: '2026-02-23', todayDow: 1);
+
+        $params = (new Campaign_List_Table())->get_filter_params();
+
+        expect($params['date_start'])->toBe('2026-02-09');
+        expect($params['date_end'])->toBe('2026-02-22');
+    });
+
+    it('returns two complete weeks when today is the start-of-week day (Sunday)', function () {
+        $_GET = [];
+
+        // Sunday 2026-03-01, week starts Sunday → current week just started.
+        stub_default_dates(startOfWeek: 0, todayDate: '2026-03-01', todayDow: 0);
+
+        $params = (new Campaign_List_Table())->get_filter_params();
+
+        expect($params['date_start'])->toBe('2026-02-15');
+        expect($params['date_end'])->toBe('2026-02-28');
+    });
+
+    it('handles year boundary (week 53 → new year)', function () {
+        $_GET = [];
+
+        // Monday 2026-01-05, week starts Monday.
+        stub_default_dates(startOfWeek: 1, todayDate: '2026-01-05', todayDow: 1);
+
+        $params = (new Campaign_List_Table())->get_filter_params();
+
+        expect($params['date_start'])->toBe('2025-12-22');
+        expect($params['date_end'])->toBe('2026-01-04');
+    });
+
+    it('returns two complete weeks when week starts Saturday and today is Saturday', function () {
+        $_GET = [];
+
+        // Saturday 2026-02-28, week starts Saturday → current week just started.
+        stub_default_dates(startOfWeek: 6, todayDate: '2026-02-28', todayDow: 6);
+
+        $params = (new Campaign_List_Table())->get_filter_params();
+
+        expect($params['date_start'])->toBe('2026-02-14');
+        expect($params['date_end'])->toBe('2026-02-27');
     });
 
 });
@@ -282,6 +401,10 @@ describe('Campaign_List_Table::get_views()', function () {
 // ─── prepare_items() (SQL construction) ───
 
 describe('Campaign_List_Table::prepare_items()', function () {
+
+    beforeEach(function () {
+        stub_default_dates();
+    });
 
     afterEach(function () {
         unset($GLOBALS['wpdb']);
@@ -524,6 +647,10 @@ describe('Campaign_List_Table::prepare_items()', function () {
 
 describe('Campaign_List_Table::fetch_all_items()', function () {
 
+    beforeEach(function () {
+        stub_default_dates();
+    });
+
     afterEach(function () {
         unset($GLOBALS['wpdb']);
         $_GET = [];
@@ -620,6 +747,10 @@ describe('Campaign_List_Table::fetch_all_items()', function () {
 // ─── get_totals() ───
 
 describe('Campaign_List_Table::get_totals()', function () {
+
+    beforeEach(function () {
+        stub_default_dates();
+    });
 
     afterEach(function () {
         unset($GLOBALS['wpdb']);

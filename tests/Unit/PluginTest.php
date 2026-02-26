@@ -173,26 +173,28 @@ describe('Plugin::deactivate()', function () {
 
 describe('Plugin::add_action_link()', function () {
 
-    it('prepends a link to the links array', function () {
+    it('prepends two links to the links array', function () {
         // We need get_slug to work for the URL.
         \Patchwork\redefine(
             'Kntnt\Ad_Attribution\Plugin::get_slug',
             fn () => 'kntnt-ad-attribution',
         );
 
-        Functions\expect('admin_url')
-            ->once()
-            ->andReturn('https://example.com/tools.php?page=kntnt-ad-attribution');
+        // add_action_link() now adds two links (Ad Attribution + Settings),
+        // each calling admin_url() once.
+        Functions\when('admin_url')->alias(fn (string $path) => "https://example.com/{$path}");
 
-        // Need to instantiate — but constructor is private. Use Patchwork.
-        // Instead, test via reflection.
+        // Need to instantiate — but constructor is private. Use reflection.
         $instance = (new \ReflectionClass(Plugin::class))->newInstanceWithoutConstructor();
 
         $result = $instance->add_action_link(['existing-link']);
 
-        expect($result)->toHaveCount(2);
+        expect($result)->toHaveCount(3);
         expect($result[0])->toContain('href=');
-        expect($result[1])->toBe('existing-link');
+        expect($result[0])->toContain('Ad Attribution');
+        expect($result[1])->toContain('href=');
+        expect($result[1])->toContain('Settings');
+        expect($result[2])->toBe('existing-link');
     });
 
 });

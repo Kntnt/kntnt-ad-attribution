@@ -260,9 +260,22 @@ final class Conversion_Handler {
 				if ( ! is_callable( $reporter['enqueue'] ?? null ) ) {
 					continue;
 				}
-				$payloads = ( $reporter['enqueue'] )( $attributions, $click_ids, $campaigns, $context );
-				foreach ( (array) $payloads as $payload ) {
-					$this->queue->enqueue( (string) $reporter_id, $payload );
+				$items = (array) ( $reporter['enqueue'] )( $attributions, $click_ids, $campaigns, $context );
+				foreach ( $items as $item ) {
+					if ( isset( $item['payload'] ) ) {
+
+						// Structured format with optional label and retry params.
+						$this->queue->enqueue(
+							(string) $reporter_id,
+							$item['payload'],
+							$item['label'] ?? '',
+							$item['retry_params'] ?? [],
+						);
+					} else {
+
+						// Legacy format: raw payload array.
+						$this->queue->enqueue( (string) $reporter_id, $item );
+					}
 				}
 			}
 
