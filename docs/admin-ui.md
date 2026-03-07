@@ -145,3 +145,45 @@ Button below the list table (visible on publish view). Same query without LIMIT/
 **Filename pattern:** `kntnt-ad-attribution-YYYY-MM-DD.csv` or `kntnt-ad-attribution-YYYY-MM-DD-to-YYYY-MM-DD.csv` if a date filter is set.
 
 **Nonce:** CSV export requires its own nonce validation (`kntnt_ad_attr_export`).
+
+## Report Queue
+
+Below the campaign list table and CSV export button, the admin page displays a **Report Queue** section (rendered by `Queue_List_Table`, a `WP_List_Table` subclass). This section is always present but shows "No jobs in the queue." when empty. It displays active and recently completed queue jobs.
+
+**Columns:**
+
+| Column | Content |
+|--------|---------|
+| Reporter | Reporter ID. Row actions: "Run Now" (hidden for done jobs) and "Delete". |
+| Description | Human-readable label set by the reporter's `enqueue` callback. |
+| Created | Job creation timestamp (`Y-m-d H:i` in site timezone). |
+| Last Attempt | Timestamp of the most recent processing attempt, or `—` if never attempted. |
+| Status | Human-readable status message (see below). |
+
+**Status messages:**
+
+| State | Display |
+|-------|---------|
+| `done` | "Success after N attempts" |
+| `failed` | "Failed after N attempts" (red) |
+| `processing` | "Attempt N running" |
+| `pending`, no attempts | "Pending" |
+| `pending`, future `retry_after` | "Attempt N at [date time]" |
+| `pending`, eligible | "Attempt N ready" |
+
+**Row actions:**
+
+- **Run Now** — calls `Queue_Processor::process_single()` to process the job immediately, bypassing both `retry_after` and `not_before`. Hidden for jobs with status `done`.
+- **Delete** — calls `Queue::delete()` to remove the job from the queue.
+
+## Logging
+
+Below the report queue, the admin page displays a **Logging** section with controls for the shared diagnostic log.
+
+**Controls:**
+
+- **Enable/disable toggle** — checkbox that toggles the `enable_logging` setting. Submits via POST with action `toggle_logging` and nonce verification.
+- **Log file path** — displays the relative path to the log file (`wp-content/uploads/kntnt-ad-attribution/kntnt-ad-attribution.log`).
+- **File size** — shown when the log file exists.
+- **Download Log** — nonce-protected link to download the log file. Disabled when no log file exists.
+- **Clear Log** — nonce-protected link to delete the log file. Disabled when no log file exists.

@@ -2,8 +2,8 @@
 /**
  * WP_List_Table for the conversion report queue.
  *
- * Displays pending and failed jobs with row actions for retrying and
- * deleting individual jobs.
+ * Displays active and recently completed jobs with row actions for retrying
+ * and deleting individual jobs.
  *
  * @package Kntnt\Ad_Attribution
  * @since   1.8.0
@@ -52,12 +52,11 @@ final class Queue_List_Table extends \WP_List_Table {
 	 */
 	public function get_columns(): array {
 		return [
-			'reporter'      => __( 'Reporter', 'kntnt-ad-attr' ),
-			'label'         => __( 'Description', 'kntnt-ad-attr' ),
-			'created_at'    => __( 'Created', 'kntnt-ad-attr' ),
-			'retry_after'   => __( 'Next Retry', 'kntnt-ad-attr' ),
-			'attempts'      => __( 'Attempts', 'kntnt-ad-attr' ),
-			'error_message' => __( 'Error', 'kntnt-ad-attr' ),
+			'reporter'        => __( 'Reporter', 'kntnt-ad-attr' ),
+			'label'           => __( 'Description', 'kntnt-ad-attr' ),
+			'created_at'      => __( 'Created', 'kntnt-ad-attr' ),
+			'last_attempt_at' => __( 'Last Attempt', 'kntnt-ad-attr' ),
+			'status'          => __( 'Status', 'kntnt-ad-attr' ),
 		];
 	}
 
@@ -80,6 +79,8 @@ final class Queue_List_Table extends \WP_List_Table {
 	/**
 	 * Renders the reporter column with row actions.
 	 *
+	 * Hides "Run Now" for completed jobs since they don't need re-processing.
+	 *
 	 * @param object $item Queue job row.
 	 *
 	 * @return string Column HTML.
@@ -89,28 +90,31 @@ final class Queue_List_Table extends \WP_List_Table {
 		$page   = Plugin::get_slug();
 		$job_id = (int) $item->id;
 
-		$run_url = wp_nonce_url(
-			admin_url( "tools.php?page={$page}&queue_action=run_now&job_id={$job_id}" ),
-			"queue_run_{$job_id}",
-		);
-
 		$delete_url = wp_nonce_url(
 			admin_url( "tools.php?page={$page}&queue_action=delete_job&job_id={$job_id}" ),
 			"queue_delete_{$job_id}",
 		);
 
-		$actions = [
-			'run_now' => sprintf(
+		$actions = [];
+
+		// Only show "Run Now" for jobs that are not already done.
+		if ( $item->status !== 'done' ) {
+			$run_url = wp_nonce_url(
+				admin_url( "tools.php?page={$page}&queue_action=run_now&job_id={$job_id}" ),
+				"queue_run_{$job_id}",
+			);
+			$actions['run_now'] = sprintf(
 				'<a href="%s">%s</a>',
 				esc_url( $run_url ),
 				esc_html__( 'Run Now', 'kntnt-ad-attr' ),
-			),
-			'delete'  => sprintf(
-				'<a href="%s" class="submitdelete">%s</a>',
-				esc_url( $delete_url ),
-				esc_html__( 'Delete', 'kntnt-ad-attr' ),
-			),
-		];
+			);
+		}
+
+		$actions['delete'] = sprintf(
+			'<a href="%s" class="submitdelete">%s</a>',
+			esc_url( $delete_url ),
+			esc_html__( 'Delete', 'kntnt-ad-attr' ),
+		);
 
 		return esc_html( $item->reporter ) . $this->row_actions( $actions );
 	}
@@ -128,7 +132,7 @@ final class Queue_List_Table extends \WP_List_Table {
 	}
 
 	/**
-	 * Renders the created_at column as a relative time.
+	 * Renders the created_at column as a formatted date+time.
 	 *
 	 * @param object $item Queue job row.
 	 *
@@ -142,75 +146,103 @@ final class Queue_List_Table extends \WP_List_Table {
 			return esc_html( $item->created_at );
 		}
 
-		return sprintf(
-			/* translators: %s: Human-readable time difference (e.g. "2 hours ago") */
-			esc_html__( '%s ago', 'kntnt-ad-attr' ),
-			human_time_diff( $timestamp ),
-		);
+		return esc_html( wp_date( 'Y-m-d H:i', $timestamp ) );
 	}
 
 	/**
-	 * Renders the retry_after column.
+	 * Renders the last_attempt_at column as a formatted date+time.
 	 *
 	 * @param object $item Queue job row.
 	 *
 	 * @return string Column HTML.
-	 * @since 1.8.0
+	 * @since 1.9.0
 	 */
-	protected function column_retry_after( object $item ): string {
-
-		if ( $item->status === 'failed' ) {
-			return '<span style="color:#b32d2e">' . esc_html__( 'Permanently failed', 'kntnt-ad-attr' ) . '</span>';
-		}
-
-		if ( empty( $item->retry_after ) ) {
+	protected function column_last_attempt_at( object $item ): string {
+		if ( empty( $item->last_attempt_at ) ) {
 			return '—';
 		}
 
-		$timestamp = strtotime( $item->retry_after . ' UTC' );
+		$timestamp = strtotime( $item->last_attempt_at . ' UTC' );
 
 		if ( ! $timestamp ) {
-			return esc_html( $item->retry_after );
+			return esc_html( $item->last_attempt_at );
 		}
 
-		if ( $timestamp <= time() ) {
-			return esc_html__( 'Ready', 'kntnt-ad-attr' );
-		}
-
-		return sprintf(
-			/* translators: %s: Human-readable time difference (e.g. "in 5 minutes") */
-			esc_html__( 'in %s', 'kntnt-ad-attr' ),
-			human_time_diff( $timestamp ),
-		);
+		return esc_html( wp_date( 'Y-m-d H:i', $timestamp ) );
 	}
 
 	/**
-	 * Renders the attempts column.
+	 * Renders the status column with human-readable messages.
 	 *
 	 * @param object $item Queue job row.
 	 *
 	 * @return string Column HTML.
-	 * @since 1.8.0
+	 * @since 1.9.0
 	 */
-	protected function column_attempts( object $item ): string {
-		return esc_html( (string) $item->attempts );
+	protected function column_status( object $item ): string {
+		$attempts = (int) $item->attempts;
+
+		return match ( $item->status ) {
+			'done' => esc_html( sprintf(
+				/* translators: %d: Number of attempts */
+				__( 'Success after %d attempts', 'kntnt-ad-attr' ),
+				$attempts,
+			) ),
+
+			'failed' => '<span style="color:#b32d2e">' . esc_html( sprintf(
+				/* translators: %d: Number of attempts */
+				__( 'Failed after %d attempts', 'kntnt-ad-attr' ),
+				$attempts,
+			) ) . '</span>',
+
+			'processing' => esc_html( sprintf(
+				/* translators: %d: Current attempt number */
+				__( 'Attempt %d running', 'kntnt-ad-attr' ),
+				$attempts + 1,
+			) ),
+
+			'pending' => $this->render_pending_status( $item, $attempts ),
+
+			default => esc_html( $item->status ),
+		};
 	}
 
 	/**
-	 * Renders the error_message column (truncated).
+	 * Renders the status for pending jobs with retry/deferral context.
 	 *
-	 * @param object $item Queue job row.
+	 * @param object $item     Queue job row.
+	 * @param int    $attempts Current attempt count.
 	 *
-	 * @return string Column HTML.
-	 * @since 1.8.0
+	 * @return string Status HTML.
+	 * @since 1.9.0
 	 */
-	protected function column_error_message( object $item ): string {
-		if ( empty( $item->error_message ) ) {
-			return '—';
+	private function render_pending_status( object $item, int $attempts ): string {
+
+		// Brand new job — never attempted, no retry scheduled.
+		if ( $attempts === 0 && empty( $item->retry_after ) ) {
+			return esc_html__( 'Pending', 'kntnt-ad-attr' );
 		}
 
-		$truncated = mb_strimwidth( $item->error_message, 0, 120, '…' );
-		return '<span title="' . esc_attr( $item->error_message ) . '">' . esc_html( $truncated ) . '</span>';
+		// Job with a future retry_after — show when the next attempt is scheduled.
+		if ( ! empty( $item->retry_after ) ) {
+			$retry_ts = strtotime( $item->retry_after . ' UTC' );
+
+			if ( $retry_ts && $retry_ts > time() ) {
+				return esc_html( sprintf(
+					/* translators: 1: Attempt number, 2: Date and time */
+					__( 'Attempt %1$d at %2$s', 'kntnt-ad-attr' ),
+					$attempts + 1,
+					wp_date( 'Y-m-d H:i', $retry_ts ),
+				) );
+			}
+		}
+
+		// Retry time has passed or is null — ready for processing.
+		return esc_html( sprintf(
+			/* translators: %d: Current attempt number */
+			__( 'Attempt %d ready', 'kntnt-ad-attr' ),
+			$attempts + 1,
+		) );
 	}
 
 	/**
@@ -220,7 +252,7 @@ final class Queue_List_Table extends \WP_List_Table {
 	 * @since 1.8.0
 	 */
 	public function no_items(): void {
-		esc_html_e( 'No pending or failed jobs in the queue.', 'kntnt-ad-attr' );
+		esc_html_e( 'No jobs in the queue.', 'kntnt-ad-attr' );
 	}
 
 }

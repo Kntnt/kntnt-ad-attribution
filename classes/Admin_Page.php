@@ -41,6 +41,22 @@ final class Admin_Page {
 	private readonly Queue_Processor $queue_processor;
 
 	/**
+	 * Settings instance for reading logging configuration.
+	 *
+	 * @var Settings
+	 * @since 1.9.0
+	 */
+	private readonly Settings $settings;
+
+	/**
+	 * Logger instance for log file management.
+	 *
+	 * @var Logger
+	 * @since 1.9.0
+	 */
+	private readonly Logger $logger;
+
+	/**
 	 * The hook suffix returned by add_management_page().
 	 *
 	 * Used for targeting admin_enqueue_scripts and load-{$hook_suffix}.
@@ -55,12 +71,16 @@ final class Admin_Page {
 	 *
 	 * @param Queue           $queue           Async job queue for status display.
 	 * @param Queue_Processor $queue_processor Queue processor for single-job actions.
+	 * @param Settings        $settings        Plugin settings for logging config.
+	 * @param Logger          $logger          Logger for log file management.
 	 *
 	 * @since 1.2.0
 	 */
-	public function __construct( Queue $queue, Queue_Processor $queue_processor ) {
+	public function __construct( Queue $queue, Queue_Processor $queue_processor, Settings $settings, Logger $logger ) {
 		$this->queue           = $queue;
 		$this->queue_processor = $queue_processor;
+		$this->settings        = $settings;
+		$this->logger          = $logger;
 	}
 
 	/**
@@ -73,6 +93,8 @@ final class Admin_Page {
 		add_action( 'admin_menu', [ $this, 'add_menu_page' ] );
 		add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_assets' ] );
 		add_filter( 'set-screen-option', [ $this, 'save_screen_option' ], 10, 3 );
+		add_action( 'admin_post_kntnt_ad_attr_download_log', [ $this, 'handle_download_log' ] );
+		add_action( 'admin_post_kntnt_ad_attr_clear_log', [ $this, 'handle_clear_log' ] );
 	}
 
 	/**
@@ -287,6 +309,8 @@ final class Admin_Page {
 			$this->render_queue_table();
 		}
 
+		$this->render_logging_section();
+
 		echo '</div>';
 	}
 
@@ -461,9 +485,12 @@ final class Admin_Page {
 			'trashed'        => [ 'success', __( 'Tracking URL moved to Trash.', 'kntnt-ad-attr' ) ],
 			'restored'       => [ 'success', __( 'Tracking URL restored.', 'kntnt-ad-attr' ) ],
 			'deleted'        => [ 'success', __( 'Tracking URL permanently deleted.', 'kntnt-ad-attr' ) ],
-			'queue_run_ok'   => [ 'success', __( 'Job processed successfully.', 'kntnt-ad-attr' ) ],
-			'queue_run_fail' => [ 'error', __( 'Job processing failed.', 'kntnt-ad-attr' ) ],
-			'queue_deleted'  => [ 'success', __( 'Job deleted.', 'kntnt-ad-attr' ) ],
+			'queue_run_ok'      => [ 'success', __( 'Job processed successfully.', 'kntnt-ad-attr' ) ],
+			'queue_run_fail'    => [ 'error', __( 'Job processing failed.', 'kntnt-ad-attr' ) ],
+			'queue_deleted'     => [ 'success', __( 'Job deleted.', 'kntnt-ad-attr' ) ],
+			'log_cleared'       => [ 'success', __( 'Log file cleared.', 'kntnt-ad-attr' ) ],
+			'logging_enabled'   => [ 'success', __( 'Logging enabled.', 'kntnt-ad-attr' ) ],
+			'logging_disabled'  => [ 'success', __( 'Logging disabled.', 'kntnt-ad-attr' ) ],
 		];
 
 		// Bulk action notices with plural support.
@@ -516,6 +543,11 @@ final class Admin_Page {
 
 			if ( $action === 'export_csv' ) {
 				$this->export_csv();
+				return;
+			}
+
+			if ( $action === 'toggle_logging' ) {
+				$this->handle_toggle_logging();
 				return;
 			}
 		}
@@ -842,6 +874,157 @@ final class Admin_Page {
 
 		$exporter = new Csv_Exporter();
 		$exporter->export( $items, $params['date_start'], $params['date_end'] );
+	}
+
+	/**
+	 * Renders the logging configuration section.
+	 *
+	 * Provides an enable/disable toggle, log file path display, file size,
+	 * and download/clear buttons for the diagnostic log.
+	 *
+	 * @return void
+	 * @since 1.9.0
+	 */
+	private function render_logging_section(): void {
+		$enabled = (bool) $this->settings->get( 'enable_logging' );
+		$exists  = $this->logger->exists();
+		$path    = $this->logger->get_path();
+		$page    = Plugin::get_slug();
+
+		echo '<div class="kntnt-ad-attr-logging-section" style="margin-top:2em;padding-top:1.5em;border-top:1px solid #c3c4c7">';
+		echo '<h3>' . esc_html__( 'Logging', 'kntnt-ad-attr' ) . '</h3>';
+		echo '<p class="description">'
+			. esc_html__( 'Diagnostic logging for troubleshooting conversion reporting issues.', 'kntnt-ad-attr' )
+			. '</p>';
+
+		// Enable/disable toggle.
+		echo '<form method="post" style="margin:1em 0">';
+		wp_nonce_field( 'kntnt_ad_attr_toggle_logging', 'kntnt_ad_attr_toggle_nonce' );
+		echo '<input type="hidden" name="kntnt_ad_attr_action" value="toggle_logging">';
+
+		printf(
+			'<label><input type="checkbox" name="enable_logging" value="1"%s> %s</label>',
+			checked( $enabled, true, false ),
+			sprintf(
+				/* translators: %s: Relative path to the log file */
+				esc_html__( 'Write diagnostic log to %s', 'kntnt-ad-attr' ),
+				'<code>' . esc_html( $this->logger->get_relative_path() ) . '</code>',
+			),
+		);
+
+		echo ' ';
+		submit_button( __( 'Save', 'kntnt-ad-attr' ), 'secondary', 'submit', false );
+		echo '</form>';
+
+		// File size when the log exists.
+		if ( $exists ) {
+			printf(
+				'<p class="description">%s</p>',
+				sprintf(
+					/* translators: %s: Human-readable file size */
+					esc_html__( 'Current size: %s', 'kntnt-ad-attr' ),
+					esc_html( size_format( (int) filesize( $path ) ) ),
+				),
+			);
+		}
+
+		// Download and Clear buttons.
+		echo '<p>';
+
+		printf(
+			'<a href="%s" class="button button-secondary"%s>%s</a> ',
+			esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=kntnt_ad_attr_download_log' ), 'kntnt_ad_attr_download_log' ) ),
+			$exists ? '' : ' disabled aria-disabled="true" style="pointer-events:none;opacity:.5"',
+			esc_html__( 'Download Log', 'kntnt-ad-attr' ),
+		);
+
+		printf(
+			'<a href="%s" class="button button-secondary"%s>%s</a>',
+			esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=kntnt_ad_attr_clear_log' ), 'kntnt_ad_attr_clear_log' ) ),
+			$exists ? '' : ' disabled aria-disabled="true" style="pointer-events:none;opacity:.5"',
+			esc_html__( 'Clear Log', 'kntnt-ad-attr' ),
+		);
+
+		echo '</p>';
+		echo '</div>';
+	}
+
+	/**
+	 * Handles the logging enable/disable toggle form submission.
+	 *
+	 * @return void
+	 * @since 1.9.0
+	 */
+	private function handle_toggle_logging(): void {
+		check_admin_referer( 'kntnt_ad_attr_toggle_logging', 'kntnt_ad_attr_toggle_nonce' );
+
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Permission denied.', 'kntnt-ad-attr' ) );
+		}
+
+		$saved   = $this->settings->get_saved();
+		$enabled = isset( $_POST['enable_logging'] ) && $_POST['enable_logging'] === '1';
+
+		$saved['enable_logging'] = $enabled ? '1' : '';
+		$this->settings->update( $saved );
+
+		$message = $enabled ? 'logging_enabled' : 'logging_disabled';
+
+		wp_safe_redirect( add_query_arg( [
+			'page'    => Plugin::get_slug(),
+			'message' => $message,
+		], admin_url( 'tools.php' ) ) );
+		exit;
+	}
+
+	/**
+	 * Handles the admin post request to download the log file.
+	 *
+	 * @return void
+	 * @since 1.9.0
+	 */
+	public function handle_download_log(): void {
+		check_admin_referer( 'kntnt_ad_attr_download_log' );
+
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Permission denied.', 'kntnt-ad-attr' ) );
+		}
+
+		if ( ! $this->logger->exists() ) {
+			wp_die( esc_html__( 'Log file does not exist.', 'kntnt-ad-attr' ) );
+		}
+
+		$path = $this->logger->get_path();
+
+		// Send the file as a download.
+		nocache_headers();
+		header( 'Content-Type: text/plain' );
+		header( 'Content-Disposition: attachment; filename="' . basename( $path ) . '"' );
+		header( 'Content-Length: ' . filesize( $path ) );
+		readfile( $path );
+		exit;
+	}
+
+	/**
+	 * Handles the admin post request to clear the log file.
+	 *
+	 * @return void
+	 * @since 1.9.0
+	 */
+	public function handle_clear_log(): void {
+		check_admin_referer( 'kntnt_ad_attr_clear_log' );
+
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Permission denied.', 'kntnt-ad-attr' ) );
+		}
+
+		$this->logger->clear();
+
+		wp_safe_redirect( add_query_arg( [
+			'page'    => Plugin::get_slug(),
+			'message' => 'log_cleared',
+		], admin_url( 'tools.php' ) ) );
+		exit;
 	}
 
 	/**

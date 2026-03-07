@@ -163,6 +163,8 @@ CREATE TABLE {prefix}kntnt_ad_attr_queue (
     attempts           TINYINT UNSIGNED NOT NULL DEFAULT 0,
     created_at         DATETIME         NOT NULL,
     processed_at       DATETIME         NULL,
+    last_attempt_at    DATETIME         NULL,
+    not_before         DATETIME         NULL,
     error_message      TEXT             NULL,
     retry_after        DATETIME         NULL,
     label              VARCHAR(255)     NULL,
@@ -171,11 +173,11 @@ CREATE TABLE {prefix}kntnt_ad_attr_queue (
     max_rounds         TINYINT UNSIGNED NULL,
     round_delay        INT UNSIGNED     NULL,
     PRIMARY KEY (id),
-    INDEX idx_status_retry (status, retry_after, created_at)
+    INDEX idx_status_eligible (status, not_before, retry_after, created_at)
 ) {charset}
 ```
 
-Status transitions: `pending` → `processing` → `done` | `failed`. `status` is `VARCHAR(20)` instead of `ENUM` to avoid schema changes if new statuses are added. Retry logic is configurable per job via `attempts_per_round`, `retry_delay`, `max_rounds`, and `round_delay` columns (with global defaults from `Settings`). The `label` column stores a human-readable job description for the admin queue management UI. Completed jobs are cleaned up after 30 days, failed jobs after 90 days.
+Status transitions: `pending` → `processing` → `done` | `failed`. `status` is `VARCHAR(20)` instead of `ENUM` to avoid schema changes if new statuses are added. Retry logic is configurable per job via `attempts_per_round`, `retry_delay`, `max_rounds`, and `round_delay` columns (with global defaults from `Settings`). The `not_before` column defers processing until a specific time (NULL = immediately eligible); used by reporters like Google Ads that need a delay after click capture. The `last_attempt_at` column tracks when each job was last processed. The `label` column stores a human-readable job description for the admin queue management UI. Completed jobs are cleaned up after 30 days, failed jobs after 90 days.
 
 ### Target URL — Dynamic Resolving
 

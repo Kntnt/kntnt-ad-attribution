@@ -264,12 +264,13 @@ final class Conversion_Handler {
 				foreach ( $items as $item ) {
 					if ( isset( $item['payload'] ) ) {
 
-						// Structured format with optional label and retry params.
+						// Structured format with optional label, retry params, and deferred processing.
 						$this->queue->enqueue(
 							(string) $reporter_id,
 							$item['payload'],
 							$item['label'] ?? '',
 							$item['retry_params'] ?? [],
+							$item['not_before'] ?? null,
 						);
 					} else {
 

@@ -48,7 +48,8 @@ migrations/
 ├── 1.0.0.php    ← no-op (originally created stats table, superseded by 1.5.0)
 ├── 1.2.0.php    ← click ID and queue tables
 ├── 1.5.0.php    ← clicks + conversions tables, drops stats
-└── 1.8.0.php    ← per-job retry columns and index on queue table
+├── 1.8.0.php    ← per-job retry columns and index on queue table
+└── 1.9.0.php    ← deferred processing (not_before, last_attempt_at) columns
 ```
 
 Each file returns a callable:

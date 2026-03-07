@@ -44,15 +44,16 @@ final class Queue {
 	/**
 	 * Enqueues a new job for a given reporter.
 	 *
-	 * @param string $reporter     Reporter identifier.
-	 * @param array  $payload      Data to be processed (will be JSON-encoded).
-	 * @param string $label        Human-readable description of the job.
-	 * @param array  $retry_params Per-job retry overrides (attempts_per_round, retry_delay, max_rounds, round_delay).
+	 * @param string   $reporter     Reporter identifier.
+	 * @param array    $payload      Data to be processed (will be JSON-encoded).
+	 * @param string   $label        Human-readable description of the job.
+	 * @param array    $retry_params Per-job retry overrides (attempts_per_round, retry_delay, max_rounds, round_delay).
+	 * @param int|null $not_before   Unix timestamp before which the job should not be processed, or null for immediate.
 	 *
 	 * @return void
 	 * @since 1.2.0
 	 */
-	public function enqueue( string $reporter, array $payload, string $label = '', array $retry_params = [] ): void {
+	public function enqueue( string $reporter, array $payload, string $label = '', array $retry_params = [], ?int $not_before = null ): void {
 		global $wpdb;
 
 		$table = $wpdb->prefix . 'kntnt_ad_attr_queue';
@@ -73,22 +74,23 @@ final class Queue {
 			'attempts'           => 0,
 			'created_at'         => gmdate( 'Y-m-d H:i:s' ),
 			'label'              => $label !== '' ? $label : null,
+			'not_before'         => $not_before !== null ? gmdate( 'Y-m-d H:i:s', $not_before ) : null,
 			'attempts_per_round' => $retry['attempts_per_round'],
 			'retry_delay'        => $retry['retry_delay'],
 			'max_rounds'         => $retry['max_rounds'],
 			'round_delay'        => $retry['round_delay'],
-		], [ '%s', '%s', '%s', '%d', '%s', '%s', '%d', '%d', '%d', '%d' ] );
+		], [ '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%d', '%d', '%d', '%d' ] );
 	}
 
 	/**
 	 * Dequeues pending jobs for processing.
 	 *
-	 * Selects pending jobs that are ready (retry_after has passed or is NULL),
-	 * then atomically updates their status to 'processing'.
+	 * Selects pending jobs that are ready (retry_after and not_before have
+	 * passed or are NULL), then atomically updates their status to 'processing'.
 	 *
 	 * @param int $limit Maximum number of jobs to dequeue.
 	 *
-	 * @return array Array of objects with id, reporter, payload (decoded), and retry params.
+	 * @return array Array of objects with id, reporter, payload (decoded), not_before, and retry params.
 	 * @since 1.2.0
 	 */
 	public function dequeue( int $limit = 10 ): array {
@@ -97,10 +99,11 @@ final class Queue {
 		$table = $wpdb->prefix . 'kntnt_ad_attr_queue';
 
 		$rows = $wpdb->get_results( $wpdb->prepare(
-			"SELECT id, reporter, payload, attempts, attempts_per_round, retry_delay, max_rounds, round_delay
+			"SELECT id, reporter, payload, attempts, not_before, attempts_per_round, retry_delay, max_rounds, round_delay
 			 FROM {$table}
 			 WHERE status = 'pending'
 			   AND (retry_after IS NULL OR retry_after <= UTC_TIMESTAMP())
+			   AND (not_before IS NULL OR not_before <= UTC_TIMESTAMP())
 			 ORDER BY retry_after ASC, created_at ASC
 			 LIMIT %d",
 			$limit,
@@ -113,9 +116,10 @@ final class Queue {
 		$ids          = array_map( fn( object $row ) => (int) $row->id, $rows );
 		$placeholders = implode( ',', array_fill( 0, count( $ids ), '%d' ) );
 
+		// Mark as processing and record the attempt timestamp.
 		$wpdb->query( $wpdb->prepare(
 			"UPDATE {$table}
-			 SET status = 'processing'
+			 SET status = 'processing', last_attempt_at = UTC_TIMESTAMP()
 			 WHERE id IN ({$placeholders})",
 			...$ids,
 		) );
@@ -147,16 +151,16 @@ final class Queue {
 
 		$table = $wpdb->prefix . 'kntnt_ad_attr_queue';
 
-		$wpdb->update(
-			$table,
-			[
-				'status'       => 'done',
-				'processed_at' => gmdate( 'Y-m-d H:i:s' ),
-			],
-			[ 'id' => $id ],
-			[ '%s', '%s' ],
-			[ '%d' ],
-		);
+		$now = gmdate( 'Y-m-d H:i:s' );
+
+		$wpdb->query( $wpdb->prepare(
+			"UPDATE {$table}
+			 SET status = 'done', processed_at = %s, last_attempt_at = %s, attempts = attempts + 1
+			 WHERE id = %d",
+			$now,
+			$now,
+			$id,
+		) );
 	}
 
 	/**
@@ -199,20 +203,23 @@ final class Queue {
 		// Calculate max total attempts across all rounds.
 		$max_total = $attempts_per_round * $max_rounds;
 
+		$now = gmdate( 'Y-m-d H:i:s' );
+
 		if ( $k >= $max_total ) {
 
 			// Permanently failed.
 			$wpdb->update(
 				$table,
 				[
-					'attempts'      => $k,
-					'status'        => 'failed',
-					'error_message' => $message,
-					'processed_at'  => gmdate( 'Y-m-d H:i:s' ),
-					'retry_after'   => null,
+					'attempts'        => $k,
+					'status'          => 'failed',
+					'error_message'   => $message,
+					'processed_at'    => $now,
+					'last_attempt_at' => $now,
+					'retry_after'     => null,
 				],
 				[ 'id' => $id ],
-				[ '%d', '%s', '%s', '%s', null ],
+				[ '%d', '%s', '%s', '%s', '%s', null ],
 				[ '%d' ],
 			);
 		} elseif ( $attempts_per_round > 0 && $k % $attempts_per_round === 0 ) {
@@ -222,13 +229,14 @@ final class Queue {
 			$wpdb->update(
 				$table,
 				[
-					'attempts'      => $k,
-					'status'        => 'pending',
-					'error_message' => $message,
-					'retry_after'   => $retry_at,
+					'attempts'        => $k,
+					'status'          => 'pending',
+					'error_message'   => $message,
+					'retry_after'     => $retry_at,
+					'last_attempt_at' => $now,
 				],
 				[ 'id' => $id ],
-				[ '%d', '%s', '%s', '%s' ],
+				[ '%d', '%s', '%s', '%s', '%s' ],
 				[ '%d' ],
 			);
 		} else {
@@ -238,13 +246,14 @@ final class Queue {
 			$wpdb->update(
 				$table,
 				[
-					'attempts'      => $k,
-					'status'        => 'pending',
-					'error_message' => $message,
-					'retry_after'   => $retry_at,
+					'attempts'        => $k,
+					'status'          => 'pending',
+					'error_message'   => $message,
+					'retry_after'     => $retry_at,
+					'last_attempt_at' => $now,
 				],
 				[ 'id' => $id ],
-				[ '%d', '%s', '%s', '%s' ],
+				[ '%d', '%s', '%s', '%s', '%s' ],
 				[ '%d' ],
 			);
 		}
@@ -285,9 +294,12 @@ final class Queue {
 	}
 
 	/**
-	 * Returns the earliest retry_after timestamp among pending jobs with future retry.
+	 * Returns the earliest future eligibility timestamp among pending jobs.
 	 *
-	 * @return int|null Unix timestamp of the next retry, or null if none.
+	 * Considers both retry_after and not_before to find the soonest time
+	 * when a currently-ineligible pending job becomes eligible.
+	 *
+	 * @return int|null Unix timestamp of the next eligible job, or null if none.
 	 * @since 1.8.0
 	 */
 	public function get_next_retry_time(): ?int {
@@ -296,14 +308,19 @@ final class Queue {
 		$table = $wpdb->prefix . 'kntnt_ad_attr_queue';
 
 		$result = $wpdb->get_var(
-			"SELECT MIN(retry_after)
+			"SELECT MIN(LEAST(
+			    COALESCE(retry_after, '9999-12-31 23:59:59'),
+			    COALESCE(not_before, '9999-12-31 23:59:59')
+			 ))
 			 FROM {$table}
 			 WHERE status = 'pending'
-			   AND retry_after IS NOT NULL
-			   AND retry_after > UTC_TIMESTAMP()",
+			   AND (
+			     (retry_after IS NOT NULL AND retry_after > UTC_TIMESTAMP())
+			     OR (not_before IS NOT NULL AND not_before > UTC_TIMESTAMP())
+			   )",
 		);
 
-		if ( $result === null ) {
+		if ( $result === null || $result === '9999-12-31 23:59:59' ) {
 			return null;
 		}
 
@@ -311,7 +328,7 @@ final class Queue {
 	}
 
 	/**
-	 * Returns all pending and failed jobs for the admin queue table.
+	 * Returns all active and recently completed jobs for the admin queue table.
 	 *
 	 * @return array Array of row objects.
 	 * @since 1.8.0
@@ -322,10 +339,13 @@ final class Queue {
 		$table = $wpdb->prefix . 'kntnt_ad_attr_queue';
 
 		return $wpdb->get_results(
-			"SELECT id, reporter, status, attempts, created_at, retry_after, error_message, label
+			"SELECT id, reporter, status, attempts, created_at, processed_at, retry_after,
+			        last_attempt_at, not_before, error_message, label
 			 FROM {$table}
-			 WHERE status IN ('pending', 'failed', 'processing')
-			 ORDER BY created_at DESC",
+			 WHERE status IN ('pending', 'failed', 'processing', 'done')
+			 ORDER BY
+			   CASE status WHEN 'processing' THEN 0 WHEN 'pending' THEN 1 WHEN 'failed' THEN 2 WHEN 'done' THEN 3 END,
+			   created_at DESC",
 		);
 	}
 

@@ -57,11 +57,11 @@ final class Click_ID_Store {
 	}
 
 	/**
-	 * Retrieves click IDs for a set of hashes.
+	 * Retrieves click IDs with capture timestamps for a set of hashes.
 	 *
 	 * @param string[] $hashes SHA-256 hashes to look up.
 	 *
-	 * @return array<string, array<string, string>> Hash => [ platform => click_id ].
+	 * @return array<string, array<string, array{id: string, captured_at: int}>> Hash => [ platform => structured data ].
 	 * @since 1.2.0
 	 */
 	public function get_for_hashes( array $hashes ): array {
@@ -75,7 +75,7 @@ final class Click_ID_Store {
 		$placeholders = implode( ',', array_fill( 0, count( $hashes ), '%s' ) );
 
 		$rows = $wpdb->get_results( $wpdb->prepare(
-			"SELECT hash, platform, click_id
+			"SELECT hash, platform, click_id, clicked_at
 			 FROM {$table}
 			 WHERE hash IN ({$placeholders})",
 			...$hashes,
@@ -83,7 +83,10 @@ final class Click_ID_Store {
 
 		$result = [];
 		foreach ( $rows as $row ) {
-			$result[ $row->hash ][ $row->platform ] = $row->click_id;
+			$result[ $row->hash ][ $row->platform ] = [
+				'id'          => $row->click_id,
+				'captured_at' => strtotime( $row->clicked_at . ' UTC' ),
+			];
 		}
 
 		return $result;

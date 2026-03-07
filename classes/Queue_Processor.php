@@ -141,12 +141,15 @@ final class Queue_Processor {
 			return false;
 		}
 
-		// Mark as processing.
+		// Mark as processing and record the attempt timestamp.
 		$wpdb->update(
 			$table,
-			[ 'status' => 'processing' ],
+			[
+				'status'          => 'processing',
+				'last_attempt_at' => gmdate( 'Y-m-d H:i:s' ),
+			],
 			[ 'id' => $job_id ],
-			[ '%s' ],
+			[ '%s', '%s' ],
 			[ '%d' ],
 		);
 

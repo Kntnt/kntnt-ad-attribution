@@ -62,22 +62,6 @@ final class Settings_Page {
 	private const SECTION_QUEUE = 'kntnt_ad_attr_section_queue';
 
 	/**
-	 * Admin post action for downloading the log file.
-	 *
-	 * @var string
-	 * @since 1.8.0
-	 */
-	private const ACTION_DOWNLOAD_LOG = 'kntnt_ad_attr_download_log';
-
-	/**
-	 * Admin post action for clearing the log file.
-	 *
-	 * @var string
-	 * @since 1.8.0
-	 */
-	private const ACTION_CLEAR_LOG = 'kntnt_ad_attr_clear_log';
-
-	/**
 	 * Settings instance for reading/writing settings.
 	 *
 	 * @var Settings
@@ -118,8 +102,6 @@ final class Settings_Page {
 		if ( is_admin() ) {
 			add_action( 'admin_menu', [ $this, 'add_page' ] );
 			add_action( 'admin_init', [ $this, 'register_settings' ] );
-			add_action( 'admin_post_' . self::ACTION_DOWNLOAD_LOG, [ $this, 'handle_download_log' ] );
-			add_action( 'admin_post_' . self::ACTION_CLEAR_LOG, [ $this, 'handle_clear_log' ] );
 		}
 	}
 
@@ -174,7 +156,7 @@ final class Settings_Page {
 			__( 'Logging', 'kntnt-ad-attr' ),
 			fn() => printf(
 				'<p>%s</p>',
-				esc_html__( 'Enable diagnostic logging for troubleshooting.', 'kntnt-ad-attr' ),
+				esc_html__( 'Configure log file rotation limits. Enable/disable logging and manage log files under Tools > Ad Attribution.', 'kntnt-ad-attr' ),
 			),
 			self::PAGE_SLUG,
 		);
@@ -215,7 +197,6 @@ final class Settings_Page {
 		$known = [
 			'cookie_lifetime',
 			'dedup_seconds',
-			'enable_logging',
 			'log_file_size_max_KB',
 			'log_file_size_min_KB',
 			'attempts_per_round',
@@ -245,12 +226,6 @@ final class Settings_Page {
 
 			$value = is_string( $value ) ? trim( $value ) : (string) $value;
 
-			// Handle checkbox: present means enabled, absent means disabled.
-			if ( $key === 'enable_logging' ) {
-				$clean[ $key ] = $value !== '' ? '1' : '';
-				continue;
-			}
-
 			// Validate numeric fields.
 			if ( in_array( $key, $numeric_keys, true ) ) {
 				if ( $value === '' ) {
@@ -269,9 +244,10 @@ final class Settings_Page {
 			}
 		}
 
-		// Handle enable_logging when checkbox is unchecked (not submitted).
-		if ( ! isset( $input['enable_logging'] ) ) {
-			$clean['enable_logging'] = '';
+		// Preserve enable_logging from the existing settings (managed on the Tools page).
+		$saved = $this->settings->get_saved();
+		if ( isset( $saved['enable_logging'] ) ) {
+			$clean['enable_logging'] = $saved['enable_logging'];
 		}
 
 		return $clean;
@@ -298,54 +274,6 @@ final class Settings_Page {
 			</form>
 		</div>
 		<?php
-	}
-
-	/**
-	 * Handles the admin post request to download the log file.
-	 *
-	 * @return void
-	 * @since 1.8.0
-	 */
-	public function handle_download_log(): void {
-		check_admin_referer( self::ACTION_DOWNLOAD_LOG );
-
-		if ( ! current_user_can( 'manage_options' ) ) {
-			wp_die( esc_html__( 'Permission denied.', 'kntnt-ad-attr' ) );
-		}
-
-		if ( ! $this->logger->exists() ) {
-			wp_die( esc_html__( 'Log file does not exist.', 'kntnt-ad-attr' ) );
-		}
-
-		$path = $this->logger->get_path();
-
-		// Send the file as a download.
-		nocache_headers();
-		header( 'Content-Type: text/plain' );
-		header( 'Content-Disposition: attachment; filename="' . basename( $path ) . '"' );
-		header( 'Content-Length: ' . filesize( $path ) );
-		readfile( $path );
-		exit;
-	}
-
-	/**
-	 * Handles the admin post request to clear the log file.
-	 *
-	 * @return void
-	 * @since 1.8.0
-	 */
-	public function handle_clear_log(): void {
-		check_admin_referer( self::ACTION_CLEAR_LOG );
-
-		if ( ! current_user_can( 'manage_options' ) ) {
-			wp_die( esc_html__( 'Permission denied.', 'kntnt-ad-attr' ) );
-		}
-
-		$this->logger->clear();
-
-		// Redirect back to the settings page.
-		wp_safe_redirect( admin_url( 'options-general.php?page=' . self::PAGE_SLUG ) );
-		exit;
 	}
 
 	/**
@@ -383,16 +311,6 @@ final class Settings_Page {
 	 */
 	private function add_logging_fields(): void {
 
-		// Enable logging checkbox.
-		add_settings_field(
-			'enable_logging',
-			__( 'Enable Logging', 'kntnt-ad-attr' ),
-			[ $this, 'render_logging_checkbox' ],
-			self::PAGE_SLUG,
-			self::SECTION_LOGGING,
-			[ 'label_for' => 'enable_logging' ],
-		);
-
 		add_settings_field(
 			'log_file_size_max_KB',
 			__( 'Max Log File Size (KB)', 'kntnt-ad-attr' ),
@@ -409,15 +327,6 @@ final class Settings_Page {
 			self::PAGE_SLUG,
 			self::SECTION_LOGGING,
 			[ 'label_for' => 'log_file_size_min_KB' ],
-		);
-
-		// Log file actions (download and clear).
-		add_settings_field(
-			'log_actions',
-			__( 'Log File', 'kntnt-ad-attr' ),
-			[ $this, 'render_log_actions' ],
-			self::PAGE_SLUG,
-			self::SECTION_LOGGING,
 		);
 	}
 
@@ -463,65 +372,6 @@ final class Settings_Page {
 			self::PAGE_SLUG,
 			self::SECTION_QUEUE,
 			[ 'label_for' => 'round_delay' ],
-		);
-	}
-
-	/**
-	 * Renders the enable logging checkbox.
-	 *
-	 * @return void
-	 * @since 1.8.0
-	 */
-	public function render_logging_checkbox(): void {
-		$enabled = (bool) $this->settings->get( 'enable_logging' );
-		printf(
-			'<label><input type="checkbox" id="enable_logging" name="%s[enable_logging]" value="1"%s> %s</label>',
-			esc_attr( Settings::OPTION_KEY ),
-			checked( $enabled, true, false ),
-			sprintf(
-				/* translators: %s: Relative path to the log file */
-				esc_html__( 'Write diagnostic log to %s', 'kntnt-ad-attr' ),
-				'<code>' . esc_html( $this->logger->get_relative_path() ) . '</code>',
-			),
-		);
-	}
-
-	/**
-	 * Renders the log download and clear action buttons.
-	 *
-	 * @return void
-	 * @since 1.8.0
-	 */
-	public function render_log_actions(): void {
-		$exists = $this->logger->exists();
-		$path   = $this->logger->get_path();
-
-		// Show file size when the log exists.
-		if ( $exists ) {
-			printf(
-				'<p class="description">%s</p>',
-				sprintf(
-					/* translators: %s: Human-readable file size */
-					esc_html__( 'Current size: %s', 'kntnt-ad-attr' ),
-					esc_html( size_format( (int) filesize( $path ) ) ),
-				),
-			);
-		}
-
-		// Download button.
-		printf(
-			'<a href="%s" class="button button-secondary"%s>%s</a> ',
-			esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=' . self::ACTION_DOWNLOAD_LOG ), self::ACTION_DOWNLOAD_LOG ) ),
-			$exists ? '' : ' disabled aria-disabled="true" style="pointer-events:none;opacity:.5"',
-			esc_html__( 'Download Log', 'kntnt-ad-attr' ),
-		);
-
-		// Clear button.
-		printf(
-			'<a href="%s" class="button button-secondary"%s>%s</a>',
-			esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=' . self::ACTION_CLEAR_LOG ), self::ACTION_CLEAR_LOG ) ),
-			$exists ? '' : ' disabled aria-disabled="true" style="pointer-events:none;opacity:.5"',
-			esc_html__( 'Clear Log', 'kntnt-ad-attr' ),
 		);
 	}
 

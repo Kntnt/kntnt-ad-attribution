@@ -27,7 +27,7 @@ The plugin does not hardcode integrations with any specific consent management o
 - **Deduplication** — per-hash deduplication prevents the same tracking URL from generating duplicate conversions within a configurable window. Disabled by default (`kntnt_ad_attr_dedup_seconds` = 0); when enabled, each hash is independently checked against its last conversion timestamp.
 - **Cookie size management** — stores a maximum of 50 ad hashes per visitor, pruning the oldest when the limit is reached.
 - **Campaign dashboard** — view clicks, conversions, and fractional attribution per campaign for any date range, with CSV export. The date filter defaults to the two most recent complete calendar weeks (based on the WordPress "Week Starts On" setting). Individual click records include per-click Content, Term, Id, and Group fields.
-- **Settings page** — configure cookie lifetime, deduplication, diagnostic logging, and queue retry parameters under **Settings > Ad Attribution**. Filter-based defaults can be overridden via the UI.
+- **Settings page** — configure cookie lifetime, deduplication, log file size limits, and queue retry parameters under **Settings > Ad Attribution**. Logging toggle and log file management (download, clear) are on the **Tools > Ad Attribution** page.
 - **Shared diagnostic logging** — timestamped log file at `wp-content/uploads/kntnt-ad-attribution/kntnt-ad-attribution.log`, shared by core and add-on plugins. Controlled via the settings page. Sensitive values are masked.
 - **Queue management UI** — view, retry, and delete individual queue jobs from the Report Queue table on the admin page.
 - **Three-state consent model** — integrates with any cookie consent plugin via a filter hook, supporting yes, no, and undefined consent states with a transport mechanism for deferred consent.
@@ -506,7 +506,7 @@ Reporter definition:
 | Key | Type | Description |
 |-----|------|-------------|
 | `label` | `string` | Name for logging and admin UI. |
-| `enqueue` | `callable` | Called at conversion time. Signature: `( array $attributions, array $click_ids, array $campaigns, array $context ) → array` of items. Each item is either a structured array with `payload`, optional `label`, and optional `retry_params` keys, or a raw payload array (legacy format). |
+| `enqueue` | `callable` | Called at conversion time. Signature: `( array $attributions, array $click_ids, array $campaigns, array $context ) → array` of items. Each item is either a structured array with `payload`, optional `label`, optional `retry_params`, and optional `not_before` keys, or a raw payload array (legacy format). |
 | `process` | `callable` | Called by queue processor. Signature: `( array $payload ) → bool`. |
 
 Structured item keys:
@@ -516,6 +516,7 @@ Structured item keys:
 | `payload` | `array` | Yes | The data to be processed by the `process` callback. |
 | `label` | `string` | No | Human-readable description shown in the queue management UI. |
 | `retry_params` | `array` | No | Per-job retry overrides: `attempts_per_round`, `retry_delay`, `max_rounds`, `round_delay`. |
+| `not_before` | `int` | No | Unix timestamp before which the job should not be processed. Used for deferred uploads (e.g. Google Ads 6h delay). |
 
 See [Adapter System](#adapter-system) for full examples and documentation.
 
@@ -715,7 +716,7 @@ The core handles sanitization, validation, and storage. Click IDs are stored in 
 
 A *conversion reporter* tells the core how to report a conversion to an external service. Each reporter defines two callbacks:
 
-- **`enqueue`** — called synchronously at conversion time. Receives attribution data, click IDs, campaign data, and context. Returns an array of structured items (with `payload`, optional `label`, and optional `retry_params` keys) to be queued for async processing.
+- **`enqueue`** — called synchronously at conversion time. Receives attribution data, click IDs, campaign data, and context. Returns an array of structured items (with `payload`, optional `label`, optional `retry_params`, and optional `not_before` keys) to be queued for async processing.
 - **`process`** — called asynchronously by the queue processor. Receives a single payload and performs the actual API call. Returns `true` on success, `false` on failure.
 
 ```php
@@ -726,7 +727,7 @@ add_filter( 'kntnt_ad_attr_conversion_reporters', function ( array $reporters ):
             // Build structured items for each attributed hash that has a click ID.
             $items = [];
             foreach ( $attributions as $hash => $value ) {
-                $click_id = $click_ids[ $hash ]['my_platform'] ?? '';
+                $click_id = $click_ids[ $hash ]['my_platform']['id'] ?? '';
                 if ( $click_id !== '' ) {
                     $items[] = [
                         'payload' => [
@@ -844,7 +845,7 @@ Requires `zip` and `msgfmt` (GNU gettext). With `--tag`: `git`. With `--update` 
 12. `Click_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store)` — click processing & redirect
 13. `Conversion_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store, Queue, Queue_Processor)` — conversion attribution
 14. `Cron(Click_ID_Store, Queue, Logger)` — scheduled cleanup tasks
-15. `Admin_Page(Queue, Queue_Processor)` — admin UI orchestration
+15. `Admin_Page(Queue, Queue_Processor, Settings, Logger)` — admin UI orchestration
 16. `Rest_Endpoint(Cookie_Manager, Consent)` — REST API routes
 17. `Settings_Page(Settings, Logger)` — settings page under Settings > Ad Attribution
 
@@ -893,7 +894,8 @@ kntnt-ad-attribution/
 │   ├── 1.0.0.php                 ← No-op (legacy stats table, superseded by 1.5.0)
 │   ├── 1.2.0.php                 ← Click ID and queue tables
 │   ├── 1.5.0.php                 ← Clicks + conversions tables, drops stats
-│   └── 1.8.0.php                 ← Per-job retry columns and index on queue table
+│   ├── 1.8.0.php                 ← Per-job retry columns and index on queue table
+│   └── 1.9.0.php                 ← Deferred processing (not_before, last_attempt_at) columns
 ├── js/
 │   ├── pending-consent.js        ← Client-side: pending consent, sessionStorage, REST call
 │   └── admin.js                  ← Admin: select2, page selector, UTM field auto-fill

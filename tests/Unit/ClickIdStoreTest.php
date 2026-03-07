@@ -77,13 +77,13 @@ describe('Click_ID_Store::get_for_hashes()', function () {
         expect($result)->toBe([]);
     });
 
-    it('groups results by hash and platform', function () {
+    it('groups results by hash and platform with structured format', function () {
         $wpdb = TestFactory::wpdb();
         $GLOBALS['wpdb'] = $wpdb;
 
-        $row1 = (object) ['hash' => 'hash_a', 'platform' => 'google_ads', 'click_id' => 'CL1'];
-        $row2 = (object) ['hash' => 'hash_a', 'platform' => 'meta', 'click_id' => 'FB1'];
-        $row3 = (object) ['hash' => 'hash_b', 'platform' => 'google_ads', 'click_id' => 'CL2'];
+        $row1 = (object) ['hash' => 'hash_a', 'platform' => 'google_ads', 'click_id' => 'CL1', 'clicked_at' => '2024-01-01 12:00:00'];
+        $row2 = (object) ['hash' => 'hash_a', 'platform' => 'meta', 'click_id' => 'FB1', 'clicked_at' => '2024-01-01 12:30:00'];
+        $row3 = (object) ['hash' => 'hash_b', 'platform' => 'google_ads', 'click_id' => 'CL2', 'clicked_at' => '2024-01-02 08:00:00'];
 
         $wpdb->shouldReceive('prepare')
             ->once()
@@ -97,8 +97,13 @@ describe('Click_ID_Store::get_for_hashes()', function () {
         $result = (new Click_ID_Store())->get_for_hashes(['hash_a', 'hash_b']);
 
         expect($result)->toBe([
-            'hash_a' => ['google_ads' => 'CL1', 'meta' => 'FB1'],
-            'hash_b' => ['google_ads' => 'CL2'],
+            'hash_a' => [
+                'google_ads' => ['id' => 'CL1', 'captured_at' => strtotime('2024-01-01 12:00:00 UTC')],
+                'meta'       => ['id' => 'FB1', 'captured_at' => strtotime('2024-01-01 12:30:00 UTC')],
+            ],
+            'hash_b' => [
+                'google_ads' => ['id' => 'CL2', 'captured_at' => strtotime('2024-01-02 08:00:00 UTC')],
+            ],
         ]);
     });
 

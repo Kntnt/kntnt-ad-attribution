@@ -96,11 +96,11 @@ $wpdb->query( 'COMMIT' );
 
 After the `kntnt_ad_attr_conversion_recorded` action fires, the handler checks for registered reporters via `apply_filters('kntnt_ad_attr_conversion_reporters', [])`. If reporters are registered:
 
-1. **Look up click IDs** — calls `Click_ID_Store::get_for_hashes()` to retrieve platform-specific click IDs for all attributed hashes.
+1. **Look up click IDs** — calls `Click_ID_Store::get_for_hashes()` to retrieve platform-specific click IDs for all attributed hashes. Returns structured arrays: `[ hash => [ platform => ['id' => string, 'captured_at' => int] ] ]`.
 2. **Look up campaign data** — calls `get_campaign_data()` to retrieve Source/Medium/Campaign from postmeta and Content/Term/Id/Group from the clicks table for all attributed hashes.
 3. **Build context** — assembles timestamp, IP, user-agent, and page URL.
-4. **Call each reporter's `enqueue` callback** — passes `$attributions`, `$click_ids`, `$campaigns`, and `$context`. Each reporter returns an array of structured items (with `payload`, optional `label`, and optional `retry_params` keys) or raw payload arrays (legacy format).
-5. **Enqueue items** — each item's payload is JSON-encoded and inserted into the `kntnt_ad_attr_queue` table with `status = 'pending'`, along with optional `label` and per-job retry parameters.
+4. **Call each reporter's `enqueue` callback** — passes `$attributions`, `$click_ids`, `$campaigns`, and `$context`. Each reporter returns an array of structured items (with `payload`, optional `label`, optional `retry_params`, and optional `not_before` keys) or raw payload arrays (legacy format).
+5. **Enqueue items** — each item's payload is JSON-encoded and inserted into the `kntnt_ad_attr_queue` table with `status = 'pending'`, along with optional `label`, per-job retry parameters, and optional `not_before` timestamp for deferred processing.
 6. **Schedule processing** — calls `Queue_Processor::schedule()` to trigger a cron event.
 
 If no reporters are registered (default), the filter returns `[]`, the `! empty()` check exits immediately, and no database queries are made against the click_ids or queue tables.
@@ -110,10 +110,10 @@ If no reporters are registered (default), the filter returns `[]`, the `! empty(
 Queue jobs are processed by `Queue_Processor::process()`, triggered by the `kntnt_ad_attr_process_queue` cron hook.
 
 1. Fetches reporters via `kntnt_ad_attr_conversion_reporters` filter.
-2. Dequeues up to 10 pending jobs (atomically updated to `processing` status).
+2. Dequeues up to 10 pending jobs that are eligible (both `retry_after` and `not_before` have passed or are NULL). Atomically updates their status to `processing` and sets `last_attempt_at`.
 3. For each job, finds the matching reporter by `$item->reporter` key and calls its `process` callback with the decoded payload.
-4. On success (`true`): marks the job as `done`.
-5. On failure (`false` or exception): increments the attempt counter. Retry logic is configurable per job via `attempts_per_round`, `retry_delay`, `max_rounds`, and `round_delay` (with global defaults from `Settings`). When all rounds are exhausted, the job is marked as `failed` with the error message. Otherwise, it returns to `pending` with a `retry_after` timestamp.
-6. If pending jobs remain after processing, schedules another cron run.
+4. On success (`true`): marks the job as `done`, increments attempts, sets `last_attempt_at`.
+5. On failure (`false` or exception): increments the attempt counter, sets `last_attempt_at`. Retry logic is configurable per job via `attempts_per_round`, `retry_delay`, `max_rounds`, and `round_delay` (with global defaults from `Settings`). When all rounds are exhausted, the job is marked as `failed` with the error message. Otherwise, it returns to `pending` with a `retry_after` timestamp.
+6. If pending jobs remain after processing, schedules another cron run. Smart scheduling considers both `retry_after` and `not_before` to determine the optimal time.
 
 Individual jobs can be run immediately via `Queue_Processor::process_single()` or deleted via `Queue::delete()`, both accessible from the admin queue management UI.

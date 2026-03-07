@@ -11,6 +11,8 @@ declare(strict_types=1);
 use Kntnt\Ad_Attribution\Admin_Page;
 use Kntnt\Ad_Attribution\Queue;
 use Kntnt\Ad_Attribution\Queue_Processor;
+use Kntnt\Ad_Attribution\Settings;
+use Kntnt\Ad_Attribution\Logger;
 use Kntnt\Ad_Attribution\Plugin;
 use Brain\Monkey\Functions;
 use Brain\Monkey\Actions;
@@ -30,7 +32,9 @@ class AdminExitException extends \RuntimeException {}
 function make_admin_page(): array {
     $queue = Mockery::mock(Queue::class);
     $queue_processor = Mockery::mock(Queue_Processor::class);
-    return [new Admin_Page($queue, $queue_processor), $queue];
+    $settings = Mockery::mock(Settings::class)->shouldIgnoreMissing();
+    $logger = Mockery::mock(Logger::class)->shouldIgnoreMissing();
+    return [new Admin_Page($queue, $queue_processor, $settings, $logger), $queue, $settings, $logger];
 }
 
 /**
@@ -42,7 +46,7 @@ function make_admin_page(): array {
  * @return array{0: Admin_Page, 1: Mockery\MockInterface}
  */
 function setup_render_env(): array {
-    [$page, $queue] = make_admin_page();
+    [$page, $queue, $settings, $logger] = make_admin_page();
 
     $wpdb = TestFactory::wpdb();
     $GLOBALS['wpdb'] = $wpdb;
@@ -78,6 +82,15 @@ function setup_render_env(): array {
         return (new \DateTimeImmutable("@{$ts}", new \DateTimeZone('UTC')))->format($format);
     });
 
+    // Logging section stubs.
+    $settings->shouldReceive('get')->with('enable_logging')->andReturn(false);
+    $logger->shouldReceive('exists')->andReturn(false);
+    $logger->shouldReceive('get_path')->andReturn('/tmp/kntnt-ad-attribution.log');
+    $logger->shouldReceive('get_relative_path')->andReturn('uploads/kntnt-ad-attribution/kntnt-ad-attribution.log');
+    Functions\when('wp_nonce_url')->justReturn('https://example.com/wp-admin/admin-post.php');
+    Functions\when('checked')->justReturn('');
+    Functions\when('disabled')->justReturn('');
+
     return [$page, $queue];
 }
 
@@ -85,12 +98,14 @@ function setup_render_env(): array {
 
 describe('Admin_Page::register()', function () {
 
-    it('registers admin_menu, enqueue_scripts, and screen option hooks', function () {
+    it('registers admin_menu, enqueue_scripts, screen option, and admin_post hooks', function () {
         [$page] = make_admin_page();
 
         Actions\expectAdded('admin_menu')->once();
         Actions\expectAdded('admin_enqueue_scripts')->once();
         Filters\expectAdded('set-screen-option')->once();
+        Actions\expectAdded('admin_post_kntnt_ad_attr_download_log')->once();
+        Actions\expectAdded('admin_post_kntnt_ad_attr_clear_log')->once();
 
         $page->register();
 

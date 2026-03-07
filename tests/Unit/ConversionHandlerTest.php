@@ -821,6 +821,72 @@ describe('Conversion_Handler::handle_conversion()', function () {
         expect(true)->toBeTrue();
     });
 
+    it('passes not_before from structured reporter items to Queue::enqueue()', function () {
+        [$handler, $cm, $con, $bd, $cis, $q, $qp] = make_conversion_handler();
+        $hash = TestFactory::hash('not-before');
+        $now  = 1700000000;
+
+        Functions\when('time')->justReturn($now);
+        Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
+
+        $cm->shouldReceive('parse')->with('_ad_clicks')->once()->andReturn([$hash => $now]);
+
+        \Patchwork\redefine(
+            'Kntnt\Ad_Attribution\Post_Type::get_valid_hashes',
+            fn (array $hashes) => $hashes,
+        );
+
+        $wpdb = TestFactory::wpdb();
+        $GLOBALS['wpdb'] = $wpdb;
+        $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
+        $wpdb->shouldReceive('prepare')->andReturn('SQL');
+        $wpdb->shouldReceive('get_var')->andReturn('42');
+        $wpdb->shouldReceive('insert')->once()->andReturn(true);
+        $wpdb->shouldReceive('query')->with('COMMIT')->once();
+        $wpdb->shouldReceive('get_results')->andReturn([]);
+
+        $_SERVER['REMOTE_ADDR']     = '127.0.0.1';
+        $_SERVER['HTTP_USER_AGENT'] = 'TestAgent';
+        $_SERVER['REQUEST_URI']     = '/';
+
+        Functions\when('home_url')->alias(fn ($path) => 'https://example.com' . $path);
+
+        $cis->shouldReceive('get_for_hashes')->once()->andReturn([]);
+
+        // Register a reporter returning structured items with not_before.
+        $not_before_ts = 1700021600;
+        Filters\expectApplied('kntnt_ad_attr_conversion_reporters')
+            ->once()
+            ->andReturn([
+                'deferred_reporter' => [
+                    'enqueue' => fn () => [[
+                        'payload'      => ['data' => 'test'],
+                        'label'        => 'Deferred job',
+                        'retry_params' => ['attempts_per_round' => 5],
+                        'not_before'   => $not_before_ts,
+                    ]],
+                ],
+            ]);
+
+        // Queue should receive all 5 arguments including not_before.
+        $q->shouldReceive('enqueue')
+            ->once()
+            ->withArgs(function (string $reporter, array $payload, string $label, array $retry_params, ?int $not_before) use ($not_before_ts) {
+                expect($reporter)->toBe('deferred_reporter');
+                expect($payload)->toBe(['data' => 'test']);
+                expect($label)->toBe('Deferred job');
+                expect($retry_params)->toBe(['attempts_per_round' => 5]);
+                expect($not_before)->toBe($not_before_ts);
+                return true;
+            });
+
+        $qp->shouldReceive('schedule')->once();
+
+        $handler->handle_conversion();
+
+        expect(true)->toBeTrue();
+    });
+
     it('skips reporters with non-callable enqueue', function () {
         [$handler, $cm, $con, $bd, $cis, $q, $qp] = make_conversion_handler();
         $hash = TestFactory::hash('bad-reporter');

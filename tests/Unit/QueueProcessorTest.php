@@ -11,6 +11,7 @@ declare(strict_types=1);
 use Kntnt\Ad_Attribution\Queue;
 use Kntnt\Ad_Attribution\Queue_Processor;
 use Brain\Monkey\Functions;
+use Tests\Helpers\TestFactory;
 
 // ─── process() ───
 
@@ -193,6 +194,140 @@ describe('Queue_Processor::process()', function () {
             });
 
         (new Queue_Processor($queue))->process();
+    });
+
+});
+
+// ─── process_single() ───
+
+describe('Queue_Processor::process_single()', function () {
+
+    afterEach(function () {
+        unset($GLOBALS['wpdb']);
+    });
+
+    it('completes job on reporter success', function () {
+        $queue = Mockery::mock(Queue::class);
+
+        $wpdb = TestFactory::wpdb();
+        $GLOBALS['wpdb'] = $wpdb;
+
+        $job = (object) [
+            'id'       => 5,
+            'reporter' => 'ok',
+            'payload'  => json_encode(['key' => 'val']),
+            'status'   => 'pending',
+        ];
+
+        $wpdb->shouldReceive('prepare')->andReturn('sql');
+        $wpdb->shouldReceive('get_row')->once()->andReturn($job);
+
+        // Should mark as processing with last_attempt_at.
+        $wpdb->shouldReceive('update')
+            ->once()
+            ->withArgs(function (string $table, array $data, array $where) {
+                expect($data['status'])->toBe('processing');
+                expect($data)->toHaveKey('last_attempt_at');
+                expect($where)->toBe(['id' => 5]);
+                return true;
+            });
+
+        Functions\expect('apply_filters')
+            ->once()
+            ->with('kntnt_ad_attr_conversion_reporters', [])
+            ->andReturn(['ok' => ['process' => fn () => true]]);
+
+        $queue->shouldReceive('complete')->once()->with(5);
+
+        $result = (new Queue_Processor($queue))->process_single(5);
+
+        expect($result)->toBeTrue();
+    });
+
+    it('fails pending job via Queue::fail() on reporter failure', function () {
+        $queue = Mockery::mock(Queue::class);
+
+        $wpdb = TestFactory::wpdb();
+        $GLOBALS['wpdb'] = $wpdb;
+
+        $job = (object) [
+            'id'       => 3,
+            'reporter' => 'nope',
+            'payload'  => json_encode([]),
+            'status'   => 'pending',
+        ];
+
+        $wpdb->shouldReceive('prepare')->andReturn('sql');
+        $wpdb->shouldReceive('get_row')->once()->andReturn($job);
+        $wpdb->shouldReceive('update')->once(); // mark as processing
+
+        Functions\expect('apply_filters')
+            ->once()
+            ->with('kntnt_ad_attr_conversion_reporters', [])
+            ->andReturn(['nope' => ['process' => fn () => false]]);
+
+        $queue->shouldReceive('fail')->once()->with(3, 'Reporter returned false.');
+
+        $result = (new Queue_Processor($queue))->process_single(3);
+
+        expect($result)->toBeFalse();
+    });
+
+    it('keeps failed status on one-shot re-run of failed job', function () {
+        $queue = Mockery::mock(Queue::class);
+
+        $wpdb = TestFactory::wpdb();
+        $GLOBALS['wpdb'] = $wpdb;
+
+        $job = (object) [
+            'id'       => 8,
+            'reporter' => 'nope',
+            'payload'  => json_encode([]),
+            'status'   => 'failed',
+        ];
+
+        $wpdb->shouldReceive('prepare')->andReturn('sql');
+        $wpdb->shouldReceive('get_row')->once()->andReturn($job);
+
+        // Mark as processing.
+        $wpdb->shouldReceive('update')
+            ->once()
+            ->withArgs(fn ($t, $d) => $d['status'] === 'processing');
+
+        Functions\expect('apply_filters')
+            ->once()
+            ->with('kntnt_ad_attr_conversion_reporters', [])
+            ->andReturn(['nope' => ['process' => fn () => false]]);
+
+        // One-shot: should update directly via wpdb, not via Queue::fail().
+        $wpdb->shouldReceive('update')
+            ->once()
+            ->withArgs(function ($table, $data, $where) {
+                expect($data['status'])->toBe('failed');
+                expect($data['error_message'])->toBe('Reporter returned false.');
+                expect($where)->toBe(['id' => 8]);
+                return true;
+            });
+
+        $queue->shouldNotReceive('fail');
+
+        $result = (new Queue_Processor($queue))->process_single(8, true);
+
+        expect($result)->toBeFalse();
+    });
+
+    it('returns false when job does not exist', function () {
+        $queue = Mockery::mock(Queue::class);
+
+        $wpdb = TestFactory::wpdb();
+        $GLOBALS['wpdb'] = $wpdb;
+
+        $wpdb->shouldReceive('prepare')->andReturn('sql');
+        $wpdb->shouldReceive('get_row')->once()->andReturn(null);
+
+        $result = (new Queue_Processor($queue))->process_single(999);
+
+        expect($result)->toBeFalse();
     });
 
 });

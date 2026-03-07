@@ -148,13 +148,14 @@ Each item returned by `enqueue` is either a structured array or a raw payload (l
 | `payload` | `array` | Yes | The data to be processed by the `process` callback. |
 | `label` | `string` | No | Human-readable description shown in the queue management UI. |
 | `retry_params` | `array` | No | Per-job retry overrides: `attempts_per_round`, `retry_delay`, `max_rounds`, `round_delay`. |
+| `not_before` | `int` | No | Unix timestamp before which the job should not be processed. Used for deferred uploads (e.g. Google Ads 6h delay). |
 
 If an item lacks a `payload` key, the entire array is treated as the raw payload (backwards compatible).
 
 `enqueue` callback parameters:
 
 - `$attributions`: `[ hash => fractional_value, … ]` — sums to 1.0.
-- `$click_ids`: `[ hash => [ platform => click_id, … ], … ]` — may be empty for a given hash.
+- `$click_ids`: `[ hash => [ platform => ['id' => click_id, 'captured_at' => unix_timestamp], … ], … ]` — structured format with click ID and capture time. May be empty for a given hash.
 - `$campaigns`: `[ hash => [ 'utm_source' => …, 'utm_medium' => …, 'utm_campaign' => …, 'utm_content' => …, 'utm_term' => …, 'utm_id' => …, 'utm_source_platform' => … ], … ]`.
 - `$context`: `[ 'timestamp' => ISO-8601, 'ip' => string, 'user_agent' => string, 'page_url' => string ]`.
 
