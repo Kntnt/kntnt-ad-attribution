@@ -139,7 +139,7 @@ Each reporter definition is an associative array with three keys:
 |-----|------|-------------|
 | `label` | `string` | Name for logging and admin UI. |
 | `enqueue` | `callable` | Called at conversion time. Signature: `( array $attributions, array $click_ids, array $campaigns, array $context ) → array`. Returns array of structured items. |
-| `process` | `callable` | Called by queue processor. Signature: `( array $payload ) → bool`. Returns `true` on success, `false` on failure. |
+| `process` | `callable` | Called by queue processor. Signature: `( array $payload ) → bool`. Returns `true` when the job is complete (success or permanent failure — do not retry), `false` on transient failure (retry). |
 
 Each item returned by `enqueue` is either a structured array or a raw payload (legacy format):
 
