@@ -59,20 +59,31 @@ final class Click_Handler {
 	private readonly Click_ID_Store $click_id_store;
 
 	/**
+	 * Speculation detector for declining prefetch and prerender requests.
+	 *
+	 * @var Speculation_Detector
+	 * @since 1.10.0
+	 */
+	private readonly Speculation_Detector $speculation_detector;
+
+	/**
 	 * Initializes the click handler with its dependencies.
 	 *
-	 * @param Cookie_Manager $cookie_manager  Cookie read/write operations.
-	 * @param Consent        $consent         Consent state resolution.
-	 * @param Bot_Detector   $bot_detector    Bot traffic detection.
-	 * @param Click_ID_Store $click_id_store  Platform-specific click ID storage.
+	 * @param Cookie_Manager       $cookie_manager       Cookie read/write operations.
+	 * @param Consent              $consent              Consent state resolution.
+	 * @param Bot_Detector         $bot_detector         Bot traffic detection.
+	 * @param Click_ID_Store       $click_id_store       Platform-specific click ID storage.
+	 * @param Speculation_Detector $speculation_detector Speculative request detection.
 	 *
 	 * @since 1.0.0
+	 * @since 1.10.0 Takes a Speculation_Detector.
 	 */
-	public function __construct( Cookie_Manager $cookie_manager, Consent $consent, Bot_Detector $bot_detector, Click_ID_Store $click_id_store ) {
-		$this->cookie_manager = $cookie_manager;
-		$this->consent        = $consent;
-		$this->bot_detector   = $bot_detector;
-		$this->click_id_store = $click_id_store;
+	public function __construct( Cookie_Manager $cookie_manager, Consent $consent, Bot_Detector $bot_detector, Click_ID_Store $click_id_store, Speculation_Detector $speculation_detector ) {
+		$this->cookie_manager       = $cookie_manager;
+		$this->consent              = $consent;
+		$this->bot_detector         = $bot_detector;
+		$this->click_id_store       = $click_id_store;
+		$this->speculation_detector = $speculation_detector;
 	}
 
 	/**
@@ -213,6 +224,14 @@ final class Click_Handler {
 		// Step 9: Bot check — bots get redirected without logging or cookies.
 		if ( $this->bot_detector->is_bot() ) {
 			$this->redirect( $target_url );
+		}
+
+		// Speculative check — a prefetch or prerender is not a click, and the
+		// visitor may never make one. Declining it with a non-2xx response
+		// makes the browser discard it, so a real click that follows reaches
+		// the server as a fresh request and is counted once.
+		if ( $this->speculation_detector->is_speculative() ) {
+			$this->decline_speculative();
 		}
 
 		// Capture the current time once for consistent timestamps across
@@ -443,6 +462,24 @@ final class Click_Handler {
 	private function js_redirect( string $url ): never {
 		$escaped_url = esc_js( $url );
 		echo '<!DOCTYPE html><html><head><script>window.location.href="' . $escaped_url . '";</script></head><body></body></html>';
+		exit;
+	}
+
+	/**
+	 * Declines a speculative request and terminates execution.
+	 *
+	 * Chrome treats a prefetch or prerender that ends in a non-2xx status as
+	 * failed and does not use it, so the visitor's real navigation, if any,
+	 * makes a fresh request. A redirect would be followed and cached as the
+	 * prefetched response instead, so the real click would never reach the
+	 * server. The response must not be cached for the same reason.
+	 *
+	 * @return never
+	 * @since 1.10.0
+	 */
+	private function decline_speculative(): never {
+		status_header( 503 );
+		nocache_headers();
 		exit;
 	}
 

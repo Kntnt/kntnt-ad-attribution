@@ -13,6 +13,7 @@ use Kntnt\Ad_Attribution\Cookie_Manager;
 use Kntnt\Ad_Attribution\Consent;
 use Kntnt\Ad_Attribution\Bot_Detector;
 use Kntnt\Ad_Attribution\Click_ID_Store;
+use Kntnt\Ad_Attribution\Speculation_Detector;
 use Brain\Monkey\Functions;
 use Brain\Monkey\Actions;
 use Brain\Monkey\Filters;
@@ -26,6 +27,10 @@ class ExitException extends \RuntimeException {}
 /**
  * Creates a Click_Handler with fresh mocked dependencies.
  *
+ * The speculation detector is the real one: it only reads request headers
+ * through the kntnt_ad_attr_is_speculative filter, which Brain Monkey
+ * passes through as false unless a test sets an expectation on it.
+ *
  * @return array{0: Click_Handler, 1: Mockery\MockInterface, 2: Mockery\MockInterface, 3: Mockery\MockInterface, 4: Mockery\MockInterface}
  */
 function make_click_handler(): array {
@@ -33,7 +38,42 @@ function make_click_handler(): array {
     $con = Mockery::mock(Consent::class);
     $bd  = Mockery::mock(Bot_Detector::class);
     $cis = Mockery::mock(Click_ID_Store::class);
-    return [new Click_Handler($cm, $con, $bd, $cis), $cm, $con, $bd, $cis];
+    return [new Click_Handler($cm, $con, $bd, $cis, new Speculation_Detector()), $cm, $con, $bd, $cis];
+}
+
+/**
+ * Stubs a request for a published tracking URL up to the bot check.
+ *
+ * The hash is valid, its tracking URL exists, and its target resolves to
+ * the given URL. Query forwarding uses the real PHP URL functions.
+ *
+ * @return Mockery\MockInterface The mock wpdb, installed as $GLOBALS['wpdb'].
+ */
+function stub_tracking_url_request(Mockery\MockInterface $cm, string $hash, string $target_url = 'https://example.com/'): Mockery\MockInterface {
+    Functions\expect('get_query_var')->once()->andReturn($hash);
+    $cm->shouldReceive('validate_hash')->andReturn(true);
+
+    $wpdb = TestFactory::wpdb();
+    $wpdb->shouldReceive('prepare')->andReturn('SQL')->byDefault();
+    $wpdb->shouldReceive('get_row')->once()->andReturn((object) ['ID' => 10, 'target_post_id' => '20']);
+    $GLOBALS['wpdb'] = $wpdb;
+
+    Functions\expect('get_permalink')->once()->andReturn($target_url);
+    Functions\when('wp_parse_url')->alias(fn ($url, $comp) => parse_url($url, $comp));
+    Functions\when('wp_parse_str')->alias(function ($str, &$result) { parse_str($str, $result); });
+    Functions\when('add_query_arg')->alias(fn ($args, $url) => $url . ($args ? '?' . http_build_query($args) : ''));
+    Functions\when('get_post_meta')->justReturn('existing');
+
+    return $wpdb;
+}
+
+/**
+ * Lets kntnt_ad_attr_is_speculative run the plugin's default callback,
+ * which Brain Monkey would otherwise skip.
+ */
+function apply_default_speculation_detection(): void {
+    Filters\expectApplied('kntnt_ad_attr_is_speculative')
+        ->andReturnUsing(fn (bool $value) => (new Speculation_Detector())->detect($value));
 }
 
 /**
@@ -1177,6 +1217,64 @@ describe('Click_Handler::handle_click()', function () {
         Functions\expect('wp_redirect')->once()->andReturnUsing(fn () => throw new ExitException());
 
         expect(fn () => $handler->handle_click())->toThrow(ExitException::class);
+    });
+
+});
+
+// ─── handle_click(): speculative requests ───
+
+describe('Click_Handler::handle_click() speculative requests', function () {
+
+    afterEach(function () {
+        unset($GLOBALS['wpdb'], $_SERVER['HTTP_SEC_PURPOSE'], $_SERVER['HTTP_PURPOSE']);
+        $_GET = [];
+    });
+
+    it('declines a speculative request with an uncacheable 503 and records nothing', function (string $header, string $value) {
+        [$handler, $cm, $con, $bd, $cis] = make_click_handler();
+        $hash = TestFactory::hash('speculative');
+        $wpdb = stub_tracking_url_request($cm, $hash);
+
+        $_SERVER[$header] = $value;
+        $bd->shouldReceive('is_bot')->andReturn(false);
+        apply_default_speculation_detection();
+
+        // No click row, no click ID, no cookie, no transport, no action.
+        $wpdb->shouldNotReceive('insert');
+        $cis->shouldNotReceive('store');
+        $cm->shouldNotReceive('set_clicks_cookie');
+        $cm->shouldNotReceive('set_transport_cookie');
+        Actions\expectDone('kntnt_ad_attr_click')->never();
+
+        // A non-2xx, non-redirect, uncacheable response.
+        Functions\expect('wp_redirect')->never();
+        Functions\expect('status_header')->once()->with(503);
+        Functions\expect('nocache_headers')->once()->andReturnUsing(fn () => throw new ExitException('503'));
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class, '503');
+    })->with([
+        'Sec-Purpose: prefetch'           => ['HTTP_SEC_PURPOSE', 'prefetch'],
+        'Sec-Purpose: prefetch;prerender' => ['HTTP_SEC_PURPOSE', 'prefetch;prerender'],
+        'Purpose: prefetch'               => ['HTTP_PURPOSE', 'prefetch'],
+    ]);
+
+    it('records a prefetch as a click when a kntnt_ad_attr_is_speculative callback overrules detection', function () {
+        [$handler, $cm, $con, $bd, $cis] = make_click_handler();
+        $hash = TestFactory::hash('speculative-overruled');
+        $wpdb = stub_tracking_url_request($cm, $hash);
+
+        $_SERVER['HTTP_SEC_PURPOSE'] = 'prefetch';
+        $bd->shouldReceive('is_bot')->andReturn(false);
+        Filters\expectApplied('kntnt_ad_attr_is_speculative')->once()->andReturn(false);
+
+        $con->shouldReceive('check')->andReturn(false);
+        $wpdb->shouldReceive('insert')->once()->andReturn(true);
+
+        Functions\expect('status_header')->never();
+        Functions\expect('nocache_headers')->once();
+        Functions\expect('wp_redirect')->once()->andReturnUsing(fn () => throw new ExitException('redirect'));
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class, 'redirect');
     });
 
 });
