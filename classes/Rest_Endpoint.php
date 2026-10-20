@@ -34,6 +34,17 @@ final class Rest_Endpoint {
 	private const NAMESPACE = 'kntnt-ad-attribution/v1';
 
 	/**
+	 * Regex pattern for one posted click: `<hash>:<timestamp>`.
+	 *
+	 * Same syntax as a single `_ad_clicks` entry. Captures the SHA-256 hash
+	 * and the click's Unix timestamp.
+	 *
+	 * @var string
+	 * @since 1.10.0
+	 */
+	private const CLICK_PATTERN = '/^([a-f0-9]{64}):(\d{1,10})$/';
+
+	/**
 	 * Cookie manager for reading/writing the _ad_clicks cookie.
 	 *
 	 * @var Cookie_Manager
@@ -255,16 +266,23 @@ final class Rest_Endpoint {
 	}
 
 	/**
-	 * Persists pending hashes as the _ad_clicks cookie after consent.
+	 * Persists the visitor's pending clicks as the _ad_clicks cookie after consent.
 	 *
-	 * Called by the client-side script when the visitor grants consent.
-	 * Validates hashes against format and database, checks consent state,
-	 * merges with any existing cookie entries, and writes the cookie.
+	 * Called by the client-side script when the visitor grants consent. Each
+	 * item of the `hashes` parameter is a `<hash>:<timestamp>` pair naming one
+	 * click the visitor made while consent was undetermined. A pair is written
+	 * only if its hash is a published tracking URL and a click row with exactly
+	 * that hash and `clicked_at` exists, and it is written with its own
+	 * timestamp, so the cookie entry points at the visitor's own click row.
+	 * Malformed items, including bare hashes from the pre-1.10.0 client
+	 * script, are ignored.
 	 *
-	 * @param WP_REST_Request $request The REST request containing hashes array.
+	 * @param WP_REST_Request $request The REST request containing the `hashes` array.
 	 *
 	 * @return WP_REST_Response Success status.
 	 * @since 1.0.0
+	 * @since 1.10.0 Takes `<hash>:<timestamp>` pairs and writes only pairs
+	 *               that match a recorded click.
 	 */
 	public function set_cookie( WP_REST_Request $request ): WP_REST_Response {
 
@@ -279,16 +297,14 @@ final class Rest_Endpoint {
 
 		set_transient( $transient_key, $request_count + 1, MINUTE_IN_SECONDS );
 
-		// Validate hash format — silently discard malformed entries.
-		$hashes = array_filter(
-			$request->get_param( 'hashes' ),
-			fn( string $hash ) => $this->cookie_manager->validate_hash( $hash ),
-		);
+		// Silently discard malformed items, including bare hashes.
+		$clicks = $this->parse_clicks( (array) $request->get_param( 'hashes' ) );
 
-		// Verify hashes exist as published tracking URLs.
-		$hashes = Post_Type::get_valid_hashes( $hashes );
+		// Keep only clicks on published tracking URLs.
+		$valid_hashes = Post_Type::get_valid_hashes( array_values( array_unique( array_column( $clicks, 0 ) ) ) );
+		$clicks       = array_filter( $clicks, fn( array $click ) => in_array( $click[0], $valid_hashes, true ) );
 
-		if ( empty( $hashes ) ) {
+		if ( empty( $clicks ) ) {
 			return new WP_REST_Response( [ 'success' => false ] );
 		}
 
@@ -297,40 +313,87 @@ final class Rest_Endpoint {
 			return new WP_REST_Response( [ 'success' => false ] );
 		}
 
-		// Look up the actual click timestamps from the database so the cookie
-		// entries match the DB records. Without this, time() would be used,
-		// causing a mismatch when Conversion_Handler looks up clicks by hash
-		// and clicked_at.
-		global $wpdb;
-		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
+		// Conversion_Handler finds the click row by exact hash and clicked_at,
+		// so an entry is only useful if such a row exists. Substituting
+		// another visitor's click or the current time would misattribute.
+		$recorded = $this->find_recorded_clicks( $clicks );
 
-		$click_times = [];
-		if ( $hashes ) {
-			$placeholders = implode( ',', array_fill( 0, count( $hashes ), '%s' ) );
-			$rows = $wpdb->get_results( $wpdb->prepare(
-				"SELECT hash, UNIX_TIMESTAMP(clicked_at) AS ts
-				 FROM {$clicks_table}
-				 WHERE hash IN ({$placeholders})
-				 ORDER BY clicked_at DESC",
-				...$hashes,
-			) );
-
-			// Keep only the most recent click per hash.
-			foreach ( $rows as $row ) {
-				$click_times[ $row->hash ] ??= (int) $row->ts;
-			}
+		if ( empty( $recorded ) ) {
+			return new WP_REST_Response( [ 'success' => false ] );
 		}
 
-		// Merge new hashes into existing cookie entries using the original
-		// click timestamps. Falls back to time() for hashes without a click
-		// record (defensive — should not happen in practice).
 		$entries = $this->cookie_manager->parse();
-		foreach ( $hashes as $hash ) {
-			$entries = $this->cookie_manager->add( $entries, $hash, $click_times[ $hash ] ?? null );
+		foreach ( $recorded as $hash => $timestamp ) {
+			$entries = $this->cookie_manager->add( $entries, $hash, $timestamp );
 		}
 		$this->cookie_manager->set_clicks_cookie( $entries );
 
 		return new WP_REST_Response( [ 'success' => true ] );
+	}
+
+	/**
+	 * Parses posted `<hash>:<timestamp>` items into hash–timestamp tuples.
+	 *
+	 * Items that are not strings or do not match CLICK_PATTERN are dropped.
+	 * Exact duplicates are collapsed.
+	 *
+	 * @param array<mixed> $items Raw items from the request.
+	 *
+	 * @return list<array{0: string, 1: int}> Hash–timestamp tuples.
+	 * @since 1.10.0
+	 */
+	private function parse_clicks( array $items ): array {
+		$clicks = [];
+		foreach ( $items as $item ) {
+			if ( is_string( $item ) && preg_match( self::CLICK_PATTERN, $item, $match ) ) {
+				$clicks[ $item ] = [ $match[1], (int) $match[2] ];
+			}
+		}
+		return array_values( $clicks );
+	}
+
+	/**
+	 * Returns the clicks that match a recorded click row exactly.
+	 *
+	 * Matches on hash and `clicked_at` (UTC), mirroring the lookup that
+	 * Conversion_Handler performs. When several matching clicks share a
+	 * hash, the latest one wins, because `_ad_clicks` holds one entry per hash.
+	 *
+	 * @param list<array{0: string, 1: int}> $clicks Hash–timestamp tuples.
+	 *
+	 * @return array<string, int> Map of hash => timestamp for matching clicks.
+	 * @since 1.10.0
+	 */
+	private function find_recorded_clicks( array $clicks ): array {
+		global $wpdb;
+		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
+
+		$conditions = implode( ' OR ', array_fill( 0, count( $clicks ), '(hash = %s AND clicked_at = %s)' ) );
+		$args       = [];
+		foreach ( $clicks as [ $hash, $timestamp ] ) {
+			$args[] = $hash;
+			$args[] = gmdate( 'Y-m-d H:i:s', $timestamp );
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$rows = $wpdb->get_results( $wpdb->prepare(
+			"SELECT hash, clicked_at FROM {$clicks_table} WHERE {$conditions}",
+			...$args,
+		) );
+
+		$found = [];
+		foreach ( $rows as $row ) {
+			$found[ $row->hash . ' ' . $row->clicked_at ] = true;
+		}
+
+		$recorded = [];
+		foreach ( $clicks as [ $hash, $timestamp ] ) {
+			if ( isset( $found[ $hash . ' ' . gmdate( 'Y-m-d H:i:s', $timestamp ) ] ) ) {
+				$recorded[ $hash ] = max( $recorded[ $hash ] ?? 0, $timestamp );
+			}
+		}
+
+		return $recorded;
 	}
 
 }
