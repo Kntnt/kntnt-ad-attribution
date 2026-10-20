@@ -166,7 +166,6 @@ final class Click_Handler {
 	 * @since 1.0.0
 	 */
 	public function handle_click(): void {
-		global $wpdb;
 
 		// Step 1: Extract hash from query var.
 		$hash = get_query_var( 'kntnt_ad_attr_hash', '' );
@@ -182,19 +181,7 @@ final class Click_Handler {
 		}
 
 		// Steps 3–5: Look up the tracking URL post via its _hash meta.
-		$row = $wpdb->get_row( $wpdb->prepare(
-			"SELECT p.ID, pm_target.meta_value AS target_post_id
-			 FROM {$wpdb->postmeta} pm
-			 JOIN {$wpdb->posts} p ON p.ID = pm.post_id
-			 LEFT JOIN {$wpdb->postmeta} pm_target ON pm_target.post_id = p.ID AND pm_target.meta_key = '_target_post_id'
-			 WHERE pm.meta_key = '_hash'
-			   AND pm.meta_value = %s
-			   AND p.post_type = %s
-			   AND p.post_status = 'publish'
-			 LIMIT 1",
-			$hash,
-			Post_Type::SLUG,
-		) );
+		$row = $this->find_tracking_url( $hash );
 
 		if ( ! $row ) {
 			$this->send_404();
@@ -208,37 +195,8 @@ final class Click_Handler {
 			$this->send_404();
 		}
 
-		// Forward incoming query parameters to the target URL. Target URL
-		// parameters take precedence over incoming ones so that the site
-		// owner's configuration cannot be overridden by the ad platform.
-		// The test parameter is the plugin's own and never reaches the
-		// landing page.
-		$is_test_click   = sanitize_text_field( $_GET[ self::TEST_PARAM ] ?? '' ) === '1';
-		$incoming_params = array_map( 'sanitize_text_field', $_GET );
-		unset( $incoming_params['kntnt_ad_attr_hash'], $incoming_params[ self::TEST_PARAM ] );
-
-		$target_query  = wp_parse_url( $target_url, PHP_URL_QUERY ) ?? '';
-		$target_params = [];
-		if ( $target_query !== '' ) {
-			wp_parse_str( $target_query, $target_params );
-		}
-
-		$merged_params = array_merge( $incoming_params, $target_params );
-
-		/**
-		 * Filters the merged query parameters before building the redirect URL.
-		 *
-		 * @param array<string, string> $merged_params   Merged parameters (target wins on collision).
-		 * @param array<string, string> $target_params   Parameters from the target URL.
-		 * @param array<string, string> $incoming_params Sanitized parameters from the incoming request.
-		 *
-		 * @since 1.3.0
-		 */
-		$merged_params = apply_filters( 'kntnt_ad_attr_redirect_query_params', $merged_params, $target_params, $incoming_params );
-
-		if ( $merged_params !== [] ) {
-			$target_url = add_query_arg( $merged_params, strtok( $target_url, '?' ) );
-		}
+		$is_test_click = sanitize_text_field( $_GET[ self::TEST_PARAM ] ?? '' ) === '1';
+		$target_url    = $this->forward_query_params( $target_url );
 
 		// Step 8: Redirect loop guard — ensure target doesn't point back
 		// to a tracking URL.
@@ -310,52 +268,27 @@ final class Click_Handler {
 		$dedup_seconds = (int) apply_filters( 'kntnt_ad_attr_dedup_seconds', 0 );
 
 		if ( $consent_state === true && $dedup_seconds > 0 && ! $is_test_click ) {
-			$existing = $this->cookie_manager->parse();
-			if ( isset( $existing[ $hash ] ) && ( $now - $existing[ $hash ] ) < $dedup_seconds ) {
+			$duplicate_of = $this->duplicated_click( $hash, $now, $dedup_seconds );
+			if ( $duplicate_of !== null ) {
 
 				// Conversions link to a click row by an exact (hash, clicked_at)
 				// match with the cookie timestamp, so the entry must keep the
 				// original click's time. Re-sending it only refreshes the expiry,
-				// and the window stays anchored to the original click. An entry
-				// without a matching row (written by an older version) is not a
-				// duplicate: falling through records a new row and repoints the
-				// entry at it, which repairs the cookie.
-				if ( $this->click_row_exists( $hash, $existing[ $hash ] ) ) {
-					$this->set_cookie( $hash, $existing[ $hash ] );
-					$this->log_request( Request_Outcome::Deduplicated, $hash, $is_test_click );
-					$this->redirect( $target_url );
-				}
+				// and the window stays anchored to the original click.
+				$this->set_cookie( $hash, $duplicate_of );
+				$this->log_request( Request_Outcome::Deduplicated, $hash, $is_test_click );
+				$this->redirect( $target_url );
 			}
 		}
 
-		// Step 11: Extract per-click UTM fields from incoming parameters.
-		$click_content = sanitize_text_field( $_GET['utm_content'] ?? '' )
-			?: sanitize_text_field( $_GET['mtm_content'] ?? '' );
-		$click_term    = sanitize_text_field( $_GET['utm_term'] ?? '' )
-			?: sanitize_text_field( $_GET['mtm_keyword'] ?? '' );
-		$click_id_val  = sanitize_text_field( $_GET['utm_id'] ?? '' )
-			?: sanitize_text_field( $_GET['mtm_cid'] ?? '' );
-		$click_group   = sanitize_text_field( $_GET['utm_source_platform'] ?? '' )
-			?: sanitize_text_field( $_GET['mtm_group'] ?? '' );
-
-		// Insert the click record into the clicks table.
-		$clicks_table = Table::Clicks->prefixed();
-
-		$inserted = $wpdb->insert( $clicks_table, [
-			'hash'                => $hash,
-			'clicked_at'          => gmdate( 'Y-m-d H:i:s', $now ),
-			'utm_content'         => $click_content !== '' ? mb_substr( $click_content, 0, 255 ) : null,
-			'utm_term'            => $click_term !== '' ? mb_substr( $click_term, 0, 255 ) : null,
-			'utm_id'              => $click_id_val !== '' ? mb_substr( $click_id_val, 0, 255 ) : null,
-			'utm_source_platform' => $click_group !== '' ? mb_substr( $click_group, 0, 255 ) : null,
-			'is_test'             => $is_test_click ? 1 : 0,
-		] );
+		// Step 11: Record the click.
+		$click_row_id = $this->insert_click( $hash, $now, $is_test_click );
 
 		// Every cookie entry, pending click and announced click must point at
 		// a click row, because conversions are linked by an exact match on
 		// it. Without a row there is nothing to point at, so the visitor is
 		// only redirected and the failure logged.
-		if ( ! $inserted ) {
+		if ( $click_row_id === null ) {
 			$this->log_request( Request_Outcome::Failed, $hash, $is_test_click );
 			$this->redirect( $target_url );
 		}
@@ -363,37 +296,11 @@ final class Click_Handler {
 		// Store the captured platform click IDs. Each ID belongs to the click
 		// row just inserted, so a conversion linked to this click reports
 		// this click's IDs and no other visitor's.
-		$click_row_id = (int) $wpdb->insert_id;
 		foreach ( $click_ids as $platform => $value ) {
 			$this->click_id_store->store( $click_row_id, $platform, $value );
 		}
 
-		// Populate empty Source/Medium/Campaign postmeta from incoming params.
-		// These are fixed per tracking URL and stored in postmeta. Kept for
-		// backwards compatibility with pre-v1.5.0 URLs that may lack them.
-		$param_map = [
-			'_utm_source'   => [ 'utm_source', 'mtm_source' ],
-			'_utm_medium'   => [ 'utm_medium', 'mtm_medium' ],
-			'_utm_campaign' => [ 'utm_campaign', 'mtm_campaign' ],
-		];
-
-		foreach ( $param_map as $meta_key => [ $utm_param, $mtm_param ] ) {
-			$stored = get_post_meta( $post_id, $meta_key, true );
-			if ( $stored !== '' && $stored !== false ) {
-				continue;
-			}
-
-			// Try UTM first, then MTM.
-			$value = sanitize_text_field( $_GET[ $utm_param ] ?? '' );
-			if ( $value === '' ) {
-				$value = sanitize_text_field( $_GET[ $mtm_param ] ?? '' );
-			}
-
-			if ( $value !== '' ) {
-				$value = mb_substr( $value, 0, 255 );
-				update_post_meta( $post_id, $meta_key, $value );
-			}
-		}
+		$this->fill_campaign_meta( $post_id );
 
 		// Notify companion plugins about the click. Fires for every recorded
 		// click regardless of consent state. Allows add-ons to capture
@@ -415,6 +322,176 @@ final class Click_Handler {
 		// Step 13: Redirect to the target page.
 		$this->log_request( Request_Outcome::Recorded, $hash, $is_test_click );
 		$this->redirect( $target_url );
+	}
+
+	/**
+	 * Looks up the published tracking URL with the given hash.
+	 *
+	 * @param string $hash The tracking URL hash.
+	 *
+	 * @return object|null Row with the post `ID` and its `target_post_id`, or null if there is none.
+	 * @since 1.10.0
+	 */
+	private function find_tracking_url( string $hash ): ?object {
+		global $wpdb;
+
+		return $wpdb->get_row( $wpdb->prepare(
+			"SELECT p.ID, pm_target.meta_value AS target_post_id
+			 FROM {$wpdb->postmeta} pm
+			 JOIN {$wpdb->posts} p ON p.ID = pm.post_id
+			 LEFT JOIN {$wpdb->postmeta} pm_target ON pm_target.post_id = p.ID AND pm_target.meta_key = '_target_post_id'
+			 WHERE pm.meta_key = '_hash'
+			   AND pm.meta_value = %s
+			   AND p.post_type = %s
+			   AND p.post_status = 'publish'
+			 LIMIT 1",
+			$hash,
+			Post_Type::SLUG,
+		) ) ?: null;
+	}
+
+	/**
+	 * Forwards the request's query parameters to the target URL.
+	 *
+	 * Target URL parameters take precedence over incoming ones so that the
+	 * site owner's configuration cannot be overridden by the ad platform.
+	 * The test parameter is the plugin's own and never reaches the landing
+	 * page.
+	 *
+	 * @param string $target_url The tracking URL's target.
+	 *
+	 * @return string The target URL with the merged query parameters.
+	 * @since 1.10.0
+	 */
+	private function forward_query_params( string $target_url ): string {
+		$incoming_params = array_map( 'sanitize_text_field', $_GET );
+		unset( $incoming_params['kntnt_ad_attr_hash'], $incoming_params[ self::TEST_PARAM ] );
+
+		$target_query  = wp_parse_url( $target_url, PHP_URL_QUERY ) ?? '';
+		$target_params = [];
+		if ( $target_query !== '' ) {
+			wp_parse_str( $target_query, $target_params );
+		}
+
+		$merged_params = array_merge( $incoming_params, $target_params );
+
+		/**
+		 * Filters the merged query parameters before building the redirect URL.
+		 *
+		 * @param array<string, string> $merged_params   Merged parameters (target wins on collision).
+		 * @param array<string, string> $target_params   Parameters from the target URL.
+		 * @param array<string, string> $incoming_params Sanitized parameters from the incoming request.
+		 *
+		 * @since 1.3.0
+		 */
+		$merged_params = apply_filters( 'kntnt_ad_attr_redirect_query_params', $merged_params, $target_params, $incoming_params );
+
+		if ( $merged_params !== [] ) {
+			$target_url = add_query_arg( $merged_params, strtok( $target_url, '?' ) );
+		}
+
+		return $target_url;
+	}
+
+	/**
+	 * Returns the click a click inside the deduplication window duplicates.
+	 *
+	 * A click duplicates the visitor's cookie entry for the hash if the
+	 * entry is inside the window and a click row exists for it. An entry
+	 * without a matching row (written by an older version) is not
+	 * duplicated: the click is recorded as new and the entry repointed at
+	 * it, which repairs the cookie.
+	 *
+	 * @param string $hash          The tracking URL hash.
+	 * @param int    $now           Unix timestamp of the request.
+	 * @param int    $dedup_seconds Length of the deduplication window.
+	 *
+	 * @return int|null Unix timestamp of the duplicated click, or null if the click is not a duplicate.
+	 * @since 1.10.0
+	 */
+	private function duplicated_click( string $hash, int $now, int $dedup_seconds ): ?int {
+		$existing = $this->cookie_manager->parse()[ $hash ] ?? null;
+
+		if ( $existing === null || ( $now - $existing ) >= $dedup_seconds ) {
+			return null;
+		}
+
+		return $this->click_row_exists( $hash, $existing ) ? $existing : null;
+	}
+
+	/**
+	 * Inserts the click row, with the per-click fields from the request.
+	 *
+	 * Content, Term, Id and Group come from the UTM parameters, or from the
+	 * MTM parameters when a UTM parameter is empty, truncated to the column
+	 * width.
+	 *
+	 * @param string $hash          The tracking URL hash.
+	 * @param int    $now           Unix timestamp of the click.
+	 * @param bool   $is_test_click Whether the click is a test click.
+	 *
+	 * @return int|null ID of the inserted click row, or null if the insert failed.
+	 * @since 1.10.0
+	 */
+	private function insert_click( string $hash, int $now, bool $is_test_click ): ?int {
+		global $wpdb;
+
+		$click_content = sanitize_text_field( $_GET['utm_content'] ?? '' )
+			?: sanitize_text_field( $_GET['mtm_content'] ?? '' );
+		$click_term    = sanitize_text_field( $_GET['utm_term'] ?? '' )
+			?: sanitize_text_field( $_GET['mtm_keyword'] ?? '' );
+		$click_id_val  = sanitize_text_field( $_GET['utm_id'] ?? '' )
+			?: sanitize_text_field( $_GET['mtm_cid'] ?? '' );
+		$click_group   = sanitize_text_field( $_GET['utm_source_platform'] ?? '' )
+			?: sanitize_text_field( $_GET['mtm_group'] ?? '' );
+
+		$inserted = $wpdb->insert( Table::Clicks->prefixed(), [
+			'hash'                => $hash,
+			'clicked_at'          => gmdate( 'Y-m-d H:i:s', $now ),
+			'utm_content'         => $click_content !== '' ? mb_substr( $click_content, 0, 255 ) : null,
+			'utm_term'            => $click_term !== '' ? mb_substr( $click_term, 0, 255 ) : null,
+			'utm_id'              => $click_id_val !== '' ? mb_substr( $click_id_val, 0, 255 ) : null,
+			'utm_source_platform' => $click_group !== '' ? mb_substr( $click_group, 0, 255 ) : null,
+			'is_test'             => $is_test_click ? 1 : 0,
+		] );
+
+		return $inserted ? (int) $wpdb->insert_id : null;
+	}
+
+	/**
+	 * Fills the tracking URL's empty Source/Medium/Campaign from the request.
+	 *
+	 * These are fixed per tracking URL and stored in postmeta. Kept for
+	 * backwards compatibility with pre-v1.5.0 URLs that may lack them. A
+	 * UTM parameter wins over its MTM counterpart.
+	 *
+	 * @param int $post_id The tracking URL post ID.
+	 *
+	 * @return void
+	 * @since 1.10.0
+	 */
+	private function fill_campaign_meta( int $post_id ): void {
+		$param_map = [
+			'_utm_source'   => [ 'utm_source', 'mtm_source' ],
+			'_utm_medium'   => [ 'utm_medium', 'mtm_medium' ],
+			'_utm_campaign' => [ 'utm_campaign', 'mtm_campaign' ],
+		];
+
+		foreach ( $param_map as $meta_key => [ $utm_param, $mtm_param ] ) {
+			$stored = get_post_meta( $post_id, $meta_key, true );
+			if ( $stored !== '' && $stored !== false ) {
+				continue;
+			}
+
+			$value = sanitize_text_field( $_GET[ $utm_param ] ?? '' );
+			if ( $value === '' ) {
+				$value = sanitize_text_field( $_GET[ $mtm_param ] ?? '' );
+			}
+
+			if ( $value !== '' ) {
+				update_post_meta( $post_id, $meta_key, mb_substr( $value, 0, 255 ) );
+			}
+		}
 	}
 
 	/**

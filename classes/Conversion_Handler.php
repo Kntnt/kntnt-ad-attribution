@@ -128,7 +128,6 @@ final class Conversion_Handler {
 	 * @since 1.0.0
 	 */
 	public function handle_conversion(): void {
-		global $wpdb;
 
 		// Reject automated requests to prevent fake conversions.
 		if ( $this->bot_detector->is_bot() ) {
@@ -185,31 +184,8 @@ final class Conversion_Handler {
 			}
 		}
 
-		// Step 4: Prepare click data for the attribution filter.
-		$clicks = [];
-		foreach ( $valid_entries as $hash => $timestamp ) {
-			$clicks[] = [ 'hash' => $hash, 'clicked_at' => $timestamp ];
-		}
-
-		// Step 5: Default last-click attribution — full credit to most recent click.
-		$latest_hash  = array_keys( $valid_entries, max( $valid_entries ) )[0];
-		$attributions = array_fill_keys( array_keys( $valid_entries ), 0.0 );
-		$attributions[ $latest_hash ] = 1.0;
-
-		/**
-		 * Filters the attribution weights for a conversion.
-		 *
-		 * @param array<string, float>                       $attributions Hash => fractional value. Default: 1.0 for last click, 0.0 for rest.
-		 * @param array<int, array{hash: string, clicked_at: int}> $clicks Click data with timestamps.
-		 *
-		 * @since 1.5.0
-		 */
-		$attributions = apply_filters( 'kntnt_ad_attr_attribution', $attributions, $clicks );
-
-		// Step 6: Look up click records and write conversion rows.
-		$clicks_table = Table::Clicks->prefixed();
-		$conv_table   = Table::Conversions->prefixed();
-		$converted_at = gmdate( 'Y-m-d H:i:s' );
+		// Steps 4–5: Attribution weights, last click by default.
+		$attributions = $this->attribution_weights( $valid_entries );
 
 		// One reference for the whole conversion. A multi-touch model writes
 		// one row per credited click, and the shared reference is what makes
@@ -217,57 +193,11 @@ final class Conversion_Handler {
 		// it too, so the admin can delete or flag a conversion and its jobs.
 		$conversion_ref = wp_generate_uuid4();
 
-		$wpdb->query( 'START TRANSACTION' );
-
-		// Recorded hash => ID of the click row its conversion row links to.
-		// It defines what was recorded, and it identifies the exact click
-		// each hash was credited for, not just any click on that hash.
-		$linked_clicks = [];
-
-		foreach ( $attributions as $hash => $value ) {
-			if ( $value <= 0 ) {
-				continue;
-			}
-
-			// Find the click record matching the cookie timestamp. The match
-			// stays exact on purpose: the clicks table is shared by everyone
-			// who clicks the tracking URL, so the nearest earlier row is often
-			// another visitor's click.
-			$click_id = $wpdb->get_var( $wpdb->prepare(
-				"SELECT id FROM {$clicks_table} WHERE hash = %s AND clicked_at = %s LIMIT 1",
-				$hash,
-				gmdate( 'Y-m-d H:i:s', $valid_entries[ $hash ] ),
-			) );
-
-			// A miss breaks the invariant that every _ad_clicks entry points
-			// at a click row, so it is logged without visitor-identifying data.
-			if ( ! $click_id ) {
-				$this->logger?->warning( 'CORE', sprintf(
-					'Conversion not recorded for hash %s...: no click row matches cookie timestamp %d (%s UTC).',
-					substr( $hash, 0, Logger::HASH_PREFIX_LENGTH ),
-					$valid_entries[ $hash ],
-					gmdate( 'Y-m-d H:i:s', $valid_entries[ $hash ] ),
-				) );
-				continue;
-			}
-
-			$result = $wpdb->insert( $conv_table, [
-				'click_id'              => (int) $click_id,
-				'converted_at'          => $converted_at,
-				'fractional_conversion' => $value,
-				'conversion_ref'        => $conversion_ref,
-			] );
-
-			if ( $result === false ) {
-				$wpdb->query( 'ROLLBACK' );
-				error_log( '[Kntnt Ad Attribution] Conversion write failed, rolled back.' );
-				return;
-			}
-
-			$linked_clicks[ $hash ] = (int) $click_id;
+		// Step 6: Look up click records and write conversion rows.
+		$linked_clicks = $this->write_conversion( $attributions, $valid_entries, $conversion_ref );
+		if ( $linked_clicks === null ) {
+			return;
 		}
-
-		$wpdb->query( 'COMMIT' );
 
 		// Everything after the write sees only the recorded attributions:
 		// hashes that got a conversion row, with the weight written. Weights
@@ -304,57 +234,7 @@ final class Conversion_Handler {
 		] );
 
 		// Step 9: Enqueue conversion reports for registered reporters.
-		$reporters = apply_filters( 'kntnt_ad_attr_conversion_reporters', [] );
-
-		// A test conversion reaches only reporters that declare test support,
-		// so a reporter unaware of test mode can never upload one by accident.
-		if ( $is_test ) {
-			$reporters = array_filter( $reporters, fn ( $reporter ) => ( $reporter['supports_test'] ?? false ) === true );
-		}
-
-		if ( ! empty( $reporters ) ) {
-
-			// Report what the credited click carried: its click IDs and
-			// per-click fields, not those of the latest click on the hash,
-			// which may belong to another visitor.
-			$click_ids = $this->click_id_store->get_for_clicks( $linked_clicks );
-			$campaigns = $this->get_campaign_data( $linked_clicks );
-
-			$context = [
-				'timestamp'  => gmdate( 'c' ),
-				'ip'         => $_SERVER['REMOTE_ADDR'] ?? '',
-				'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
-				'page_url'   => home_url( $_SERVER['REQUEST_URI'] ?? '' ),
-				'test'       => $is_test,
-			];
-
-			foreach ( $reporters as $reporter_id => $reporter ) {
-				if ( ! is_callable( $reporter['enqueue'] ?? null ) ) {
-					continue;
-				}
-				$items = (array) ( $reporter['enqueue'] )( $recorded, $click_ids, $campaigns, $context );
-				foreach ( $items as $item ) {
-					if ( isset( $item['payload'] ) ) {
-
-						// Structured format with optional label, retry params, and deferred processing.
-						$this->queue->enqueue(
-							(string) $reporter_id,
-							$item['payload'],
-							$item['label'] ?? '',
-							$item['retry_params'] ?? [],
-							$item['not_before'] ?? null,
-							$conversion_ref,
-						);
-					} else {
-
-						// Legacy format: raw payload array.
-						$this->queue->enqueue( (string) $reporter_id, $item, conversion_ref: $conversion_ref );
-					}
-				}
-			}
-
-			$this->queue_processor->schedule();
-		}
+		$reporters = $this->enqueue_reports( $recorded, $linked_clicks, $is_test, $conversion_ref );
 
 		// A test is meant to be checked, so say where it went.
 		if ( $is_test ) {
@@ -368,6 +248,184 @@ final class Conversion_Handler {
 				$reporters === [] ? 'none' : implode( ', ', array_keys( $reporters ) ),
 			) );
 		}
+	}
+
+	/**
+	 * Returns the attribution weights of a conversion.
+	 *
+	 * By default the most recent click gets full credit; the
+	 * `kntnt_ad_attr_attribution` filter can replace the model.
+	 *
+	 * @param array<string, int> $entries Hash => click timestamp of the clicks that may be credited.
+	 *
+	 * @return array<string, float> Hash => fractional value.
+	 * @since 1.10.0
+	 */
+	private function attribution_weights( array $entries ): array {
+		$clicks = [];
+		foreach ( $entries as $hash => $timestamp ) {
+			$clicks[] = [ 'hash' => $hash, 'clicked_at' => $timestamp ];
+		}
+
+		$latest_hash  = array_keys( $entries, max( $entries ) )[0];
+		$attributions = array_fill_keys( array_keys( $entries ), 0.0 );
+		$attributions[ $latest_hash ] = 1.0;
+
+		/**
+		 * Filters the attribution weights for a conversion.
+		 *
+		 * @param array<string, float>                       $attributions Hash => fractional value. Default: 1.0 for last click, 0.0 for rest.
+		 * @param array<int, array{hash: string, clicked_at: int}> $clicks Click data with timestamps.
+		 *
+		 * @since 1.5.0
+		 */
+		return apply_filters( 'kntnt_ad_attr_attribution', $attributions, $clicks );
+	}
+
+	/**
+	 * Writes one conversion row per positive weight, in one transaction.
+	 *
+	 * Each row links to the click row that exactly matches the hash's cookie
+	 * entry. A hash without such a row gets no conversion row; that breaks
+	 * the invariant that every _ad_clicks entry points at a click row, so it
+	 * is logged. A failed insert rolls the whole conversion back.
+	 *
+	 * @param array<string, float> $attributions   Hash => fractional value.
+	 * @param array<string, int>   $entries        Hash => cookie timestamp.
+	 * @param string               $conversion_ref Reference written on every row.
+	 *
+	 * @return array<string, int>|null Recorded hash => ID of the click row its conversion row links to, or null if the write was rolled back.
+	 * @since 1.10.0
+	 */
+	private function write_conversion( array $attributions, array $entries, string $conversion_ref ): ?array {
+		global $wpdb;
+
+		$clicks_table = Table::Clicks->prefixed();
+		$conv_table   = Table::Conversions->prefixed();
+		$converted_at = gmdate( 'Y-m-d H:i:s' );
+
+		$wpdb->query( 'START TRANSACTION' );
+
+		// Recorded hash => ID of the click row its conversion row links to.
+		// It defines what was recorded, and it identifies the exact click
+		// each hash was credited for, not just any click on that hash.
+		$linked_clicks = [];
+
+		foreach ( $attributions as $hash => $value ) {
+			if ( $value <= 0 ) {
+				continue;
+			}
+
+			// Find the click record matching the cookie timestamp. The match
+			// stays exact on purpose: the clicks table is shared by everyone
+			// who clicks the tracking URL, so the nearest earlier row is often
+			// another visitor's click.
+			$click_id = $wpdb->get_var( $wpdb->prepare(
+				"SELECT id FROM {$clicks_table} WHERE hash = %s AND clicked_at = %s LIMIT 1",
+				$hash,
+				gmdate( 'Y-m-d H:i:s', $entries[ $hash ] ),
+			) );
+
+			// A miss is logged without visitor-identifying data.
+			if ( ! $click_id ) {
+				$this->logger?->warning( 'CORE', sprintf(
+					'Conversion not recorded for hash %s...: no click row matches cookie timestamp %d (%s UTC).',
+					substr( $hash, 0, Logger::HASH_PREFIX_LENGTH ),
+					$entries[ $hash ],
+					gmdate( 'Y-m-d H:i:s', $entries[ $hash ] ),
+				) );
+				continue;
+			}
+
+			$result = $wpdb->insert( $conv_table, [
+				'click_id'              => (int) $click_id,
+				'converted_at'          => $converted_at,
+				'fractional_conversion' => $value,
+				'conversion_ref'        => $conversion_ref,
+			] );
+
+			if ( $result === false ) {
+				$wpdb->query( 'ROLLBACK' );
+				error_log( '[Kntnt Ad Attribution] Conversion write failed, rolled back.' );
+				return null;
+			}
+
+			$linked_clicks[ $hash ] = (int) $click_id;
+		}
+
+		$wpdb->query( 'COMMIT' );
+
+		return $linked_clicks;
+	}
+
+	/**
+	 * Hands a recorded conversion to the registered reporters and queues their jobs.
+	 *
+	 * A test conversion reaches only reporters that declare test support,
+	 * so a reporter unaware of test mode can never upload one by accident.
+	 * Every job carries the conversion reference.
+	 *
+	 * @param array<string, float> $recorded       Hash => recorded fractional value.
+	 * @param array<string, int>   $linked_clicks  Hash => ID of the attributed click row.
+	 * @param bool                 $is_test        Whether the conversion is a test.
+	 * @param string               $conversion_ref Reference of the conversion.
+	 *
+	 * @return array<string, array> The reporters the conversion was passed to, by ID.
+	 * @since 1.10.0
+	 */
+	private function enqueue_reports( array $recorded, array $linked_clicks, bool $is_test, string $conversion_ref ): array {
+		$reporters = apply_filters( 'kntnt_ad_attr_conversion_reporters', [] );
+
+		if ( $is_test ) {
+			$reporters = array_filter( $reporters, fn ( $reporter ) => ( $reporter['supports_test'] ?? false ) === true );
+		}
+
+		if ( empty( $reporters ) ) {
+			return $reporters;
+		}
+
+		// Report what the credited click carried: its click IDs and per-click
+		// fields, not those of the latest click on the hash, which may belong
+		// to another visitor.
+		$click_ids = $this->click_id_store->get_for_clicks( $linked_clicks );
+		$campaigns = $this->get_campaign_data( $linked_clicks );
+
+		$context = [
+			'timestamp'  => gmdate( 'c' ),
+			'ip'         => $_SERVER['REMOTE_ADDR'] ?? '',
+			'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
+			'page_url'   => home_url( $_SERVER['REQUEST_URI'] ?? '' ),
+			'test'       => $is_test,
+		];
+
+		foreach ( $reporters as $reporter_id => $reporter ) {
+			if ( ! is_callable( $reporter['enqueue'] ?? null ) ) {
+				continue;
+			}
+			$items = (array) ( $reporter['enqueue'] )( $recorded, $click_ids, $campaigns, $context );
+			foreach ( $items as $item ) {
+				if ( isset( $item['payload'] ) ) {
+
+					// Structured format with optional label, retry params, and deferred processing.
+					$this->queue->enqueue(
+						(string) $reporter_id,
+						$item['payload'],
+						$item['label'] ?? '',
+						$item['retry_params'] ?? [],
+						$item['not_before'] ?? null,
+						$conversion_ref,
+					);
+				} else {
+
+					// Legacy format: raw payload array.
+					$this->queue->enqueue( (string) $reporter_id, $item, conversion_ref: $conversion_ref );
+				}
+			}
+		}
+
+		$this->queue_processor->schedule();
+
+		return $reporters;
 	}
 
 	/**
