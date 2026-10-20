@@ -114,6 +114,7 @@ This section is for marketers, website owners, WordPress administrators, and age
 2. In your WordPress admin panel, go to **Plugins → Add New**.
 3. Click **Upload Plugin** and select the downloaded ZIP file.
 4. Activate the plugin.
+5. If the site uses a page cache, a server cache or a CDN, exclude the tracking URLs from it. See [Page Caching](#page-caching).
 
 The plugin is distributed via GitHub Releases and updated through the standard WordPress plugin update UI. When a new version is available, you will see it on the WordPress Updates page.
 
@@ -166,6 +167,31 @@ Replace `.yourdomain.com` with your actual domain.
 \** This cookie only exists when the `kntnt_ad_attr_dedup_seconds` filter returns a non-zero value (default: `0`, meaning no dedup and no cookie). When enabled, the cookie lifetime equals the dedup window in seconds, capped to the cookie lifetime.
 
 \*** `_aah_pending` contains no personal data, lives at most 60 seconds, and serves only as a technical transport mechanism for deferred consent scenarios. Whether to classify it as "Necessary" or "Marketing" is a judgment call — see [Privacy and GDPR](#privacy-and-gdpr) for a discussion.
+
+### Page Caching
+
+Every request to a tracking URL must reach WordPress. On each request the plugin records the click, stores the platform click ID, sets or hands over the cookie, and builds the redirect from the incoming query parameters. A redirect served from a cache does none of that:
+
+- **The click is lost.** No click row, no click ID and no cookie, so a conversion by that visitor cannot be attributed.
+- **The visitor gets someone else's parameters.** The cached `Location` header carries the query string of the request that filled the cache. Every later visitor lands on the target page with that first visitor's `gclid` and UTM values.
+
+So a page cache, a server cache such as nginx `fastcgi_cache` or Varnish, or a CDN must never serve these requests from cache. Exclude:
+
+- **The tracking URL path,** `/ad/` by default. If you change the prefix with the [`kntnt_ad_attr_url_prefix`](#filters) filter, exclude the new prefix instead.
+- **The plugin's REST namespace,** `/wp-json/kntnt-ad-attribution/`, if your cache stores REST responses. The `set-cookie` endpoint is called with POST, which page caches normally skip, so this one is a precaution.
+
+In LiteSpeed Cache, for example, add `^/ad/` under **LiteSpeed Cache → Cache → Excludes → Do Not Cache URIs**. Other caches have an equivalent setting.
+
+Don't rely on the plugin's no-cache headers alone. The plugin sends WordPress's `nocache_headers()` with every redirect, but not every cache honours them. LiteSpeed Cache 7.9.1 decides for itself what to cache: a production site saw it store a redirect that carried those headers and serve it as a cache hit to a later request with a different `gclid`. Caches that leave tracking parameters out of the cache key make this worse, because every click on a tracking URL then shares one cache entry. LiteSpeed Cache does this by default with its "Drop Query String" setting, which covers `gclid`, `fbclid`, `utm*` and `_ga`.
+
+To check the exclusion, request a tracking URL twice and look at the response headers:
+
+```bash
+curl -sI "https://example.com/ad/<hash>?gclid=cache-check-1"
+curl -sI "https://example.com/ad/<hash>?gclid=cache-check-2"
+```
+
+Neither response may be a cache hit. For LiteSpeed, neither may carry `x-litespeed-cache: hit`. Other caches use headers such as `x-cache`, `x-varnish` or `cf-cache-status`. curl's default user agent counts as a bot, so these requests record no clicks.
 
 ### Usage
 
