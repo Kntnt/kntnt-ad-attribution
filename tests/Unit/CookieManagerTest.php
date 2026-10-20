@@ -119,6 +119,34 @@ describe('Cookie_Manager::serialize_entries()', function () {
 
 });
 
+// ─── format_entry() and parse_entry() ───
+
+describe('Cookie_Manager entries', function () {
+
+    it('formats a click as hash:timestamp', function () {
+        $hash = str_repeat('a', 64);
+
+        expect(Cookie_Manager::format_entry($hash, 1700000000))->toBe("{$hash}:1700000000");
+    });
+
+    it('parses an entry into its hash and timestamp', function () {
+        $hash = str_repeat('b', 64);
+
+        expect(Cookie_Manager::parse_entry("{$hash}:1700000000"))->toBe([$hash, 1700000000]);
+    });
+
+    it('rejects a malformed entry', function (string $entry) {
+        expect(Cookie_Manager::parse_entry($entry))->toBeNull();
+    })->with([
+        'bare hash'        => [str_repeat('c', 64)],
+        'uppercase hex'    => [str_repeat('C', 64) . ':1700000000'],
+        'short hash'       => [str_repeat('c', 63) . ':1700000000'],
+        'long timestamp'   => [str_repeat('c', 64) . ':17000000000'],
+        'two entries'      => [str_repeat('c', 64) . ':1,' . str_repeat('d', 64) . ':2'],
+    ]);
+
+});
+
 // ─── set_dedup_cookie() ───
 
 describe('Cookie_Manager::set_dedup_cookie()', function () {

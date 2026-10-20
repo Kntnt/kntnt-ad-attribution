@@ -21,7 +21,7 @@ Stores the visitor's clicked ads with timestamps.
 
 **Max limit:** When 50 hashes are reached, the oldest is removed.
 
-**Validation:** On read, the format is checked against `^[a-f0-9]{64}:\d{1,10}(,[a-f0-9]{64}:\d{1,10})*$`. If the format does not match, the cookie is ignored.
+**Validation:** On read, the format is checked against `^[a-f0-9]{64}:\d{1,10}(,[a-f0-9]{64}:\d{1,10})*$`. If the format does not match, the cookie is ignored. In PHP, `Cookie_Manager` owns the `hash:timestamp` entry format: `format_entry()` and `parse_entry()` handle one entry wherever it appears (transport, fragment, set-cookie request), `serialize_entries()` and `parse()` a whole cookie. `js/pending-consent.js` keeps its own copy of the pattern.
 
 ## `_ad_last_conv`
 

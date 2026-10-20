@@ -679,7 +679,7 @@ final class Click_Handler {
 		$transport = apply_filters( 'kntnt_ad_attr_pending_transport', 'cookie' );
 
 		match ( $transport ) {
-			'fragment' => $target_url .= '#_aah=' . $hash . ':' . $timestamp,
+			'fragment' => $target_url .= '#_aah=' . Cookie_Manager::format_entry( $hash, $timestamp ),
 			default    => $this->cookie_manager->set_transport_cookie( $hash, $timestamp ),
 		};
 	}

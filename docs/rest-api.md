@@ -26,7 +26,7 @@ Each item of `hashes` is a pending click as a `<hash>:<timestamp>` pair: the tra
 
 **Rate limiting:** 10 requests per minute per IP address. Tracked via a WordPress transient (`kntnt_ad_attr_rl_{md5($ip)}`). Exceeding the limit returns HTTP 429 with `{ "success": false }`.
 
-**Validation:** Each item must match `/^[a-f0-9]{64}:\d{1,10}$/`. Its hash must exist as a published tracking URL (`Post_Type::get_valid_hashes()`). Items that fail either check, including bare hashes, are silently ignored. If none remain, the endpoint returns `{ "success": false }`.
+**Validation:** Each item must be one `_ad_clicks` entry, matching `/^[a-f0-9]{64}:\d{1,10}$/` (`Cookie_Manager::parse_entry()`). Its hash must exist as a published tracking URL (`Post_Type::get_valid_hashes()`). Items that fail either check, including bare hashes, are silently ignored. If none remain, the endpoint returns `{ "success": false }`.
 
 **Consent check:** The endpoint calls `Consent::check()`. If consent is not `true` (granted), HTTP 200 is returned with `{ "success": false }` without setting a cookie.
 
