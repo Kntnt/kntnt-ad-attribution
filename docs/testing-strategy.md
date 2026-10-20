@@ -157,7 +157,7 @@ kntnt-ad-attribution/
 │   │   ├── WpStubs.php                 # Stub WP classes (WP_Post, WP_REST_*, WP_List_Table, etc.)
 │   │   └── TestFactory.php             # Factory methods for creating test doubles
 │   │
-│   ├── Unit/                           # Level 1: PHP unit tests (18 files)
+│   ├── Unit/                           # Level 1: PHP unit tests (19 files)
 │   │   ├── AdminPageTest.php
 │   │   ├── BotDetectorTest.php
 │   │   ├── CampaignListTableTest.php
@@ -174,6 +174,7 @@ kntnt-ad-attribution/
 │   │   ├── QueueProcessorTest.php
 │   │   ├── QueueTest.php
 │   │   ├── RestEndpointTest.php
+│   │   ├── SpeculationDetectorTest.php
 │   │   ├── UpdaterTest.php
 │   │   └── UtmOptionsTest.php
 │   │
@@ -202,6 +203,7 @@ kntnt-ad-attribution/
 │       ├── test-consent-states.sh
 │       ├── test-conversion-attribution.sh
 │       ├── test-cookie-limits.sh
+│       ├── test-counting-rules.sh
 │       ├── test-cron-cleanup.sh
 │       ├── test-csv-export.sh
 │       ├── test-deduplication.sh
@@ -271,6 +273,14 @@ Stateless data manipulation class. Tests cover:
 
 ---
 
+#### Speculation_Detector (`SpeculationDetectorTest.php`)
+
+- **`detect()`** — `Sec-Purpose: prefetch` and `prefetch;prerender`, `Purpose: prefetch`, another `Purpose` value, no purpose headers, previous filter short-circuit.
+- **`is_speculative()`** — applies `kntnt_ad_attr_is_speculative` starting from `false`, filter overrides detection.
+- **`register()`** — hooks `detect()` into the filter.
+
+---
+
 #### Click_ID_Store (`ClickIdStoreTest.php`)
 
 - **`store()`** — inserts one row keyed by click row ID and platform.
@@ -312,8 +322,11 @@ The most complex class. Tests cover the full click flow:
 - Redirect method filter ('302' vs 'js').
 - Query parameter forwarding and collision handling.
 - Redirect loop guard.
-- `kntnt_ad_attr_click` action fires for all non-bot clicks, before consent check.
+- `kntnt_ad_attr_click` action fires for every recorded click, before consent check.
 - Click ID capturer integration: stored on the inserted click row's ID, nothing stored when the insert fails, value length validation.
+- Speculative requests (`Sec-Purpose: prefetch`, `prefetch;prerender`, `Purpose: prefetch`): 503 via `status_header` + `nocache_headers`, no redirect, insert, click ID, cookie, transport or action; a `kntnt_ad_attr_is_speculative` callback can overrule detection. The handler gets a real `Speculation_Detector`, and `apply_default_speculation_detection()` makes the filter run its default callback, which Brain Monkey would otherwise skip.
+- Repeats (click ID already recorded on the tracking URL, via a mocked `Click_ID_Store::find_original_click()`): no insert, click ID or action, redirect with query forwarding; with consent the entry points at the original click unless a newer entry has a click row; with undetermined consent the transport carries the original click; the earliest original wins across platforms; the same value on another tracking URL is recorded.
+- Diagnostic log line (the handler gets a `Logger` spy; `capture_log_lines()` collects every level): exactly one CORE INFO line per outcome (`recorded`, `repeat`, `deduplicated`, `speculative`, `bot`) with the hash prefix and the raw `Sec-Purpose`, `Purpose` and `User-Agent` values, and without the `REMOTE_ADDR`.
 - Postmeta backfill from UTM/MTM params, existing values not overwritten.
 - Click dedup: a duplicate (entry within the window with a matching click row) re-sends the original timestamp without inserting; an entry with no matching row is recorded as a new click.
 
@@ -475,6 +488,8 @@ Two mu-plugins provide test infrastructure:
   | `/test-update-post-status` | POST | Change a post's status |
   | `/test-delete-post` | POST | Permanently delete a post |
   | `/test-delete-transient` | POST | Delete a transient |
+  | `/test-set-logging` | POST | Switch diagnostic logging (`enable_logging` in `kntnt_ad_attr_settings`) `on` or `off` |
+  | `/test-log` | GET, DELETE | Read or delete the plugin's log file |
   | `/test-nonce` | GET | Get REST nonce (public, bootstraps auth) |
 
   The same mu-plugin registers **probe adapters**, off unless their option is set (all string options, so `test-set-option` can set them):
@@ -500,7 +515,7 @@ Two mu-plugins provide test infrastructure:
 
 **`helpers/assertions.sh`** provides: `assert_status`, `assert_contains`, `assert_not_contains`, `assert_equals`, `assert_greater_than`, `assert_json_field`, `print_summary`. Each assertion increments `TESTS_RUN` and optionally `TESTS_FAILED`.
 
-**`helpers/fixtures.sh`** provides: `create_tracking_url`, `create_target_page`, `simulate_click`, `get_click_cookies`, `extract_cookie_value`, `set_consent_state`, `get_click_count`, `query_db`, `query_db_rows`, `execute_sql`, `flush_rewrites`, `trigger_conversion`, `clear_cookies`, `strip_secure_flag`, `set_option`, and the probe adapter switches `set_probe_capturers`, `set_probe_reporter` (`on`|`supports_test`|`off`), `get_probe_calls` (JSON array of recorded `enqueue` calls), `reset_probe_calls` and `reset_probes`.
+**`helpers/fixtures.sh`** provides: `create_tracking_url`, `create_target_page`, `simulate_click`, `get_click_cookies`, `extract_cookie_value`, `set_consent_state`, `get_click_count`, `query_db`, `query_db_rows`, `execute_sql`, `flush_rewrites`, `trigger_conversion`, `clear_cookies`, `strip_secure_flag`, `set_option`, `set_dedup_seconds`, the logging helpers `set_logging` (`on`|`off`), `get_log` and `clear_log`, and the probe adapter switches `set_probe_capturers`, `set_probe_reporter` (`on`|`supports_test`|`off`), `get_probe_calls` (JSON array of recorded `enqueue` calls), `reset_probe_calls` and `reset_probes`.
 
 ### 7.5 Integration Test Coverage
 
@@ -575,6 +590,17 @@ Runs once with the `cookie` transport and once with the `fragment` transport, se
 - Visitor B clicks the same tracking URL two seconds later.
 - With consent granted, posting A's pair to `/set-cookie` anonymously returns success, and the `_ad_clicks` cookie it sets carries A's timestamp, not B's.
 - The suite clears the shared set-cookie rate-limit transient at start and end, and resets the transport option and consent state.
+
+---
+
+#### `test-counting-rules.sh` — Repeats, Speculative Requests and the Diagnostic Log
+
+Uses the probe capturer (`google_ads=gclid`) and logging (`set_logging on`, `get_log`, `clear_log`).
+
+- Two requests with `gclid=RRR` give one click row and one click-ID row. The repeat redirects with its query parameters, and its `_ad_clicks` entry carries the original click's timestamp.
+- A request with `Sec-Purpose: prefetch` gets 503, no redirect, no `_ad_clicks` cookie and no click row; a normal request after it gives one click row. `Purpose: prefetch` also gets 503.
+- With logging enabled, each request writes exactly one `Tracking URL request:` line, with the outcome (`recorded`, `repeat`, `speculative`, `bot`, `deduplicated`), the hash prefix and the `Sec-Purpose`, `Purpose` and `User-Agent` values, and no IP address. With logging disabled, nothing is written.
+- The suite switches logging off, clears the log, and resets the probes, the dedup window and the consent state.
 
 ---
 
@@ -855,7 +881,8 @@ curl ... | grep -i '^set-cookie:' || true
 | Cookie_Manager | ~15 | consent-states, cookie-limits |
 | Consent | ~5 | consent-states |
 | Bot_Detector | ~10 | bot-detection |
-| Click_Handler | ~25 | click-flow, query-forwarding, deferred-consent |
+| Speculation_Detector | ~9 | counting-rules |
+| Click_Handler | ~50 | click-flow, query-forwarding, deferred-consent, counting-rules |
 | Conversion_Handler | ~18 | conversion-attribution, deduplication |
 | Post_Type | ~8 | activation, admin-crud |
 | Click_ID_Store | ~6 | click-ids, migration |
@@ -872,4 +899,4 @@ curl ... | grep -i '^set-cookie:' || true
 | Plugin | ~6 | activation |
 | pending-consent.js | ~29 | — |
 | admin.js | ~10 | — |
-| **Totals** | **~214 PHP + 39 JS** | **16 suites** |
+| **Totals** | **~248 PHP + 39 JS** | **17 suites** |

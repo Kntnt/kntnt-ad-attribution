@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Plugin Does
 
-WordPress plugin that measures which ads generate leads. Each ad gets a tracking URL (`/ad/<hash>`, prefix configurable via `kntnt_ad_attr_url_prefix` filter). Non-bot clicks are logged individually in a custom table, a first-party cookie stores the hash with a timestamp, and when a form submission triggers a conversion via the `kntnt_ad_attr_conversion` action, the most recent click receives full attribution (filterable via `kntnt_ad_attr_attribution` to support multi-touch models).
+WordPress plugin that measures which ads generate leads. Each ad gets a tracking URL (`/ad/<hash>`, prefix configurable via `kntnt_ad_attr_url_prefix` filter). Clicks are recorded individually in a custom table (bots, speculative prefetches and repeats of an already recorded platform click ID are not), a first-party cookie stores the hash with a timestamp, and when a form submission triggers a conversion via the `kntnt_ad_attr_conversion` action, the most recent click receives full attribution (filterable via `kntnt_ad_attr_attribution` to support multi-touch models).
 
 ## Naming Conventions
 
@@ -39,15 +39,16 @@ All machine-readable names use `kntnt-ad-attr` (hyphens) / `kntnt_ad_attr` (unde
 6. `Cookie_Manager` — cookie read/write operations (stateless)
 7. `Consent` — three-state consent resolution
 8. `Bot_Detector` — User-Agent filtering
-9. `Click_ID_Store` — platform-specific click ID storage (v1.2.0)
-10. `Queue(Settings)` — async job queue with configurable retry (v1.2.0)
-11. `Queue_Processor(Queue, Logger)` — queue job dispatcher (v1.2.0)
-12. `Click_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store)` — click processing & redirect
-13. `Conversion_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store, Queue, Queue_Processor, Logger)` — conversion attribution
-14. `Cron(Click_ID_Store, Queue, Logger)` — scheduled cleanup tasks
-15. `Admin_Page(Queue, Queue_Processor, Settings, Logger)` — admin UI orchestration
-16. `Rest_Endpoint(Cookie_Manager, Consent)` — REST API routes
-17. `Settings_Page(Settings, Logger)` — settings page under Settings > Ad Attribution
+9. `Speculation_Detector` — prefetch/prerender detection (v1.10.0)
+10. `Click_ID_Store` — platform-specific click ID storage (v1.2.0)
+11. `Queue(Settings)` — async job queue with configurable retry (v1.2.0)
+12. `Queue_Processor(Queue, Logger)` — queue job dispatcher (v1.2.0)
+13. `Click_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store, Speculation_Detector, Logger)` — click processing & redirect
+14. `Conversion_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store, Queue, Queue_Processor, Logger)` — conversion attribution
+15. `Cron(Click_ID_Store, Queue, Logger)` — scheduled cleanup tasks
+16. `Admin_Page(Queue, Queue_Processor, Settings, Logger)` — admin UI orchestration
+17. `Rest_Endpoint(Cookie_Manager, Consent)` — REST API routes
+18. `Settings_Page(Settings, Logger)` — settings page under Settings > Ad Attribution
 
 **Lifecycle files (not autoloaded):**
 
@@ -71,13 +72,15 @@ All machine-readable names use `kntnt-ad-attr` (hyphens) / `kntnt_ad_attr` (unde
 
 **Click ID structured format (v1.9.0):** Reporters receive click IDs as structured arrays `['id' => string, 'captured_at' => int]` per platform instead of bare click ID strings. This is a breaking change for consumers of the `kntnt_ad_attr_conversion_reporters` filter that access click IDs.
 
-**Per-click click IDs (v1.10.0):** `Click_Handler` captures click IDs after the click insert, keyed by `$wpdb->insert_id` (`Click_ID_Store::store( $click_row_id, $platform, $value )`), and skips capture if the insert failed. `Conversion_Handler` passes its `$linked_clicks` map (hash ⇒ attributed click row ID) to `Click_ID_Store::get_for_clicks()` and `get_campaign_data()`, so reporters get the click IDs and per-click fields (`utm_content`, `utm_term`, `utm_id`, `utm_source_platform`) of the attributed click, with `captured_at` = that click's `clicked_at`; a hash whose click carried no ID for a platform gets no entry for it. `get_for_hashes()` and `cleanup()` were removed. Multi-table `DELETE x FROM … JOIN …` statements silently delete nothing in Playground's SQLite translator; new deletes use subqueries (`IN (SELECT …)`, `NOT EXISTS`).
+**Per-click click IDs (v1.10.0):** `Click_Handler` reads click IDs before the click insert (for the repeat check) and stores them after it, keyed by `$wpdb->insert_id` (`Click_ID_Store::store( $click_row_id, $platform, $value )`), and skips capture if the insert failed. `Conversion_Handler` passes its `$linked_clicks` map (hash ⇒ attributed click row ID) to `Click_ID_Store::get_for_clicks()` and `get_campaign_data()`, so reporters get the click IDs and per-click fields (`utm_content`, `utm_term`, `utm_id`, `utm_source_platform`) of the attributed click, with `captured_at` = that click's `clicked_at`; a hash whose click carried no ID for a platform gets no entry for it. `get_for_hashes()` and `cleanup()` were removed. Multi-table `DELETE x FROM … JOIN …` statements silently delete nothing in Playground's SQLite translator; new deletes use subqueries (`IN (SELECT …)`, `NOT EXISTS`).
 
 **Default date filter (v1.8.0):** `Campaign_List_Table::get_default_date_range()` computes the two most recent complete calendar weeks based on the WordPress "Week Starts On" setting. Used as the default when no date filter is provided.
 
 **Merged admin view (v1.6.0):** The admin page is a single merged view (no tabs). Add-on plugins can still register custom views via `kntnt_ad_attr_admin_tabs` filter; when `?tab=<slug>` is passed, the `kntnt_ad_attr_admin_tab_{$tab}` action fires for rendering.
 
 **Per-hash deduplication (v1.6.0):** Both click and conversion deduplication are per-hash (not global) and disabled by default. Controlled by `kntnt_ad_attr_dedup_seconds` filter (default: 0). Click dedup (v1.7.0, fixed v1.10.0) skips the DB insert when the same hash is in the `_ad_clicks` cookie within the window **and** a click row exists for that entry's exact `(hash, clicked_at)` (requires consent=true); the cookie is re-sent with the entry's original timestamp (expiry refreshed, window measured from the original click). An entry without a matching row is handled as a new click, which repairs cookies from older versions. Invariant: every `_ad_clicks` entry the plugin writes points at an existing click row, because `Conversion_Handler` links conversions by that exact match with no fallback (a miss skips the hash and logs a `Logger` warning). Conversion dedup stores `hash:timestamp` pairs in the `_ad_last_conv` cookie (same format as `_ad_clicks`).
+
+**Counting rules (v1.10.0):** `Click_Handler::handle_click()` checks, in order: bot (`kntnt_ad_attr_is_bot` → redirect), speculative (`kntnt_ad_attr_is_speculative`, `Speculation_Detector`: `Sec-Purpose` contains `prefetch` or `Purpose: prefetch` → 503 + `nocache_headers()`, no redirect, nothing recorded, so the browser discards the prefetch), repeat (any captured click ID already recorded on a click of the same hash, via `Click_ID_Store::find_original_click()` → no row, no click ID, no `kntnt_ad_attr_click`; consent true sets the entry to the later of the existing entry's click (only if its row exists) and the original click, consent null transports the original click; redirect), click dedup, then record. No capturers → no repeat detection; the same click ID on another hash is not a repeat. With logging enabled, each request that gets past the loop guard writes exactly one `Logger::info( 'CORE', 'Tracking URL request: outcome=… hash=<8 chars> sec_purpose="…" purpose="…" user_agent="…"' )` line (outcomes `recorded|repeat|deduplicated|speculative|bot`, no IP) via `Click_Handler::log_request()`; a further per-request fact goes into that line as another field, never a second line. 404s write no line. See `docs/click-handling.md` "Counting Rules".
 
 **Query parameter forwarding (v1.3.0):** Click_Handler merges incoming query parameters (e.g. `gclid`, `fbclid`) into the redirect target URL. Target URL parameters take precedence on collision. The merged set is filterable via `kntnt_ad_attr_redirect_query_params`.
 
@@ -91,9 +94,9 @@ All machine-readable names use `kntnt-ad-attr` (hyphens) / `kntnt_ad_attr` (unde
 
 ## Hook Reference (Quick)
 
-**Filters (16):** `kntnt_ad_attr_has_consent`, `kntnt_ad_attr_redirect_method`, `kntnt_ad_attr_url_prefix`, `kntnt_ad_attr_cookie_lifetime`, `kntnt_ad_attr_dedup_seconds`, `kntnt_ad_attr_pending_transport`, `kntnt_ad_attr_is_bot`, `kntnt_ad_attr_attribution`, `kntnt_ad_attr_click_retention_days`, `kntnt_ad_attr_utm_options`, `kntnt_ad_attr_admin_tabs`, `kntnt_ad_attr_redirect_query_params`, `kntnt_ad_attr_click_id_capturers`, `kntnt_ad_attr_conversion_reporters`, `kntnt_ad_attr_delete_cookies`, `wp_untrash_post_status` (priority 20, for CPT only).
+**Filters (17):** `kntnt_ad_attr_has_consent`, `kntnt_ad_attr_redirect_method`, `kntnt_ad_attr_url_prefix`, `kntnt_ad_attr_cookie_lifetime`, `kntnt_ad_attr_dedup_seconds`, `kntnt_ad_attr_pending_transport`, `kntnt_ad_attr_is_bot`, `kntnt_ad_attr_is_speculative`, `kntnt_ad_attr_attribution`, `kntnt_ad_attr_click_retention_days`, `kntnt_ad_attr_utm_options`, `kntnt_ad_attr_admin_tabs`, `kntnt_ad_attr_redirect_query_params`, `kntnt_ad_attr_click_id_capturers`, `kntnt_ad_attr_conversion_reporters`, `kntnt_ad_attr_delete_cookies`, `wp_untrash_post_status` (priority 20, for CPT only).
 
-**Actions (5):** `kntnt_ad_attr_click` (hash, target_url, campaign_data — fires for all non-bot clicks), `kntnt_ad_attr_conversion` (trigger from form plugin), `kntnt_ad_attr_conversion_recorded` (attributions, context — fires only when the DB write recorded at least one conversion row; like reporters' `enqueue`, it receives only the recorded, positive-weight attributions, not renormalised), `kntnt_ad_attr_admin_tab_{$tab}` (custom tab rendering), `kntnt_ad_attr_daily_cleanup` (cron).
+**Actions (5):** `kntnt_ad_attr_click` (hash, target_url, campaign_data — fires for every recorded click; not for bots, speculative requests, repeats or duplicates), `kntnt_ad_attr_conversion` (trigger from form plugin), `kntnt_ad_attr_conversion_recorded` (attributions, context — fires only when the DB write recorded at least one conversion row; like reporters' `enqueue`, it receives only the recorded, positive-weight attributions, not renormalised), `kntnt_ad_attr_admin_tab_{$tab}` (custom tab rendering), `kntnt_ad_attr_daily_cleanup` (cron).
 
 See `docs/developer-hooks.md` for full documentation.
 
@@ -103,9 +106,9 @@ The test suite has three levels. See `docs/testing-strategy.md` for full details
 
 | Level | Framework | Tests | What it covers |
 |-------|-----------|-------|----------------|
-| PHP unit | Pest + Brain Monkey + Mockery | 252 | Individual class methods in isolation |
+| PHP unit | Pest + Brain Monkey + Mockery | 287 | Individual class methods in isolation |
 | JS unit | Vitest + happy-dom | 39 | `pending-consent.js` and `admin.js` |
-| Integration | Bash + curl + WordPress Playground | 16 suites | End-to-end flows: click, click IDs, conversion, deferred consent, admin, REST, cron |
+| Integration | Bash + curl + WordPress Playground | 17 suites | End-to-end flows: click, click IDs, counting rules, conversion, deferred consent, admin, REST, cron |
 
 ### Running tests
 
@@ -160,7 +163,7 @@ GitHub Actions workflow (`.github/workflows/tests.yml`) runs all three levels on
 Integration tests run against a disposable WordPress Playground instance (WASM-based SQLite, no MySQL needed). Two mu-plugins provide test infrastructure:
 
 - `tests/Integration/fake-consent-plugin/` — simulates consent states via WP option
-- `tests/Integration/test-helpers-plugin/` — REST endpoints for fixtures, DB queries, cookie manipulation, plus probe adapters switched on by option: a click-ID capturer (`set_probe_capturers "google_ads=gclid"`) and a conversion reporter (`set_probe_reporter on|supports_test`) that records every `enqueue` call (`get_probe_calls`). Suites using them call `reset_probes` at the end. See `docs/testing-strategy.md` §7.2.
+- `tests/Integration/test-helpers-plugin/` — REST endpoints for fixtures, DB queries, cookie manipulation, plus probe adapters switched on by option: a click-ID capturer (`set_probe_capturers "google_ads=gclid"`) and a conversion reporter (`set_probe_reporter on|supports_test`) that records every `enqueue` call (`get_probe_calls`). Suites using them call `reset_probes` at the end. Logging is switched with `set_logging on|off` and the log read or deleted with `get_log` / `clear_log` (`/test-set-logging`, `/test-log`). See `docs/testing-strategy.md` §7.2.
 
 **Known WASM PHP gotcha:** Playground reuses the PHP process between requests. Manual `$_COOKIE`/`$_GET`/`$_POST` modifications persist across requests. The `test-clear-cookies` endpoint and `clear_cookies` fixture helper reset this state between tests.
 
@@ -210,7 +213,7 @@ All specs are in `docs/`. Read the relevant doc before implementing a feature:
 - The pending-consent transport (`_aah_pending` cookie, `#_aah=` fragment), the client script's `sessionStorage` and the `set-cookie` request all carry `<hash>:<timestamp>` pairs (v1.10.0), where the timestamp is the click row's `clicked_at`. `set-cookie` writes an entry only for a pair that exactly matches a click row, with the pair's own timestamp; bare hashes are ignored. `Click_Handler::handle_pending_consent()` takes the timestamp explicitly so it can refer to any recorded click.
 - Select2 loaded from cdnjs has SRI (Subresource Integrity) hashes added via `script_loader_tag` / `style_loader_tag` filters.
 - Hash generation uses `random_bytes(32)` — the hash is an opaque identifier, not derived from UTM parameters.
-- The `kntnt_ad_attr_click` action fires for all non-bot clicks regardless of consent state, enabling companion plugins to capture platform-specific parameters even before consent is resolved.
+- The `kntnt_ad_attr_click` action fires for every recorded click (not for bots, speculative requests, repeats or deduplicated clicks) regardless of consent state, enabling companion plugins to capture platform-specific parameters even before consent is resolved.
 - Admin page is registered under Tools (`add_management_page`), not as a top-level menu item.
 - CSV export uses POST with its own nonce (`kntnt_ad_attr_export`) and reconstructs GET filter params from POST data for `Campaign_List_Table` compatibility.
 - The global `kntnt_ad_attribution_delete_cookies()` function (v1.7.0) is defined in `kntnt-ad-attribution.php` after `Plugin::get_instance()`. CMP plugins call it from server-side opt-out hooks to expire HttpOnly cookies. The cookie list is filterable via `kntnt_ad_attr_delete_cookies`.

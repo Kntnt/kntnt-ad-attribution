@@ -39,6 +39,17 @@ final class Click_Handler {
 	public const TEST_PARAM = 'kntnt_ad_attr_test';
 
 	/**
+	 * Number of leading hash characters written to the diagnostic log.
+	 *
+	 * Enough to tell tracking URLs apart, without writing the full
+	 * identifier to a file.
+	 *
+	 * @var int
+	 * @since 1.10.0
+	 */
+	private const LOG_HASH_PREFIX_LENGTH = 8;
+
+	/**
 	 * Cookie manager for reading/writing tracking cookies.
 	 *
 	 * @var Cookie_Manager
@@ -71,8 +82,15 @@ final class Click_Handler {
 	private readonly Click_ID_Store $click_id_store;
 
 	/**
-	 * Logger for diagnostic output, such as test clicks and skipped
-	 * internal requests.
+	 * Speculation detector for declining prefetch and prerender requests.
+	 *
+	 * @var Speculation_Detector
+	 * @since 1.10.0
+	 */
+	private readonly Speculation_Detector $speculation_detector;
+
+	/**
+	 * Logger for the per-request diagnostic line.
 	 *
 	 * @var Logger|null
 	 * @since 1.10.0
@@ -82,21 +100,23 @@ final class Click_Handler {
 	/**
 	 * Initializes the click handler with its dependencies.
 	 *
-	 * @param Cookie_Manager $cookie_manager  Cookie read/write operations.
-	 * @param Consent        $consent         Consent state resolution.
-	 * @param Bot_Detector   $bot_detector    Bot traffic detection.
-	 * @param Click_ID_Store $click_id_store  Platform-specific click ID storage.
-	 * @param Logger|null    $logger          Optional diagnostic logger.
+	 * @param Cookie_Manager       $cookie_manager       Cookie read/write operations.
+	 * @param Consent              $consent              Consent state resolution.
+	 * @param Bot_Detector         $bot_detector         Bot traffic detection.
+	 * @param Click_ID_Store       $click_id_store       Platform-specific click ID storage.
+	 * @param Speculation_Detector $speculation_detector Speculative request detection.
+	 * @param Logger|null          $logger               Optional diagnostic logger.
 	 *
 	 * @since 1.0.0
-	 * @since 1.10.0 Takes an optional Logger.
+	 * @since 1.10.0 Takes a Speculation_Detector and an optional Logger.
 	 */
-	public function __construct( Cookie_Manager $cookie_manager, Consent $consent, Bot_Detector $bot_detector, Click_ID_Store $click_id_store, ?Logger $logger = null ) {
-		$this->cookie_manager = $cookie_manager;
-		$this->consent        = $consent;
-		$this->bot_detector   = $bot_detector;
-		$this->click_id_store = $click_id_store;
-		$this->logger         = $logger;
+	public function __construct( Cookie_Manager $cookie_manager, Consent $consent, Bot_Detector $bot_detector, Click_ID_Store $click_id_store, Speculation_Detector $speculation_detector, ?Logger $logger = null ) {
+		$this->cookie_manager       = $cookie_manager;
+		$this->consent              = $consent;
+		$this->bot_detector         = $bot_detector;
+		$this->click_id_store       = $click_id_store;
+		$this->speculation_detector = $speculation_detector;
+		$this->logger               = $logger;
 	}
 
 	/**
@@ -145,10 +165,13 @@ final class Click_Handler {
 	/**
 	 * Processes a tracking URL visit.
 	 *
-	 * Implements the 12-step click flow: hash extraction → validation →
-	 * database lookup → target resolution → loop guard → bot check →
-	 * internal-traffic check (skipped for test clicks) →
-	 * stats logging → consent check → cookie/transport → redirect.
+	 * Implements the click flow: hash extraction → validation → database
+	 * lookup → target resolution → loop guard → bot check → speculative
+	 * check → internal-traffic check → consent check → repeat check →
+	 * deduplication → click recording → cookie/transport → redirect. Each
+	 * check that ends the request records no click; see docs/click-handling.md,
+	 * "Counting rules". A test click skips the internal-traffic, repeat and
+	 * deduplication checks and is recorded with its test flag set.
 	 *
 	 * @return void
 	 * @since 1.0.0
@@ -238,20 +261,26 @@ final class Click_Handler {
 			$this->send_404();
 		}
 
-		// Step 9: Bot check — bots get redirected without logging or cookies.
+		// Step 9: Bot check — bots get redirected without a click row or cookies.
 		if ( $this->bot_detector->is_bot() ) {
+			$this->log_request( 'bot', $hash, $is_test_click );
 			$this->redirect( $target_url );
 		}
 
-		// Step 9b: Internal traffic (e.g. logged-in staff) is handled like a
-		// bot, so checking the site's own ads leaves no trace. A test click
-		// is the exception: it is how staff test the setup end to end.
+		// Speculative check — a prefetch or prerender is not a click, and the
+		// visitor may never make one. Declining it with a non-2xx response
+		// makes the browser discard it, so a real click that follows reaches
+		// the server as a fresh request and is counted once.
+		if ( $this->speculation_detector->is_speculative() ) {
+			$this->log_request( 'speculative', $hash, $is_test_click );
+			$this->decline_speculative();
+		}
+
+		// Internal traffic (e.g. logged-in staff) is handled like a bot, so
+		// checking the site's own ads leaves no trace. A test click is the
+		// exception: it is how staff test the setup end to end.
 		if ( ! $is_test_click && Internal_Detector::is_internal() ) {
-			$this->logger?->info( 'CORE', sprintf(
-				'Internal request to hash %s... redirected without recording a click (append ?%s=1 to test).',
-				substr( $hash, 0, 8 ),
-				self::TEST_PARAM,
-			) );
+			$this->log_request( 'internal', $hash, $is_test_click );
 			$this->redirect( $target_url );
 		}
 
@@ -262,6 +291,26 @@ final class Click_Handler {
 
 		// Step 10: Check consent early — needed for click deduplication.
 		$consent_state = $this->consent->check();
+
+		// Platform click IDs are read before anything is recorded, because a
+		// value already recorded for this tracking URL makes the request a
+		// repeat rather than a click.
+		$click_ids = $this->capture_click_ids();
+
+		// Repeat check — a reload, back/forward navigation, bookmark or shared
+		// link carries a click ID that an earlier click of this tracking URL
+		// already recorded. It is not a new click. A test click is never a
+		// repeat, for the same reason it is never a duplicate (below).
+		$original_click = $is_test_click ? null : $this->find_original_click( $hash, $click_ids );
+		if ( $original_click !== null ) {
+			match ( $consent_state ) {
+				true  => $this->set_cookie( $hash, $this->repeat_entry_timestamp( $hash, $original_click['clicked_at'] ) ),
+				false => null,
+				null  => $this->handle_pending_consent( $hash, $original_click['clicked_at'], $target_url ),
+			};
+			$this->log_request( 'repeat', $hash, $is_test_click );
+			$this->redirect( $target_url );
+		}
 
 		// Step 10b: Click deduplication — skip DB insert when the same hash
 		// was already clicked within the dedup window and consent allows
@@ -284,6 +333,7 @@ final class Click_Handler {
 				// entry at it, which repairs the cookie.
 				if ( $this->click_row_exists( $hash, $existing[ $hash ] ) ) {
 					$this->set_cookie( $hash, $existing[ $hash ] );
+					$this->log_request( 'deduplicated', $hash, $is_test_click );
 					$this->redirect( $target_url );
 				}
 			}
@@ -313,25 +363,13 @@ final class Click_Handler {
 		] );
 		$click_row_id = $inserted ? (int) $wpdb->insert_id : 0;
 
-		if ( $is_test_click && $click_row_id > 0 ) {
-			$this->logger?->info( 'CORE', sprintf(
-				'Test click recorded for hash %s..., click row %d.',
-				substr( $hash, 0, 8 ),
-				$click_row_id,
-			) );
-		}
-
-		// Capture platform-specific click IDs via registered capturers. Each
-		// ID belongs to the click row just inserted, so a conversion linked
-		// to this click reports this click's IDs and no other visitor's.
-		// Without a click row there is nothing to attach them to.
+		// Store the captured platform click IDs. Each ID belongs to the click
+		// row just inserted, so a conversion linked to this click reports
+		// this click's IDs and no other visitor's. Without a click row there
+		// is nothing to attach them to.
 		if ( $click_row_id > 0 ) {
-			$capturers = apply_filters( 'kntnt_ad_attr_click_id_capturers', [] );
-			foreach ( $capturers as $platform => $parameter ) {
-				$value = sanitize_text_field( $_GET[ $parameter ] ?? '' );
-				if ( $value !== '' && strlen( $value ) <= 255 ) {
-					$this->click_id_store->store( $click_row_id, (string) $platform, $value );
-				}
+			foreach ( $click_ids as $platform => $value ) {
+				$this->click_id_store->store( $click_row_id, $platform, $value );
 			}
 		}
 
@@ -362,8 +400,8 @@ final class Click_Handler {
 			}
 		}
 
-		// Notify companion plugins about the click. Fires for all non-bot
-		// clicks regardless of consent state. Allows add-ons to capture
+		// Notify companion plugins about the click. Fires for every recorded
+		// click regardless of consent state. Allows add-ons to capture
 		// platform-specific parameters (e.g. gclid) from $_GET.
 		do_action( 'kntnt_ad_attr_click', $hash, $target_url, [
 			'post_id'     => $post_id,
@@ -380,6 +418,7 @@ final class Click_Handler {
 		};
 
 		// Step 13: Redirect to the target page.
+		$this->log_request( 'recorded', $hash, $is_test_click );
 		$this->redirect( $target_url );
 	}
 
@@ -397,6 +436,131 @@ final class Click_Handler {
 		$entries = $this->cookie_manager->parse();
 		$entries = $this->cookie_manager->add( $entries, $hash, $timestamp );
 		$this->cookie_manager->set_clicks_cookie( $entries );
+	}
+
+	/**
+	 * Writes the diagnostic line for a tracking URL request.
+	 *
+	 * Called exactly once per request that reaches a decision, just before
+	 * the response ends it, so the log shows how every request was counted.
+	 * The line holds the outcome, the hash prefix and the raw speculation
+	 * and User-Agent headers, which is what is needed to measure what
+	 * prefetches, previews and scanners still get counted. It deliberately
+	 * holds no IP address. Another per-request fact belongs in the same
+	 * line as one more field, never in a second line. Logger writes nothing
+	 * unless logging is enabled.
+	 *
+	 * @param string $outcome How the request was counted: 'recorded', 'repeat', 'deduplicated', 'speculative', 'bot' or 'internal'.
+	 * @param string $hash    The tracking URL hash.
+	 * @param bool   $is_test Whether the request is a test click (`kntnt_ad_attr_test=1`).
+	 *
+	 * @return void
+	 * @since 1.10.0
+	 */
+	private function log_request( string $outcome, string $hash, bool $is_test ): void {
+		$fields = [
+			'outcome'     => $outcome,
+			'hash'        => substr( $hash, 0, self::LOG_HASH_PREFIX_LENGTH ),
+			'test'        => $is_test ? '1' : '0',
+			'sec_purpose' => self::quote_header( 'HTTP_SEC_PURPOSE' ),
+			'purpose'     => self::quote_header( 'HTTP_PURPOSE' ),
+			'user_agent'  => self::quote_header( 'HTTP_USER_AGENT' ),
+		];
+
+		$pairs = array_map( fn( string $key, string $value ) => "{$key}={$value}", array_keys( $fields ), $fields );
+
+		$this->logger?->info( 'CORE', 'Tracking URL request: ' . implode( ' ', $pairs ) );
+	}
+
+	/**
+	 * Returns a request header from $_SERVER as a double-quoted log value.
+	 *
+	 * Sanitizing strips line breaks, so a crafted header cannot forge a log
+	 * line; escaping keeps quotes inside the value unambiguous.
+	 *
+	 * @param string $key The $_SERVER key, e.g. 'HTTP_USER_AGENT'.
+	 *
+	 * @return string The value in double quotes, `""` if the header is absent.
+	 * @since 1.10.0
+	 */
+	private static function quote_header( string $key ): string {
+		$value = sanitize_text_field( wp_unslash( (string) ( $_SERVER[ $key ] ?? '' ) ) );
+		return '"' . addcslashes( $value, '"\\' ) . '"';
+	}
+
+	/**
+	 * Reads the platform click IDs carried by the request.
+	 *
+	 * Asks the registered capturers (`kntnt_ad_attr_click_id_capturers`)
+	 * which query parameter holds each platform's click ID. Empty values and
+	 * values longer than the column (255 characters) are ignored.
+	 *
+	 * @return array<string, string> Platform => click ID value.
+	 * @since 1.10.0
+	 */
+	private function capture_click_ids(): array {
+		$click_ids = [];
+
+		$capturers = apply_filters( 'kntnt_ad_attr_click_id_capturers', [] );
+		foreach ( $capturers as $platform => $parameter ) {
+			$value = sanitize_text_field( $_GET[ $parameter ] ?? '' );
+			if ( $value !== '' && strlen( $value ) <= 255 ) {
+				$click_ids[ (string) $platform ] = $value;
+			}
+		}
+
+		return $click_ids;
+	}
+
+	/**
+	 * Finds the click a repeat request resolves to.
+	 *
+	 * A request is a repeat if any of its click IDs was already recorded on
+	 * a click of the same tracking URL. The original click is the earliest
+	 * click row carrying any of those values. Without click IDs, for example
+	 * when no capturers are registered, there is nothing to compare.
+	 *
+	 * @param string                $hash      The tracking URL hash.
+	 * @param array<string, string> $click_ids Platform => click ID value carried by the request.
+	 *
+	 * @return array{click_id: int, clicked_at: int}|null The original click, or null if the request is not a repeat.
+	 * @since 1.10.0
+	 */
+	private function find_original_click( string $hash, array $click_ids ): ?array {
+		$original = null;
+
+		foreach ( $click_ids as $platform => $value ) {
+			$match = $this->click_id_store->find_original_click( $hash, $platform, $value );
+			if ( $match !== null && ( $original === null || [ $match['clicked_at'], $match['click_id'] ] < [ $original['clicked_at'], $original['click_id'] ] ) ) {
+				$original = $match;
+			}
+		}
+
+		return $original;
+	}
+
+	/**
+	 * Returns the click time a repeat leaves in the visitor's cookie entry.
+	 *
+	 * The entry ends up at the more recent of the existing entry's click and
+	 * the original click, so a repeat never moves it backwards in time. The
+	 * existing entry only counts if its click row exists, which keeps every
+	 * entry the plugin writes pointing at a click row.
+	 *
+	 * @param string $hash                The tracking URL hash.
+	 * @param int    $original_clicked_at Unix timestamp of the original click.
+	 *
+	 * @return int Unix timestamp for the cookie entry.
+	 * @since 1.10.0
+	 */
+	private function repeat_entry_timestamp( string $hash, int $original_clicked_at ): int {
+		$existing = $this->cookie_manager->parse()[ $hash ] ?? null;
+
+		if ( $existing !== null && $existing > $original_clicked_at && $this->click_row_exists( $hash, $existing ) ) {
+			return $existing;
+		}
+
+		return $original_clicked_at;
 	}
 
 	/**
@@ -494,6 +658,24 @@ final class Click_Handler {
 	private function js_redirect( string $url ): never {
 		$escaped_url = esc_js( $url );
 		echo '<!DOCTYPE html><html><head><script>window.location.href="' . $escaped_url . '";</script></head><body></body></html>';
+		exit;
+	}
+
+	/**
+	 * Declines a speculative request and terminates execution.
+	 *
+	 * Chrome treats a prefetch or prerender that ends in a non-2xx status as
+	 * failed and does not use it, so the visitor's real navigation, if any,
+	 * makes a fresh request. A redirect would be followed and cached as the
+	 * prefetched response instead, so the real click would never reach the
+	 * server. The response must not be cached for the same reason.
+	 *
+	 * @return never
+	 * @since 1.10.0
+	 */
+	private function decline_speculative(): never {
+		status_header( 503 );
+		nocache_headers();
 		exit;
 	}
 
