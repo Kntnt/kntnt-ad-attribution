@@ -300,7 +300,13 @@ final class Conversion_Handler {
 	private function write_conversion( array $attributions, array $entries, string $conversion_ref ): ?array {
 		global $wpdb;
 
-		$clicks_table = Table::Clicks->prefixed();
+		// Find the click rows matching the credited hashes' cookie entries.
+		// The match stays exact on purpose: the clicks table is shared by
+		// everyone who clicks the tracking URL, so the nearest earlier row
+		// is often another visitor's click.
+		$credited   = array_intersect_key( $entries, array_filter( $attributions, fn ( $value ) => $value > 0 ) );
+		$click_rows = Click_Lookup::find( array_map( null, array_keys( $credited ), $credited ) );
+
 		$conv_table   = Table::Conversions->prefixed();
 		$converted_at = gmdate( 'Y-m-d H:i:s' );
 
@@ -316,15 +322,7 @@ final class Conversion_Handler {
 				continue;
 			}
 
-			// Find the click record matching the cookie timestamp. The match
-			// stays exact on purpose: the clicks table is shared by everyone
-			// who clicks the tracking URL, so the nearest earlier row is often
-			// another visitor's click.
-			$click_id = $wpdb->get_var( $wpdb->prepare(
-				"SELECT id FROM {$clicks_table} WHERE hash = %s AND clicked_at = %s LIMIT 1",
-				$hash,
-				gmdate( 'Y-m-d H:i:s', $entries[ $hash ] ),
-			) );
+			$click_id = $click_rows[ $hash ][ $entries[ $hash ] ]['id'] ?? null;
 
 			// A miss is logged without visitor-identifying data.
 			if ( ! $click_id ) {
@@ -448,8 +446,8 @@ final class Conversion_Handler {
 	/**
 	 * Filters cookie entries to those that point at a test click row.
 	 *
-	 * Uses the exact `(hash, clicked_at)` match of the click lookup, so an
-	 * entry kept here is one whose conversion links to a test click.
+	 * Uses the exact match of the click lookup (Click_Lookup), so an entry
+	 * kept here is one whose conversion links to a test click.
 	 *
 	 * @param array<string, int> $entries Hash => timestamp map from the cookie.
 	 *
@@ -457,25 +455,13 @@ final class Conversion_Handler {
 	 * @since 1.10.0
 	 */
 	private function filter_test_entries( array $entries ): array {
-		global $wpdb;
+		$click_rows = Click_Lookup::find( array_map( null, array_keys( $entries ), $entries ) );
 
-		$clicks_table = Table::Clicks->prefixed();
-		$hashes       = array_keys( $entries );
-		$placeholders = implode( ',', array_fill( 0, count( $hashes ), '%s' ) );
-
-		$test_clicks = $wpdb->get_results( $wpdb->prepare(
-			"SELECT hash, clicked_at FROM {$clicks_table} WHERE is_test = 1 AND hash IN ({$placeholders})",
-			...$hashes,
-		) );
-
-		$test_entries = [];
-		foreach ( $test_clicks as $click ) {
-			if ( gmdate( 'Y-m-d H:i:s', $entries[ $click->hash ] ) === $click->clicked_at ) {
-				$test_entries[ $click->hash ] = $entries[ $click->hash ];
-			}
-		}
-
-		return $test_entries;
+		return array_filter(
+			$entries,
+			fn ( $timestamp, $hash ) => $click_rows[ $hash ][ $timestamp ]['is_test'] ?? false,
+			ARRAY_FILTER_USE_BOTH,
+		);
 	}
 
 	/**

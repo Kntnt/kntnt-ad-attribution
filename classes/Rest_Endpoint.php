@@ -365,30 +365,11 @@ final class Rest_Endpoint {
 	 * @since 1.10.0
 	 */
 	private function find_recorded_clicks( array $clicks ): array {
-		global $wpdb;
-		$clicks_table = Table::Clicks->prefixed();
-
-		$conditions = implode( ' OR ', array_fill( 0, count( $clicks ), '(hash = %s AND clicked_at = %s)' ) );
-		$args       = [];
-		foreach ( $clicks as [ $hash, $timestamp ] ) {
-			$args[] = $hash;
-			$args[] = gmdate( 'Y-m-d H:i:s', $timestamp );
-		}
-
-		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-		$rows = $wpdb->get_results( $wpdb->prepare(
-			"SELECT hash, clicked_at FROM {$clicks_table} WHERE {$conditions}",
-			...$args,
-		) );
-
-		$found = [];
-		foreach ( $rows as $row ) {
-			$found[ $row->hash . ' ' . $row->clicked_at ] = true;
-		}
+		$click_rows = Click_Lookup::find( $clicks );
 
 		$recorded = [];
 		foreach ( $clicks as [ $hash, $timestamp ] ) {
-			if ( isset( $found[ $hash . ' ' . gmdate( 'Y-m-d H:i:s', $timestamp ) ] ) ) {
+			if ( isset( $click_rows[ $hash ][ $timestamp ] ) ) {
 				$recorded[ $hash ] = max( $recorded[ $hash ] ?? 0, $timestamp );
 			}
 		}

@@ -106,9 +106,9 @@ function setup_conversion_path(): array {
     $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
     $wpdb->shouldReceive('query')->with('COMMIT')->once();
 
-    // Click lookups — only hash2 gets attribution (last-click default).
+    // Every click has a row — only hash2 gets attribution (last-click default).
+    TestFactory::everyClickRecorded(42);
     $wpdb->shouldReceive('prepare')->andReturn('SQL')->byDefault();
-    $wpdb->shouldReceive('get_var')->andReturn('42')->byDefault();
     $wpdb->shouldReceive('insert')->once()->andReturn(true);
 
     // $_SERVER for context.
@@ -253,11 +253,8 @@ describe('Conversion_Handler::handle_conversion()', function () {
         $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
         $wpdb->shouldReceive('prepare')->andReturn('SQL');
 
-        // First get_var for hash_missing returns null (click not found).
-        // Second get_var for hash_found returns a valid click ID.
-        $wpdb->shouldReceive('get_var')
-            ->twice()
-            ->andReturn(null, '42');
+        // hash_missing has no click row; hash_found has one.
+        TestFactory::clickRows([['hash' => $hash_found, 'timestamp' => $now - 3600, 'id' => 42]]);
 
         // Only one insert -- hash_missing is skipped because its click_id is null.
         $wpdb->shouldReceive('insert')->once()->andReturn(true);
@@ -290,19 +287,18 @@ describe('Conversion_Handler::handle_conversion()', function () {
             fn (array $hashes) => $hashes,
         );
 
-        // Capture prepared queries to prove only the exact match is tried.
-        $prepared = [];
         $wpdb = wpdb_without_test_clicks();
         $GLOBALS['wpdb'] = $wpdb;
-        $wpdb->shouldReceive('prepare')->andReturnUsing(function (...$args) use (&$prepared) {
-            $prepared[] = $args;
-            return 'SQL';
-        });
         $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
         $wpdb->shouldReceive('query')->with('COMMIT')->once();
 
         // The exact lookup misses, and no other row is tried.
-        $wpdb->shouldReceive('get_var')->once()->andReturn(null);
+        $asked = new \ArrayObject();
+        \Patchwork\redefine('Kntnt\Ad_Attribution\Click_Lookup::find', function (array $clicks) use ($asked): array {
+            $asked[] = $clicks;
+            return [];
+        });
+        $wpdb->shouldNotReceive('get_var');
         $wpdb->shouldNotReceive('get_row');
         $wpdb->shouldNotReceive('get_results');
 
@@ -323,10 +319,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
 
         $handler->handle_conversion();
 
-        expect($prepared)->toHaveCount(1);
-        expect($prepared[0][0])->toContain('wp_kntnt_ad_attr_clicks');
-        expect($prepared[0][0])->toContain('clicked_at = %s');
-        expect(array_slice($prepared[0], 1))->toBe([$hash, '2023-11-14 21:13:20']);
+        expect($asked->getArrayCopy())->toBe([[[$hash, $entry]]]);
 
         expect($logged[0])->toBe('CORE');
         expect($logged[1])->toContain(substr($hash, 0, 8));
@@ -359,7 +352,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
         $GLOBALS['wpdb'] = $wpdb;
         $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
         $wpdb->shouldReceive('prepare')->andReturn('SQL');
-        $wpdb->shouldReceive('get_var')->andReturn('42');
+        TestFactory::everyClickRecorded(42);
         $wpdb->shouldReceive('insert')->once()->andReturn(true);
         $wpdb->shouldReceive('query')->with('COMMIT')->once();
 
@@ -404,7 +397,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
         $GLOBALS['wpdb'] = $wpdb;
         $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
         $wpdb->shouldReceive('prepare')->andReturn('SQL');
-        $wpdb->shouldReceive('get_var')->andReturn('42');
+        TestFactory::everyClickRecorded(42);
 
         // Only hash_b should be inserted (hash_a is deduped).
         $wpdb->shouldReceive('insert')->once()->andReturn(true);
@@ -488,7 +481,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
         $GLOBALS['wpdb'] = $wpdb;
         $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
         $wpdb->shouldReceive('prepare')->andReturn('SQL');
-        $wpdb->shouldReceive('get_var')->andReturn('42');
+        TestFactory::everyClickRecorded(42);
         $wpdb->shouldReceive('insert')->once()->andReturn(true);
         $wpdb->shouldReceive('query')->with('COMMIT')->once();
 
@@ -529,7 +522,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
 
         $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
         $wpdb->shouldReceive('prepare')->andReturn('SQL');
-        $wpdb->shouldReceive('get_var')->once()->andReturn('42');
+        TestFactory::everyClickRecorded(42);
 
         // Only one insert — for the valid hash.
         $wpdb->shouldReceive('insert')->once()->andReturn(true);
@@ -570,7 +563,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
 
         $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
         $wpdb->shouldReceive('prepare')->andReturn('SQL');
-        $wpdb->shouldReceive('get_var')->andReturn('42');
+        TestFactory::everyClickRecorded(42);
 
         // Only one insert — the older click has 0.0 attribution and is skipped.
         $wpdb->shouldReceive('insert')
@@ -622,7 +615,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
 
         $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
         $wpdb->shouldReceive('prepare')->andReturn('SQL');
-        $wpdb->shouldReceive('get_var')->andReturn('42');
+        TestFactory::everyClickRecorded(42);
 
         // Both hashes get 0.5 — two inserts.
         $insertedValues = [];
@@ -666,7 +659,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
         // Verify transaction ordering.
         $wpdb->shouldReceive('query')->with('START TRANSACTION')->once()->ordered();
         $wpdb->shouldReceive('prepare')->andReturn('SQL');
-        $wpdb->shouldReceive('get_var')->andReturn('42');
+        TestFactory::everyClickRecorded(42);
         $wpdb->shouldReceive('insert')->once()->andReturn(true)->ordered();
         $wpdb->shouldReceive('query')->with('COMMIT')->once()->ordered();
 
@@ -699,7 +692,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
 
         $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
         $wpdb->shouldReceive('prepare')->andReturn('SQL');
-        $wpdb->shouldReceive('get_var')->andReturn('42');
+        TestFactory::everyClickRecorded(42);
 
         // Insert fails.
         $wpdb->shouldReceive('insert')->once()->andReturn(false);
@@ -735,7 +728,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
         $GLOBALS['wpdb'] = $wpdb;
         $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
         $wpdb->shouldReceive('prepare')->andReturn('SQL');
-        $wpdb->shouldReceive('get_var')->andReturn('42');
+        TestFactory::everyClickRecorded(42);
         $wpdb->shouldReceive('insert')->once()->andReturn(true);
         $wpdb->shouldReceive('query')->with('COMMIT')->once();
 
@@ -775,7 +768,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
         $GLOBALS['wpdb'] = $wpdb;
         $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
         $wpdb->shouldReceive('prepare')->andReturn('SQL');
-        $wpdb->shouldReceive('get_var')->andReturn('42');
+        TestFactory::everyClickRecorded(42);
         $wpdb->shouldReceive('insert')->once()->andReturn(true);
         $wpdb->shouldReceive('query')->with('COMMIT')->once();
 
@@ -811,7 +804,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
         $GLOBALS['wpdb'] = $wpdb;
         $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
         $wpdb->shouldReceive('prepare')->andReturn('SQL');
-        $wpdb->shouldReceive('get_var')->andReturn('42');
+        TestFactory::everyClickRecorded(42);
         $wpdb->shouldReceive('insert')->once()->andReturn(true);
         $wpdb->shouldReceive('query')->with('COMMIT')->once();
 
@@ -871,7 +864,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
         $GLOBALS['wpdb'] = $wpdb;
         $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
         $wpdb->shouldReceive('prepare')->andReturn('SQL');
-        $wpdb->shouldReceive('get_var')->andReturn('42');
+        TestFactory::everyClickRecorded(42);
         $wpdb->shouldReceive('insert')->once()->andReturn(true);
         $wpdb->shouldReceive('query')->with('COMMIT')->once();
         $wpdb->shouldReceive('get_results')->andReturn([]);
@@ -929,7 +922,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
         $GLOBALS['wpdb'] = $wpdb;
         $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
         $wpdb->shouldReceive('prepare')->andReturn('SQL');
-        $wpdb->shouldReceive('get_var')->andReturn('42');
+        TestFactory::everyClickRecorded(42);
         $wpdb->shouldReceive('insert')->once()->andReturn(true);
         $wpdb->shouldReceive('query')->with('COMMIT')->once();
         $wpdb->shouldReceive('get_results')->andReturn([]);
@@ -995,7 +988,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
         $GLOBALS['wpdb'] = $wpdb;
         $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
         $wpdb->shouldReceive('prepare')->andReturn('SQL');
-        $wpdb->shouldReceive('get_var')->andReturn('42');
+        TestFactory::everyClickRecorded(42);
         $wpdb->shouldReceive('insert')->once()->andReturn(true);
         $wpdb->shouldReceive('query')->with('COMMIT')->once();
         $wpdb->shouldReceive('get_results')->andReturn([]);
@@ -1102,7 +1095,7 @@ describe('Conversion_Handler::handle_conversion() recorded attributions', functi
         $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
         $wpdb->shouldReceive('query')->with('COMMIT')->once();
         $wpdb->shouldReceive('prepare')->andReturn('SQL');
-        $wpdb->shouldReceive('get_var')->andReturn(null);
+        TestFactory::clickRows([]);
         $wpdb->shouldNotReceive('insert');
 
         $_SERVER['REMOTE_ADDR']     = '127.0.0.1';
@@ -1163,10 +1156,9 @@ describe('Conversion_Handler::handle_conversion() recorded attributions', functi
         $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
         $wpdb->shouldReceive('query')->with('COMMIT')->once();
 
-        // Only hash A has a click row: the prepared lookup carries the hash
-        // as its first argument, so the fake answers per hash.
-        $wpdb->shouldReceive('prepare')->andReturnUsing(fn ($sql, ...$args) => $args[0] ?? $sql);
-        $wpdb->shouldReceive('get_var')->andReturnUsing(fn ($query) => $query === $hash_a ? '42' : null);
+        // Only hash A has a click row.
+        TestFactory::clickRows([['hash' => $hash_a, 'timestamp' => $now - 7200, 'id' => 42]]);
+        $wpdb->shouldReceive('prepare')->andReturn('SQL');
         $wpdb->shouldReceive('insert')->once()->andReturn(true);
         $wpdb->shouldReceive('get_results')->andReturn([]);
 
@@ -1305,15 +1297,10 @@ function make_per_click_conversion(array $cookie, array $clicks, array $click_id
         return count($prepared) - 1;
     });
 
-    $wpdb->shouldReceive('get_var')->andReturnUsing(function ($token) use (&$prepared, $clicks) {
-        [, [$hash, $clicked_at]] = $prepared[$token];
-        foreach ($clicks as $click) {
-            if ($click['hash'] === $hash && $click['clicked_at'] === $clicked_at) {
-                return (string) $click['id'];
-            }
-        }
-        return null;
-    });
+    TestFactory::clickRows(array_map(
+        fn (array $click) => ['hash' => $click['hash'], 'timestamp' => strtotime($click['clicked_at'] . ' UTC'), 'id' => $click['id']],
+        $clicks,
+    ));
 
     $wpdb->shouldReceive('get_results')->andReturnUsing(function ($token) use (&$prepared, $by_id, $click_ids, $meta) {
         [$sql, $args] = $prepared[$token];
@@ -1531,28 +1518,19 @@ function make_test_mode_conversion(array $cookie, array $clicks, array $reporter
         return count($prepared) - 1;
     });
 
-    // The click lookup: exact (hash, clicked_at).
-    $wpdb->shouldReceive('get_var')->andReturnUsing(function ($token) use (&$prepared, $clicks) {
-        [, [$hash, $clicked_at]] = $prepared[$token];
-        foreach ($clicks as $click) {
-            if ($click['hash'] === $hash && $click['clicked_at'] === $clicked_at) {
-                return (string) $click['id'];
-            }
-        }
-        return null;
-    });
+    // The click lookup: exact (hash, clicked_at), with each row's test flag.
+    TestFactory::clickRows(array_map(
+        fn (array $click) => [
+            'hash'      => $click['hash'],
+            'timestamp' => strtotime($click['clicked_at'] . ' UTC'),
+            'id'        => $click['id'],
+            'is_test'   => $click['is_test'] === 1,
+        ],
+        $clicks,
+    ));
 
-    // Test click rows by hash; other row queries find nothing.
-    $wpdb->shouldReceive('get_results')->andReturnUsing(function ($token) use (&$prepared, $clicks) {
-        [$sql, $args] = $prepared[$token];
-        if (!str_contains($sql, 'is_test = 1')) {
-            return [];
-        }
-        return array_values(array_map(
-            fn ($click) => (object) ['hash' => $click['hash'], 'clicked_at' => $click['clicked_at']],
-            array_filter($clicks, fn ($click) => $click['is_test'] === 1 && in_array($click['hash'], $args, true)),
-        ));
-    });
+    // Other row queries find nothing.
+    $wpdb->shouldReceive('get_results')->andReturn([]);
 
     // Test click row IDs among the given IDs.
     $wpdb->shouldReceive('get_col')->andReturnUsing(function ($token) use (&$prepared, $clicks) {
@@ -1818,7 +1796,7 @@ describe('Conversion_Handler::handle_conversion() conversion reference', functio
         $GLOBALS['wpdb'] = $wpdb;
         $wpdb->shouldReceive('query')->andReturn(true);
         $wpdb->shouldReceive('prepare')->andReturn('SQL');
-        $wpdb->shouldReceive('get_var')->andReturn('42');
+        TestFactory::everyClickRecorded(42);
 
         $rows = [];
         $wpdb->shouldReceive('insert')

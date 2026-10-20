@@ -993,14 +993,9 @@ describe('Click_Handler::handle_click()', function () {
         Functions\expect('get_query_var')->once()->andReturn($hash);
         $cm->shouldReceive('validate_hash')->andReturn(true);
 
-        // Capture every prepared query so the click-row lookup can be inspected.
-        $prepared = [];
         $wpdb = TestFactory::wpdb();
         $row  = (object) ['ID' => 10, 'target_post_id' => '20'];
-        $wpdb->shouldReceive('prepare')->andReturnUsing(function (...$args) use (&$prepared) {
-            $prepared[] = $args;
-            return 'SQL';
-        });
+        $wpdb->shouldReceive('prepare')->andReturn('SQL');
         $wpdb->shouldReceive('get_row')->once()->andReturn($row);
         $GLOBALS['wpdb'] = $wpdb;
 
@@ -1018,8 +1013,13 @@ describe('Click_Handler::handle_click()', function () {
         // The visitor's entry for the hash is 30 minutes old (inside the window).
         $cm->shouldReceive('parse')->andReturn([$hash => $original]);
 
-        // A click row exists for exactly (hash, original timestamp).
-        $wpdb->shouldReceive('get_var')->once()->andReturn('7');
+        // A click row exists for exactly (hash, original timestamp); record
+        // what the handler asks about.
+        $asked = new \ArrayObject();
+        \Patchwork\redefine('Kntnt\Ad_Attribution\Click_Lookup::find', function (array $clicks) use ($asked, $hash, $original): array {
+            $asked[] = $clicks;
+            return $clicks === [[$hash, $original]] ? [$hash => [$original => ['id' => 7, 'is_test' => false]]] : [];
+        });
 
         // Dedup hit — DB insert should NOT happen.
         $wpdb->shouldNotReceive('insert');
@@ -1033,11 +1033,8 @@ describe('Click_Handler::handle_click()', function () {
 
         expect(fn () => $handler->handle_click())->toThrow(ExitException::class);
 
-        // The existence check matches the hash and the entry's timestamp exactly.
-        $lookup = array_values(array_filter($prepared, fn ($args) => str_contains($args[0], 'clicked_at')));
-        expect($lookup)->toHaveCount(1);
-        expect($lookup[0][0])->toContain('wp_kntnt_ad_attr_clicks');
-        expect(array_slice($lookup[0], 1))->toBe([$hash, '2023-11-14 21:43:20']);
+        // The existence check asks about the hash and the entry's timestamp exactly.
+        expect($asked->getArrayCopy())->toBe([[[$hash, $original]]]);
     });
 
     it('records a new click and sets the entry to the new row time when no click row matches the entry', function () {
@@ -1069,7 +1066,7 @@ describe('Click_Handler::handle_click()', function () {
         $cm->shouldReceive('parse')->andReturn([$hash => $original]);
 
         // No click row for the entry (e.g. a cookie rewritten by an older version).
-        $wpdb->shouldReceive('get_var')->once()->andReturn(null);
+        TestFactory::clickRows([]);
 
         // Handled as a new click: a row is inserted at the current time …
         $wpdb->shouldReceive('insert')
@@ -1381,10 +1378,7 @@ describe('Click_Handler::handle_click() repeat click IDs', function () {
         $cm->shouldReceive('parse')->andReturn([$hash => $newer]);
 
         // The newer entry's click row exists, so the entry can be trusted.
-        $wpdb->shouldReceive('prepare')
-            ->with(Mockery::pattern('/clicked_at = %s/'), $hash, '2023-11-14 20:26:40')
-            ->andReturn('SQL');
-        $wpdb->shouldReceive('get_var')->once()->andReturn('9');
+        TestFactory::clickRows([['hash' => $hash, 'timestamp' => $newer, 'id' => 9]]);
 
         $cm->shouldReceive('add')->once()->with([$hash => $newer], $hash, $newer)->andReturn([$hash => $newer]);
         $cm->shouldReceive('set_clicks_cookie')->once()->with([$hash => $newer]);
@@ -1466,7 +1460,7 @@ describe('Click_Handler::handle_click() repeat click IDs', function () {
         $cm->shouldReceive('parse')->andReturn([$hash => $newer]);
 
         // Every entry the plugin writes must point at a click row (#2).
-        $wpdb->shouldReceive('get_var')->once()->andReturn(null);
+        TestFactory::clickRows([]);
 
         $cm->shouldReceive('add')->once()->with([$hash => $newer], $hash, $original)->andReturn([$hash => $original]);
         $cm->shouldReceive('set_clicks_cookie')->once()->with([$hash => $original]);
@@ -1599,7 +1593,7 @@ describe('Click_Handler::handle_click() diagnostic log line', function () {
         $con->shouldReceive('check')->andReturn(true);
         Filters\expectApplied('kntnt_ad_attr_dedup_seconds')->andReturn(3600);
         $cm->shouldReceive('parse')->andReturn([$hash => $now - 1800]);
-        $wpdb->shouldReceive('get_var')->once()->andReturn('7');
+        TestFactory::clickRows([['hash' => $hash, 'timestamp' => $now - 1800, 'id' => 7]]);
         $wpdb->shouldNotReceive('insert');
         $cm->shouldReceive('add')->andReturn([$hash => $now - 1800]);
         $cm->shouldReceive('set_clicks_cookie')->once();
@@ -1783,7 +1777,7 @@ describe('Click_Handler::handle_click() internal traffic and test clicks', funct
         // An ordinary click on the same hash ten minutes ago, with its row.
         $con->shouldReceive('check')->andReturn(true);
         $cm->shouldReceive('parse')->andReturn([$hash => $now - 600]);
-        $wpdb->shouldReceive('get_var')->andReturn('5');
+        TestFactory::clickRows([['hash' => $hash, 'timestamp' => $now - 600, 'id' => 5]]);
 
         $inserted = null;
         $wpdb->shouldReceive('insert')->once()->andReturnUsing(function ($table, $data) use (&$inserted) {

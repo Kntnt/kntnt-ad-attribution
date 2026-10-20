@@ -111,6 +111,55 @@ final class TestFactory {
     }
 
     /**
+     * Makes Click_Lookup::find() answer from the given click rows.
+     *
+     * Tests of the classes that look up click rows state which rows exist,
+     * not how they are queried; Click_Lookup's own tests cover the query.
+     * A click matches a row with the same hash and timestamp; the first
+     * matching row wins.
+     *
+     * @param array<int, array{hash: string, timestamp: int, id: int, is_test?: bool}> $rows Click rows.
+     *
+     * @return void
+     */
+    public static function clickRows(array $rows): void {
+        \Patchwork\redefine(
+            'Kntnt\Ad_Attribution\Click_Lookup::find',
+            function (array $clicks) use ($rows): array {
+                $found = [];
+                foreach ($clicks as [$hash, $timestamp]) {
+                    foreach ($rows as $row) {
+                        if ($row['hash'] === $hash && $row['timestamp'] === $timestamp) {
+                            $found[$hash][$timestamp] ??= ['id' => $row['id'], 'is_test' => $row['is_test'] ?? false];
+                        }
+                    }
+                }
+                return $found;
+            },
+        );
+    }
+
+    /**
+     * Makes Click_Lookup::find() find a click row for every click it is asked about.
+     *
+     * @param int $id ID of every click row found.
+     *
+     * @return void
+     */
+    public static function everyClickRecorded(int $id): void {
+        \Patchwork\redefine(
+            'Kntnt\Ad_Attribution\Click_Lookup::find',
+            function (array $clicks) use ($id): array {
+                $found = [];
+                foreach ($clicks as [$hash, $timestamp]) {
+                    $found[$hash][$timestamp] = ['id' => $id, 'is_test' => false];
+                }
+                return $found;
+            },
+        );
+    }
+
+    /**
      * Creates an _ad_clicks cookie value from hash => timestamp pairs.
      *
      * @param array<string,int> $entries Hash => timestamp map.

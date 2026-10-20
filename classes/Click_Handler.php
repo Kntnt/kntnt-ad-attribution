@@ -644,9 +644,8 @@ final class Click_Handler {
 	/**
 	 * Checks whether a click row exists for a cookie entry.
 	 *
-	 * Uses the same exact `(hash, clicked_at)` match as the conversion
-	 * lookup, so an entry this returns true for is one a conversion can
-	 * be attributed to.
+	 * Uses the conversion lookup's exact match (Click_Lookup), so an entry
+	 * this returns true for is one a conversion can be attributed to.
 	 *
 	 * @param string $hash      The tracking URL hash.
 	 * @param int    $timestamp Unix timestamp of the cookie entry.
@@ -655,17 +654,7 @@ final class Click_Handler {
 	 * @since 1.10.0
 	 */
 	private function click_row_exists( string $hash, int $timestamp ): bool {
-		global $wpdb;
-
-		$clicks_table = Table::Clicks->prefixed();
-
-		$click_id = $wpdb->get_var( $wpdb->prepare(
-			"SELECT id FROM {$clicks_table} WHERE hash = %s AND clicked_at = %s LIMIT 1",
-			$hash,
-			gmdate( 'Y-m-d H:i:s', $timestamp ),
-		) );
-
-		return (bool) $click_id;
+		return isset( Click_Lookup::find( [ [ $hash, $timestamp ] ] )[ $hash ][ $timestamp ] );
 	}
 
 	/**
