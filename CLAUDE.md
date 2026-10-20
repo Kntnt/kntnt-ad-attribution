@@ -111,7 +111,7 @@ The test suite has three levels. See `docs/testing-strategy.md` for full details
 
 | Level | Framework | Tests | What it covers |
 |-------|-----------|-------|----------------|
-| PHP unit | Pest + Brain Monkey + Mockery | 352 | Individual class methods in isolation |
+| PHP unit | Pest + Brain Monkey + Mockery | 375 | Individual class methods in isolation |
 | JS unit | Vitest + happy-dom | 39 | `pending-consent.js` and `admin.js` |
 | Integration | Bash + curl + WordPress Playground | 19 suites | End-to-end flows: click, click IDs, counting rules, internal traffic and test mode, conversion, recorded-conversion actions, deferred consent, admin, REST, cron |
 

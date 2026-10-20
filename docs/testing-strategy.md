@@ -983,6 +983,9 @@ curl ... | grep -i '^set-cookie:' || true
 | Conversion_Handler | ~33 | conversion-attribution, deduplication, internal-traffic, recorded-conversions |
 | Post_Type | ~8 | activation, admin-crud |
 | Click_ID_Store | ~6 | click-ids, migration |
+| Click_Lookup | ~5 | click-ids, conversion-attribution, deduplication, deferred-consent, rest-api |
+| Conversion_Store | ~6 | recorded-conversions |
+| Table | ~1 | all |
 | Queue | ~14 | cron-cleanup, recorded-conversions |
 | Queue_Processor | ~8 | conversion-attribution |
 | Cron | ~12 | cron-cleanup |
@@ -997,4 +1000,4 @@ curl ... | grep -i '^set-cookie:' || true
 | Plugin | ~6 | activation |
 | pending-consent.js | ~29 | — |
 | admin.js | ~10 | — |
-| **Totals** | **~352 PHP + 39 JS** | **19 suites** |
+| **Totals** | **~375 PHP + 39 JS** | **19 suites** |
