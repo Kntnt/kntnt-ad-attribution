@@ -312,6 +312,7 @@ The most complex class. Tests cover the full click flow:
 - `kntnt_ad_attr_click` action fires for all non-bot clicks, before consent check.
 - Click ID capturer integration, value length validation.
 - Postmeta backfill from UTM/MTM params, existing values not overwritten.
+- Click dedup: a duplicate (entry within the window with a matching click row) re-sends the original timestamp without inserting; an entry with no matching row is recorded as a new click.
 
 ---
 
@@ -323,6 +324,7 @@ The most complex class. Tests cover the full click flow:
 - Default last-click attribution (latest gets 1.0, older gets 0.0).
 - Attribution filter applied.
 - Database transaction with INSERT per attributed hash, rollback on error.
+- A cookie entry with no exactly matching click row writes no conversion row and one `Logger` warning, with no fallback lookup.
 - `_ad_last_conv` cookie set after success.
 - `kntnt_ad_attr_conversion_recorded` action fires with attributions and context.
 - Reporter enqueueing (including payload structure), no-op when no reporters.
@@ -541,10 +543,11 @@ Each test script sources `helpers/assertions.sh` and `helpers/fixtures.sh`, crea
 
 ---
 
-#### `test-deduplication.sh` — Conversion Deduplication
+#### `test-deduplication.sh` — Conversion and Click Deduplication
 
-- Second conversion within dedup window is skipped (count unchanged).
-- Conversion after dedup window succeeds (simulated via `_ad_last_conv` cookie manipulation).
+- With dedup disabled (default `0`), repeated conversions for the same hash are all recorded.
+- With dedup enabled (`set_dedup_seconds`, backed by the `test_dedup_seconds` option in the test-helpers mu-plugin) and consent granted: a re-click within the window re-sends the cookie with the original timestamp and records no second click row; a later conversion records exactly one conversion row, linked to the original click row.
+- A cookie entry within the window that no click row matches is recorded as a new click, and the entry is repointed at that row.
 
 ---
 

@@ -843,7 +843,7 @@ Requires `zip` and `msgfmt` (GNU gettext). With `--tag`: `git`. With `--update` 
 10. `Queue(Settings)` — async job queue with configurable retry
 11. `Queue_Processor(Queue, Logger)` — queue job dispatcher
 12. `Click_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store)` — click processing & redirect
-13. `Conversion_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store, Queue, Queue_Processor)` — conversion attribution
+13. `Conversion_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store, Queue, Queue_Processor, Logger)` — conversion attribution
 14. `Cron(Click_ID_Store, Queue, Logger)` — scheduled cleanup tasks
 15. `Admin_Page(Queue, Queue_Processor, Settings, Logger)` — admin UI orchestration
 16. `Rest_Endpoint(Cookie_Manager, Consent)` — REST API routes
