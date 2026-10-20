@@ -189,7 +189,10 @@ final class Conversion_Handler {
 
 		$wpdb->query( 'START TRANSACTION' );
 
-		$attributed_hashes = [];
+		// Recorded hash => ID of the click row its conversion row links to.
+		// It defines what was recorded, and it identifies the exact click
+		// each hash was credited for, not just any click on that hash.
+		$linked_clicks = [];
 
 		foreach ( $attributions as $hash => $value ) {
 			if ( $value <= 0 ) {
@@ -219,22 +222,34 @@ final class Conversion_Handler {
 				return;
 			}
 
-			$attributed_hashes[] = $hash;
+			$linked_clicks[ $hash ] = (int) $click_id;
 		}
 
 		$wpdb->query( 'COMMIT' );
 
+		// Everything after the write sees only the recorded attributions:
+		// hashes that got a conversion row, with the weight written. Weights
+		// are not renormalised, so a multi-touch split can sum to less than
+		// 1.0 when a click row was missing.
+		$recorded = array_intersect_key( $attributions, $linked_clicks );
+
+		// Nothing was written, so there is no conversion to dedup, announce
+		// or report.
+		if ( $recorded === [] ) {
+			return;
+		}
+
 		// Step 7: Write the per-hash dedup cookie (only when dedup is enabled).
-		if ( $dedup_seconds > 0 && ! empty( $attributed_hashes ) ) {
+		if ( $dedup_seconds > 0 ) {
 			$now = time();
-			foreach ( $attributed_hashes as $hash ) {
+			foreach ( array_keys( $recorded ) as $hash ) {
 				$last_conv_entries[ $hash ] = $now;
 			}
 			$this->cookie_manager->set_dedup_cookie( $last_conv_entries, $dedup_seconds );
 		}
 
 		// Step 8: Notify other components that a conversion was recorded.
-		do_action( 'kntnt_ad_attr_conversion_recorded', $attributions, [
+		do_action( 'kntnt_ad_attr_conversion_recorded', $recorded, [
 			'timestamp'  => gmdate( 'c' ),
 			'ip'         => $_SERVER['REMOTE_ADDR'] ?? '',
 			'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
@@ -244,8 +259,8 @@ final class Conversion_Handler {
 		$reporters = apply_filters( 'kntnt_ad_attr_conversion_reporters', [] );
 		if ( ! empty( $reporters ) ) {
 
-			// Look up click IDs and campaign data for attributed hashes.
-			$hashes    = array_keys( $attributions );
+			// Look up click IDs and campaign data for recorded hashes only.
+			$hashes    = array_keys( $recorded );
 			$click_ids = $this->click_id_store->get_for_hashes( $hashes );
 			$campaigns = $this->get_campaign_data( $hashes );
 
@@ -260,7 +275,7 @@ final class Conversion_Handler {
 				if ( ! is_callable( $reporter['enqueue'] ?? null ) ) {
 					continue;
 				}
-				$items = (array) ( $reporter['enqueue'] )( $attributions, $click_ids, $campaigns, $context );
+				$items = (array) ( $reporter['enqueue'] )( $recorded, $click_ids, $campaigns, $context );
 				foreach ( $items as $item ) {
 					if ( isset( $item['payload'] ) ) {
 

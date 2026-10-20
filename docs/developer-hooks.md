@@ -40,7 +40,7 @@ Bot detection. Default: `false`. The plugin registers its own callback with User
 
 **`kntnt_ad_attr_attribution`**
 
-Filters the attribution weights for a conversion. Default: last-click (1.0 for most recent click, 0.0 for all others). Must return an array where values sum to 1.0.
+Filters the attribution weights for a conversion. Default: last-click (1.0 for most recent click, 0.0 for all others). Return weights that sum to 1.0. Only hashes with a weight above 0 and a matching click row are recorded, so the weights that `kntnt_ad_attr_conversion_recorded` and the reporters receive can sum to less.
 
 Parameters:
 
@@ -154,9 +154,11 @@ If an item lacks a `payload` key, the entire array is treated as the raw payload
 
 `enqueue` callback parameters:
 
-- `$attributions`: `[ hash => fractional_value, … ]` — sums to 1.0.
-- `$click_ids`: `[ hash => [ platform => ['id' => click_id, 'captured_at' => unix_timestamp], … ], … ]` — structured format with click ID and capture time. May be empty for a given hash.
-- `$campaigns`: `[ hash => [ 'utm_source' => …, 'utm_medium' => …, 'utm_campaign' => …, 'utm_content' => …, 'utm_term' => …, 'utm_id' => …, 'utm_source_platform' => … ], … ]`.
+- `$attributions`: `[ hash => fractional_value, … ]` — the recorded attributions only: hashes that got a conversion row, each with a weight above 0, as written. The weights are not renormalised, so under a multi-touch model they can sum to less than 1.0 when a click row was missing.
+- `$click_ids`: `[ hash => [ platform => ['id' => click_id, 'captured_at' => unix_timestamp], … ], … ]` — structured format with click ID and capture time. Keyed by the hashes in `$attributions` only. May be empty for a given hash.
+- `$campaigns`: `[ hash => [ 'utm_source' => …, 'utm_medium' => …, 'utm_campaign' => …, 'utm_content' => …, 'utm_term' => …, 'utm_id' => …, 'utm_source_platform' => … ], … ]`. Keyed by the hashes in `$attributions` only.
+
+`enqueue` is called only when at least one conversion row was written.
 - `$context`: `[ 'timestamp' => ISO-8601, 'ip' => string, 'user_agent' => string, 'page_url' => string ]`.
 
 ```php
@@ -278,13 +280,13 @@ add_action( 'gform_after_submission', function( $entry, $form ) {
 
 **`kntnt_ad_attr_conversion_recorded`**
 
-Fires after a conversion has been successfully recorded. Receives the array of attributed hashes with their fractional values and a context array with metadata.
+Fires after a conversion has been successfully recorded, and only when at least one conversion row was written. Receives the recorded attributions and a context array with metadata.
 
 Parameters:
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `$attributions` | `array<string, float>` | Hash => fractional attribution value (sums to 1.0). |
+| `$attributions` | `array<string, float>` | Hash => fractional attribution value, for the recorded hashes only: each got a conversion row and has a weight above 0, passed as written. Not renormalised, so it can sum to less than 1.0 when a click row was missing. |
 | `$context` | `array` | Associative array with keys: `timestamp` (ISO 8601 UTC), `ip` (visitor IP), `user_agent` (visitor user-agent string). |
 
 Note: The reporter context (passed to `enqueue` callbacks via `kntnt_ad_attr_conversion_reporters`) includes an additional `page_url` key. The action context does not.
