@@ -15,7 +15,8 @@ echo "=== Test: Migration ==="
 
 result=$(get_option "kntnt_ad_attr_version")
 version=$(echo "$result" | jq -r '.value')
-assert_equals "1.9.0" "$version" "Version option matches plugin header (1.9.0)"
+expected_version=$(sed -n 's/^ \* Version: *//p' "$SCRIPT_DIR/../../kntnt-ad-attribution.php")
+assert_equals "$expected_version" "$version" "Version option matches plugin header ($expected_version)"
 
 # --- Clicks table column types (using sqlite_master CREATE TABLE SQL) ---
 
