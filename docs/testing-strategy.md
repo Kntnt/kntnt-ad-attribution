@@ -230,8 +230,8 @@ kntnt-ad-attribution/
 | Mockery | Mock PHP objects (`$wpdb`, `WP_Post`, `WP_REST_Request`, etc.) | ^1.6 |
 | Patchwork | Redefine internal PHP functions (`setcookie`, `header`, `time`, etc.) | via Brain Monkey |
 | dg/bypass-finals | Strip `final` from classes at load time (via Patchwork code manipulation) | ^1.7 |
-| Vitest | JavaScript test runner | ^2.0 |
-| happy-dom | Lightweight DOM implementation for JS tests | ^15.0 |
+| Vitest | JavaScript test runner | ^3.2.6 |
+| happy-dom | Lightweight DOM implementation for JS tests | ^20.0 |
 
 ### 6.2 Bootstrap and Configuration
 
