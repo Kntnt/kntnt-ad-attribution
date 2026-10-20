@@ -176,7 +176,7 @@ wp_redirect( $target_url, 302 );
 exit;
 ```
 
-**`'js'`** — JavaScript redirect via `window.location.href`. Relevant for ITP mitigation. Serves a minimal 200 page that redirects via JavaScript.
+**`'js'`** — JavaScript redirect via `window.location.href`. Serves a minimal 200 page that redirects via JavaScript, so that client-side scripts (for example consent managers) can run before the page navigates away.
 
 All redirect responses shall include `nocache_headers()` to prevent caching.
 
