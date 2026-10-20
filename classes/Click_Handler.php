@@ -263,7 +263,7 @@ final class Click_Handler {
 
 		// Step 9: Bot check — bots get redirected without a click row or cookies.
 		if ( $this->bot_detector->is_bot() ) {
-			$this->log_request( 'bot', $hash, $is_test_click );
+			$this->log_request( Request_Outcome::Bot, $hash, $is_test_click );
 			$this->redirect( $target_url );
 		}
 
@@ -272,7 +272,7 @@ final class Click_Handler {
 		// makes the browser discard it, so a real click that follows reaches
 		// the server as a fresh request and is counted once.
 		if ( $this->speculation_detector->is_speculative() ) {
-			$this->log_request( 'speculative', $hash, $is_test_click );
+			$this->log_request( Request_Outcome::Speculative, $hash, $is_test_click );
 			$this->decline_speculative();
 		}
 
@@ -280,7 +280,7 @@ final class Click_Handler {
 		// checking the site's own ads leaves no trace. A test click is the
 		// exception: it is how staff test the setup end to end.
 		if ( ! $is_test_click && Internal_Detector::is_internal() ) {
-			$this->log_request( 'internal', $hash, $is_test_click );
+			$this->log_request( Request_Outcome::Internal, $hash, $is_test_click );
 			$this->redirect( $target_url );
 		}
 
@@ -308,7 +308,7 @@ final class Click_Handler {
 				false => null,
 				null  => $this->handle_pending_consent( $hash, $original_click['clicked_at'], $target_url ),
 			};
-			$this->log_request( 'repeat', $hash, $is_test_click );
+			$this->log_request( Request_Outcome::Repeat, $hash, $is_test_click );
 			$this->redirect( $target_url );
 		}
 
@@ -333,7 +333,7 @@ final class Click_Handler {
 				// entry at it, which repairs the cookie.
 				if ( $this->click_row_exists( $hash, $existing[ $hash ] ) ) {
 					$this->set_cookie( $hash, $existing[ $hash ] );
-					$this->log_request( 'deduplicated', $hash, $is_test_click );
+					$this->log_request( Request_Outcome::Deduplicated, $hash, $is_test_click );
 					$this->redirect( $target_url );
 				}
 			}
@@ -367,7 +367,7 @@ final class Click_Handler {
 		// it. Without a row there is nothing to point at, so the visitor is
 		// only redirected and the failure logged.
 		if ( ! $inserted ) {
-			$this->log_request( 'failed', $hash, $is_test_click );
+			$this->log_request( Request_Outcome::Failed, $hash, $is_test_click );
 			$this->redirect( $target_url );
 		}
 
@@ -424,7 +424,7 @@ final class Click_Handler {
 		};
 
 		// Step 13: Redirect to the target page.
-		$this->log_request( 'recorded', $hash, $is_test_click );
+		$this->log_request( Request_Outcome::Recorded, $hash, $is_test_click );
 		$this->redirect( $target_url );
 	}
 
@@ -456,16 +456,16 @@ final class Click_Handler {
 	 * line as one more field, never in a second line. Logger writes nothing
 	 * unless logging is enabled.
 	 *
-	 * @param string $outcome How the request was counted: 'recorded', 'repeat', 'deduplicated', 'speculative', 'bot', 'internal' or 'failed' (the click row could not be written; logged as an error).
-	 * @param string $hash    The tracking URL hash.
-	 * @param bool   $is_test Whether the request is a test click (`kntnt_ad_attr_test=1`).
+	 * @param Request_Outcome $outcome How the request was counted. Failed is logged as an error.
+	 * @param string          $hash    The tracking URL hash.
+	 * @param bool            $is_test Whether the request is a test click (`kntnt_ad_attr_test=1`).
 	 *
 	 * @return void
 	 * @since 1.10.0
 	 */
-	private function log_request( string $outcome, string $hash, bool $is_test ): void {
+	private function log_request( Request_Outcome $outcome, string $hash, bool $is_test ): void {
 		$fields = [
-			'outcome'     => $outcome,
+			'outcome'     => $outcome->value,
 			'hash'        => substr( $hash, 0, self::LOG_HASH_PREFIX_LENGTH ),
 			'test'        => $is_test ? '1' : '0',
 			'sec_purpose' => self::quote_header( 'HTTP_SEC_PURPOSE' ),
@@ -477,7 +477,7 @@ final class Click_Handler {
 
 		$message = 'Tracking URL request: ' . implode( ' ', $pairs );
 
-		if ( $outcome === 'failed' ) {
+		if ( $outcome === Request_Outcome::Failed ) {
 			$this->logger?->error( 'CORE', $message );
 		} else {
 			$this->logger?->info( 'CORE', $message );
