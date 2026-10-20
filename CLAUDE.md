@@ -102,8 +102,8 @@ The test suite has three levels. See `docs/testing-strategy.md` for full details
 | Level | Framework | Tests | What it covers |
 |-------|-----------|-------|----------------|
 | PHP unit | Pest + Brain Monkey + Mockery | 252 | Individual class methods in isolation |
-| JS unit | Vitest + happy-dom | 28 | `pending-consent.js` and `admin.js` |
-| Integration | Bash + curl + WordPress Playground | 14 suites | End-to-end flows: click, conversion, admin, REST, cron |
+| JS unit | Vitest + happy-dom | 39 | `pending-consent.js` and `admin.js` |
+| Integration | Bash + curl + WordPress Playground | 15 suites | End-to-end flows: click, conversion, deferred consent, admin, REST, cron |
 
 ### Running tests
 
@@ -205,6 +205,7 @@ All specs are in `docs/`. Read the relevant doc before implementing a feature:
 - `uninstall.php` runs without the namespace autoloader — use fully qualified function calls and raw `$wpdb`.
 - `Post_Type` registers `wp_untrash_post_status` at priority 20 to override ACF (which overrides the default untrash status for all post types).
 - The REST `set-cookie` endpoint has rate limiting: 10 requests per minute per IP via transient.
+- The pending-consent transport (`_aah_pending` cookie, `#_aah=` fragment), the client script's `sessionStorage` and the `set-cookie` request all carry `<hash>:<timestamp>` pairs (v1.10.0), where the timestamp is the click row's `clicked_at`. `set-cookie` writes an entry only for a pair that exactly matches a click row, with the pair's own timestamp; bare hashes are ignored. `Click_Handler::handle_pending_consent()` takes the timestamp explicitly so it can refer to any recorded click.
 - Select2 loaded from cdnjs has SRI (Subresource Integrity) hashes added via `script_loader_tag` / `style_loader_tag` filters.
 - Hash generation uses `random_bytes(32)` — the hash is an opaque identifier, not derived from UTM parameters.
 - The `kntnt_ad_attr_click` action fires for all non-bot clicks regardless of consent state, enabling companion plugins to capture platform-specific parameters even before consent is resolved.

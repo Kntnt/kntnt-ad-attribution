@@ -96,7 +96,7 @@ This plugin is designed with data minimization and data locality as core princip
 
 **Hashing is used for URL generation, not for pseudonymization of personal data.** The SHA-256 hashes in this plugin are generated from random bytes (`random_bytes(32)`) and serve as opaque identifiers for tracking URLs. They are not derived from any personal data or UTM parameters — they are purely random identifiers. This is a fundamental difference from Enhanced Conversions, where personal data is hashed and sent to Google.
 
-**The `_aah_pending` cookie is a borderline case.** This temporary cookie (maximum 60 seconds) contains only an ad hash and serves as a technical transport mechanism for deferred consent scenarios. It contains no personal data in itself. Whether it should be classified as "necessary" or "marketing" is a judgment call that depends on your interpretation; the plugin's consent configuration section presents both options. See [Cookie Consent Configuration](#cookie-consent-configuration).
+**The `_aah_pending` cookie is a borderline case.** This temporary cookie (maximum 60 seconds) contains only an ad hash and the time of the click, and serves as a technical transport mechanism for deferred consent scenarios. It contains no personal data in itself. Whether it should be classified as "necessary" or "marketing" is a judgment call that depends on your interpretation; the plugin's consent configuration section presents both options. See [Cookie Consent Configuration](#cookie-consent-configuration).
 
 **Data minimization.** The plugin stores the minimum data needed for attribution: opaque hashes in a cookie and individual click/conversion records in the database. No names, email addresses, IP addresses, or other directly identifying information is stored by the plugin.
 
@@ -206,7 +206,7 @@ For Source/Medium/Campaign, the **priority order** (highest first) is:
 
 When a visitor clicks a tracking URL, the plugin logs the click, stores the ad hash in a first-party cookie (if consent is given), and redirects the visitor to the landing page.
 
-If consent is undefined (the visitor hasn't decided yet), the hash is transported to the landing page via a temporary cookie (`_aah_pending`, 60 seconds) or a URL fragment. A client-side script picks up the hash and stores it in `sessionStorage` until consent is resolved.
+If consent is undefined (the visitor hasn't decided yet), the hash and the time of the click are transported to the landing page via a temporary cookie (`_aah_pending`, 60 seconds) or a URL fragment. A client-side script picks them up and stores them in `sessionStorage` until consent is resolved. If consent is granted, the cookie entry is written with the visitor's own click time, so it points at the visitor's own click even when others clicked the same ad in the meantime.
 
 When a conversion is triggered (see [Connecting a Form Plugin](#connecting-a-form-plugin) in the Builders section), the plugin:
 
@@ -468,7 +468,7 @@ add_filter( 'kntnt_ad_attr_pending_transport', function () {
 } );
 ```
 
-Accepted values: `'cookie'` (temporary `_aah_pending` cookie, 60 seconds) or `'fragment'` (URL fragment `#_aah=<hash>`).
+Accepted values: `'cookie'` (temporary `_aah_pending` cookie, 60 seconds) or `'fragment'` (URL fragment `#_aah=<hash>:<timestamp>`). Both carry the click as a `<hash>:<timestamp>` pair, where the timestamp is the time of the recorded click.
 
 **`kntnt_ad_attr_is_bot`**
 

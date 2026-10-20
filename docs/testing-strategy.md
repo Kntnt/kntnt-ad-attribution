@@ -204,6 +204,7 @@ kntnt-ad-attribution/
 │       ├── test-cron-cleanup.sh
 │       ├── test-csv-export.sh
 │       ├── test-deduplication.sh
+│       ├── test-deferred-consent.sh
 │       ├── test-migration.sh
 │       ├── test-query-forwarding.sh
 │       └── test-rest-api.sh
@@ -250,7 +251,7 @@ Stateless data manipulation class. Tests cover:
 - **`parse()`** — valid single/multiple entries, empty/missing cookie, corrupt format (logs error), partial match, uppercase hex rejection.
 - **`add()`** — add to empty array, explicit timestamp, update existing hash, eviction at MAX_HASHES (50), correct oldest evicted.
 - **`set_clicks_cookie()`** — cookie name `_ad_clicks`, serialization format, attributes (path, httponly, secure, samesite), lifetime filter.
-- **`set_transport_cookie()`** — cookie name `_aah_pending`, not HttpOnly, 60-second lifetime, value equals hash.
+- **`set_transport_cookie()`** — cookie name `_aah_pending`, not HttpOnly, 60-second lifetime, value is the `hash:timestamp` pair.
 - **`validate_hash()`** — valid 64-char lowercase hex, wrong lengths, uppercase, non-hex characters, empty string.
 
 ---
@@ -351,7 +352,7 @@ The most complex class. Tests cover the full click flow:
 
 #### Rest_Endpoint (`RestEndpointTest.php`)
 
-- **`set_cookie()`** — rate limiting (429 on 11th request), counter incremented, invalid hashes filtered, unknown hashes filtered, consent check, cookie set on success.
+- **`set_cookie()`** — rate limiting (429 on 11th request), counter incremented, malformed items (including bare hashes) ignored, unknown hashes filtered, consent check. The click rows are given by a fake `$wpdb` (`fake_clicks_table()`): a pair is written with its own timestamp even when a later click on the same hash exists; a pair whose timestamp matches no click row writes nothing; only matching pairs are written; the latest matching pair wins per hash; matched pairs merge with existing entries.
 - **`search_posts()`** — permission check, exact ID lookup, URL resolution, slug search, title search, results limited to 20, own CPT excluded.
 
 ---
@@ -418,11 +419,12 @@ The most complex class. Tests cover the full click flow:
 
 The script is an IIFE. Tests use `new Function(readFileSync(...))` to evaluate the script in a controlled happy-dom environment.
 
-- **Hash discovery** — reads `_aah_pending` cookie, reads `#_aah=<hash>` fragment, ignores invalid format, clears cookie/fragment after reading, merges with existing sessionStorage.
-- **Consent callback** — calls `window.kntntAdAttributionGetConsent`, 'yes' triggers fetch, 'no' clears storage, 'unknown' does nothing, only first invocation processed.
+- **Click discovery** — reads the `hash:timestamp` pair from the URL-encoded `_aah_pending` cookie and from the `#_aah=<hash>:<timestamp>` fragment, clears cookie/fragment after reading, merges with existing sessionStorage.
+- **Malformed values** — bare hashes, bad or over-long timestamps, uppercase or short hashes are ignored in the cookie (which is still expired) and in the fragment; bare hashes left in sessionStorage by the previous script are dropped and never posted.
+- **Consent callback** — calls `window.kntntAdAttributionGetConsent`, 'yes' posts the stored pairs as `{ hashes: [...] }`, 'no' clears storage, 'unknown' does nothing, only first invocation processed.
 - **Retry logic** — network error increments counter, 3 failures clears storage, success resets retries, HTTP 403 clears immediately.
 - **Default consent function** — calls `callback('unknown')`.
-- **Deduplication** — duplicate hashes deduplicated in sessionStorage.
+- **Deduplication** — identical pairs deduplicated in sessionStorage; two clicks on the same hash at different times are kept.
 
 #### `admin.test.js`
 
@@ -548,9 +550,20 @@ Each test script sources `helpers/assertions.sh` and `helpers/fixtures.sh`, crea
 
 ---
 
+#### `test-deferred-consent.sh` — Deferred Consent Carries the Visitor's Own Click
+
+Runs once with the `cookie` transport and once with the `fragment` transport, selected through the `test_pending_transport` option (the test-helpers mu-plugin feeds it to `kntnt_ad_attr_pending_transport`; `''` restores the default).
+
+- With consent pending, visitor A's transport (`_aah_pending` cookie or `#_aah=` in the `Location` header) carries `hash:timestamp`, and the timestamp is the `clicked_at` of A's click row.
+- Visitor B clicks the same tracking URL two seconds later.
+- With consent granted, posting A's pair to `/set-cookie` anonymously returns success, and the `_ad_clicks` cookie it sets carries A's timestamp, not B's.
+- The suite clears the shared set-cookie rate-limit transient at start and end, and resets the transport option and consent state.
+
+---
+
 #### `test-rest-api.sh` — REST Endpoints
 
-- `/set-cookie`: valid hashes return success, invalid hashes filtered, all-invalid returns failure, rate limiting (429 on 11th request), consent denied returns failure.
+- `/set-cookie`: a `hash:timestamp` pair matching a recorded click returns success; a pair whose timestamp matches no click row, a bare hash, all-invalid items and an unknown hash return failure; consent denied returns failure. The suite clears the shared rate-limit transient first.
 - `/search-posts`: returns posts matching title, returns post by ID, requires capability (403 without auth), limits results to 20, excludes tracking URL CPT.
 
 ---
@@ -805,7 +818,7 @@ curl ... | grep -i '^set-cookie:' || true
 | Cookie_Manager | ~15 | consent-states, cookie-limits |
 | Consent | ~5 | consent-states |
 | Bot_Detector | ~10 | bot-detection |
-| Click_Handler | ~25 | click-flow, query-forwarding |
+| Click_Handler | ~25 | click-flow, query-forwarding, deferred-consent |
 | Conversion_Handler | ~18 | conversion-attribution, deduplication |
 | Post_Type | ~8 | activation, admin-crud |
 | Click_ID_Store | ~5 | click-flow |
@@ -813,13 +826,13 @@ curl ... | grep -i '^set-cookie:' || true
 | Queue_Processor | ~8 | conversion-attribution |
 | Cron | ~12 | cron-cleanup |
 | Migrator | ~5 | migration |
-| Rest_Endpoint | ~12 | rest-api |
+| Rest_Endpoint | ~16 | rest-api, deferred-consent |
 | Admin_Page | ~15 | admin-crud |
 | Csv_Exporter | ~7 | csv-export |
 | Campaign_List_Table | ~6 | campaign-report |
 | Utm_Options | ~3 | — |
 | Updater | ~4 | — |
 | Plugin | ~6 | activation |
-| pending-consent.js | ~16 | — |
+| pending-consent.js | ~29 | — |
 | admin.js | ~10 | — |
-| **Totals** | **~214 PHP + 28 JS** | **14 suites** |
+| **Totals** | **~214 PHP + 39 JS** | **15 suites** |
