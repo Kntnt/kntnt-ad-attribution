@@ -44,16 +44,18 @@ final class Queue {
 	/**
 	 * Enqueues a new job for a given reporter.
 	 *
-	 * @param string   $reporter     Reporter identifier.
-	 * @param array    $payload      Data to be processed (will be JSON-encoded).
-	 * @param string   $label        Human-readable description of the job.
-	 * @param array    $retry_params Per-job retry overrides (attempts_per_round, retry_delay, max_rounds, round_delay).
-	 * @param int|null $not_before   Unix timestamp before which the job should not be processed, or null for immediate.
+	 * @param string      $reporter       Reporter identifier.
+	 * @param array       $payload        Data to be processed (will be JSON-encoded).
+	 * @param string      $label          Human-readable description of the job.
+	 * @param array       $retry_params   Per-job retry overrides (attempts_per_round, retry_delay, max_rounds, round_delay).
+	 * @param int|null    $not_before     Unix timestamp before which the job should not be processed, or null for immediate.
+	 * @param string|null $conversion_ref Reference of the conversion the job reports (see Conversion_Handler), or null for a job not created by a conversion.
 	 *
 	 * @return void
 	 * @since 1.2.0
+	 * @since 1.10.0 Accepts the conversion reference.
 	 */
-	public function enqueue( string $reporter, array $payload, string $label = '', array $retry_params = [], ?int $not_before = null ): void {
+	public function enqueue( string $reporter, array $payload, string $label = '', array $retry_params = [], ?int $not_before = null, ?string $conversion_ref = null ): void {
 		global $wpdb;
 
 		$table = $wpdb->prefix . 'kntnt_ad_attr_queue';
@@ -79,7 +81,8 @@ final class Queue {
 			'retry_delay'        => $retry['retry_delay'],
 			'max_rounds'         => $retry['max_rounds'],
 			'round_delay'        => $retry['round_delay'],
-		], [ '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%d', '%d', '%d', '%d' ] );
+			'conversion_ref'     => $conversion_ref,
+		], [ '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%s' ] );
 	}
 
 	/**

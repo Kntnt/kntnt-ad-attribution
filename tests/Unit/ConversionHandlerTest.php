@@ -21,6 +21,15 @@ use Brain\Monkey\Actions;
 use Brain\Monkey\Filters;
 use Tests\Helpers\TestFactory;
 
+// Every call yields a new conversion reference, so a test can tell one
+// reference per conversion from one per row.
+beforeEach(function () {
+    $refs = 0;
+    Functions\when('wp_generate_uuid4')->alias(function () use (&$refs) {
+        return sprintf('00000000-0000-4000-8000-%012d', ++$refs);
+    });
+});
+
 /**
  * Creates a mock $wpdb whose clicks table holds no test clicks.
  *
@@ -831,10 +840,10 @@ describe('Conversion_Handler::handle_conversion()', function () {
                 ],
             ]);
 
-        // Queue should receive the payload.
+        // Queue should receive the payload, with the conversion's reference.
         $q->shouldReceive('enqueue')
             ->once()
-            ->with('test_reporter', ['action' => 'test']);
+            ->with('test_reporter', ['action' => 'test'], '', [], null, '00000000-0000-4000-8000-000000000001');
 
         $qp->shouldReceive('schedule')->once();
 
@@ -1772,6 +1781,100 @@ describe('Conversion_Handler::handle_conversion() internal traffic and test conv
         $handler->handle_conversion();
 
         // Mockery expectations alone don't count as assertions.
+        expect(true)->toBeTrue();
+    });
+
+});
+
+// ─── Conversion reference ───
+
+describe('Conversion_Handler::handle_conversion() conversion reference', function () {
+
+    afterEach(function () {
+        unset($GLOBALS['wpdb']);
+        $_COOKIE = [];
+        unset($_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], $_SERVER['REQUEST_URI']);
+    });
+
+    it('stores one reference on every row of a multi-touch conversion', function () {
+        [$handler, $cm] = make_conversion_handler();
+        $now = 1700000000;
+
+        Functions\when('time')->justReturn($now);
+        Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
+        $cm->shouldReceive('parse')->with('_ad_clicks')->once()->andReturn([
+            TestFactory::hash('touch-1') => $now - 7200,
+            TestFactory::hash('touch-2') => $now - 3600,
+        ]);
+        \Patchwork\redefine(
+            'Kntnt\Ad_Attribution\Post_Type::get_valid_hashes',
+            fn (array $hashes) => $hashes,
+        );
+        Filters\expectApplied('kntnt_ad_attr_attribution')
+            ->once()
+            ->andReturnUsing(fn ($attributions) => array_map(fn () => 0.5, $attributions));
+
+        $wpdb = wpdb_without_test_clicks();
+        $GLOBALS['wpdb'] = $wpdb;
+        $wpdb->shouldReceive('query')->andReturn(true);
+        $wpdb->shouldReceive('prepare')->andReturn('SQL');
+        $wpdb->shouldReceive('get_var')->andReturn('42');
+
+        $rows = [];
+        $wpdb->shouldReceive('insert')
+            ->twice()
+            ->andReturnUsing(function ($table, $data) use (&$rows) {
+                $rows[] = $data;
+                return 1;
+            });
+
+        $handler->handle_conversion();
+
+        expect(array_column($rows, 'conversion_ref'))->toBe([
+            '00000000-0000-4000-8000-000000000001',
+            '00000000-0000-4000-8000-000000000001',
+        ]);
+    });
+
+    it('passes the reference of the conversion to the queue with each structured item', function () {
+        [$handler, , , , $cis, $q, $qp, $wpdb] = setup_conversion_path();
+
+        $wpdb->shouldReceive('get_results')->andReturn([]);
+        Functions\when('home_url')->alias(fn ($path) => 'https://example.com' . $path);
+        $cis->shouldReceive('get_for_clicks')->andReturn([]);
+        $qp->shouldReceive('schedule')->once();
+
+        Filters\expectApplied('kntnt_ad_attr_conversion_reporters')->once()->andReturn([
+            'structured' => ['enqueue' => fn () => [['payload' => ['n' => 1]], ['payload' => ['n' => 2]]]],
+        ]);
+
+        $q->shouldReceive('enqueue')
+            ->twice()
+            ->with('structured', Mockery::type('array'), '', [], null, '00000000-0000-4000-8000-000000000001');
+
+        $handler->handle_conversion();
+
+        expect(true)->toBeTrue();
+    });
+
+    it('passes the reference of the conversion to the queue with each legacy item', function () {
+        [$handler, , , , $cis, $q, $qp, $wpdb] = setup_conversion_path();
+
+        $wpdb->shouldReceive('get_results')->andReturn([]);
+        Functions\when('home_url')->alias(fn ($path) => 'https://example.com' . $path);
+        $cis->shouldReceive('get_for_clicks')->andReturn([]);
+        $qp->shouldReceive('schedule')->once();
+
+        Filters\expectApplied('kntnt_ad_attr_conversion_reporters')->once()->andReturn([
+            'legacy' => ['enqueue' => fn () => [['action' => 'report']]],
+        ]);
+
+        $q->shouldReceive('enqueue')
+            ->once()
+            ->with('legacy', ['action' => 'report'], '', [], null, '00000000-0000-4000-8000-000000000001');
+
+        $handler->handle_conversion();
+
         expect(true)->toBeTrue();
     });
 

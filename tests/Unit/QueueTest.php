@@ -628,3 +628,64 @@ describe('Queue::get_status()', function () {
     });
 
 });
+
+// ─── Conversion reference ───
+
+/**
+ * Creates a Settings mock that answers the queue's retry defaults.
+ *
+ * @return Mockery\MockInterface Settings mock.
+ */
+function queue_settings_with_retry_defaults(): Mockery\MockInterface {
+    $settings = Mockery::mock(Settings::class);
+    $settings->shouldReceive('get')->with('attempts_per_round')->andReturn(3);
+    $settings->shouldReceive('get')->with('retry_delay')->andReturn(60);
+    $settings->shouldReceive('get')->with('max_rounds')->andReturn(3);
+    $settings->shouldReceive('get')->with('round_delay')->andReturn(21600);
+    return $settings;
+}
+
+describe('Queue::enqueue() with a conversion reference', function () {
+
+    afterEach(function () {
+        unset($GLOBALS['wpdb']);
+    });
+
+    it('records the conversion the job reports', function () {
+        $wpdb = TestFactory::wpdb();
+        $GLOBALS['wpdb'] = $wpdb;
+        Functions\when('wp_json_encode')->alias(fn ($v) => json_encode($v));
+
+        $inserted = null;
+        $wpdb->shouldReceive('insert')
+            ->once()
+            ->withArgs(function (string $table, array $data, array $format) use (&$inserted) {
+                $inserted = array_combine(array_keys($data), $format);
+                expect($data['conversion_ref'])->toBe('8f14e45f-ceea-4e67-a1b2-c3d4e5f60718');
+                return true;
+            });
+
+        (new Queue(queue_settings_with_retry_defaults()))
+            ->enqueue('reporter', [], '', [], null, '8f14e45f-ceea-4e67-a1b2-c3d4e5f60718');
+
+        expect($inserted['conversion_ref'])->toBe('%s');
+    });
+
+    it('records no conversion for a job enqueued outside a conversion', function () {
+        $wpdb = TestFactory::wpdb();
+        $GLOBALS['wpdb'] = $wpdb;
+        Functions\when('wp_json_encode')->alias(fn ($v) => json_encode($v));
+
+        $wpdb->shouldReceive('insert')
+            ->once()
+            ->withArgs(function (string $table, array $data, array $format) {
+                expect($data)->toHaveKey('conversion_ref');
+                expect($data['conversion_ref'])->toBeNull();
+                expect(count($format))->toBe(count($data));
+                return true;
+            });
+
+        (new Queue(queue_settings_with_retry_defaults()))->enqueue('reporter', []);
+    });
+
+});
