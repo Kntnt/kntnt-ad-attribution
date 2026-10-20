@@ -4,6 +4,18 @@
  * Description: REST endpoints for test setup, fixtures, and inspection.
  */
 
+// No update checks. Every fresh Playground otherwise asks wordpress.org (and
+// the plugin's Updater asks GitHub) for updates on its first admin page load.
+// Playground caches the booted site, database included, for later boots, and
+// a site that has received update offers can boot into WordPress maintenance
+// mode (HTTP 503 on every request). Tests never update anything.
+add_filter('pre_http_request', function ($response, $args, $url) {
+    $host = wp_parse_url($url, PHP_URL_HOST);
+    return in_array($host, ['api.wordpress.org', 'api.github.com'], true)
+        ? new WP_Error('http_request_blocked', 'Blocked in integration tests.')
+        : $response;
+}, 10, 3);
+
 // Dedup window toggle. The plugin's own override lives in the array option
 // kntnt_ad_attr_settings, which test-set-option cannot write, so suites set
 // the plain string option test_dedup_seconds instead. 0 or unset keeps the

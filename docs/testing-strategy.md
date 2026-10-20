@@ -818,6 +818,10 @@ helper_name() {
 
 The WordPress SQLite compatibility plugin cannot reliably handle date comparisons beyond ~2027. For example, `clicked_at < '9999-12-31 23:59:59'` returns FALSE even for 2026 dates. Use realistic date ranges (e.g., `2020-01-01` to `2027-12-31`) in test assertions.
 
+### Playground breaks after 400 requests
+
+Playground swaps its PHP runtime after 400 requests, and the new runtime loses the SQLite driver: every request then fails with "Error establishing a database connection". `run-tests.sh` therefore restarts Playground every 8 suites. It also gives each run a private Playground cache (`HOME` for the CLI), because the shared `~/.wordpress-playground` cache, which other Playground runs rewrite on every boot, could boot WordPress into maintenance mode (HTTP 503). The test-helpers mu-plugin blocks update checks against `api.wordpress.org` and `api.github.com` for the same reason.
+
 ### Multi-table DELETE in SQLite
 
 The SQLite translator accepts MySQL's multi-table `DELETE x FROM a x JOIN b … WHERE …` (with `INNER` or `LEFT JOIN`) and reports success, but deletes nothing. Code paths that must be verified in Playground use single-table deletes with subqueries instead: `DELETE FROM a WHERE col IN (SELECT …)` or `DELETE FROM a WHERE NOT EXISTS (SELECT 1 FROM b WHERE b.id = a.col)`. Both are valid MySQL.
