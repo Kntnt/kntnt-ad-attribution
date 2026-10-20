@@ -7,7 +7,8 @@
 # (kntnt_ad_attr_test=1) is recorded and flagged for both anonymous and
 # internal visitors without forwarding the parameter; and that a test
 # conversion is written but kept out of the main view, its totals and the
-# CSV export, and reaches only reporters that declare supports_test.
+# CSV export, and reaches only reporters that declare supports_test; and
+# that test clicks and test conversions are logged.
 #
 # The test environment switches the internal default off for all other
 # suites (test-helpers.php); this suite switches it on explicitly.
@@ -140,6 +141,8 @@ assert_equals "2|1.0|2" "$BEFORE" "Main view, totals and CSV show the two real c
 
 # --- 4. Test clicks are recorded and flagged, for visitors and internal users ---
 
+set_logging "on"
+clear_log
 clear_cookies
 sleep 1
 headers=$(click_as_visitor "kntnt_ad_attr_test=1&gclid=TEST")
@@ -172,6 +175,16 @@ assert_equals "true" "$(get_probe_calls | jq -r '.[0].context.test')" "Reporter 
 
 AFTER=$(reported_numbers)
 assert_equals "$BEFORE" "$AFTER" "Main view, totals and CSV are unchanged by test clicks and test conversions"
+
+# --- 6. Test clicks and test conversions are logged ---
+
+log=$(get_log)
+test_click_lines=$(echo "$log" | grep -F "Tracking URL request:" | grep -F "hash=${HASH:0:8}" | grep -cF "outcome=recorded hash=${HASH:0:8} test=1" || true)
+assert_equals "2" "$test_click_lines" "Both test clicks are logged as recorded with test=1"
+assert_contains "$log" "Test conversion recorded for hash ${HASH:0:8}" "Test conversions are logged"
+assert_contains "$log" "passed to reporters with test support: probe" "The log names the reporters a test conversion was passed to"
+set_logging "off"
+clear_log
 
 # --- Cleanup ---
 
