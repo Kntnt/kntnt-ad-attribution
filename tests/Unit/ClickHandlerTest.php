@@ -341,7 +341,8 @@ describe('Click_Handler::handle_click()', function () {
                 expect($data['utm_id'])->toBe('camp-123');
                 expect($data['utm_source_platform'])->toBe('google');
                 return true;
-            });
+            })
+            ->andReturn(1);
 
         Functions\when('get_post_meta')->justReturn('existing');
         $cm->shouldReceive('parse')->andReturn([]);
@@ -385,7 +386,8 @@ describe('Click_Handler::handle_click()', function () {
                 expect($data['utm_content'])->toBe('mtm-text');
                 expect($data['utm_term'])->toBe('mtm-kw');
                 return true;
-            });
+            })
+            ->andReturn(1);
 
         Functions\when('get_post_meta')->justReturn('existing');
         $cm->shouldReceive('parse')->andReturn([]);
@@ -425,7 +427,8 @@ describe('Click_Handler::handle_click()', function () {
             ->withArgs(function ($table, $data) {
                 expect(mb_strlen($data['utm_content']))->toBe(255);
                 return true;
-            });
+            })
+            ->andReturn(1);
 
         Functions\when('get_post_meta')->justReturn('existing');
         $cm->shouldReceive('parse')->andReturn([]);
@@ -662,46 +665,64 @@ describe('Click_Handler::handle_click()', function () {
         expect(fn () => $handler->handle_click())->toThrow(ExitException::class);
     });
 
-    it('stores no click ID when the click row could not be inserted', function () {
-        [$handler, $cm, $con, $bd, $cis] = make_click_handler();
-        $hash = TestFactory::hash('click-id-insert-failed');
+    it('writes no cookie entry, click ID or action and logs the failure when the click row could not be inserted', function () {
+        [$handler, $cm, $con, $bd, $cis, $logger] = make_click_handler();
+        $lines = capture_log_lines($logger);
+        $hash  = TestFactory::hash('click-id-insert-failed');
 
         $_GET['gclid'] = 'abc123';
 
-        Functions\expect('get_query_var')->once()->andReturn($hash);
-        $cm->shouldReceive('validate_hash')->andReturn(true);
-
-        $wpdb = TestFactory::wpdb();
-        $row  = (object) ['ID' => 10, 'target_post_id' => '20'];
-        $wpdb->shouldReceive('prepare')->andReturn('SQL');
-        $wpdb->shouldReceive('get_row')->once()->andReturn($row);
-        $GLOBALS['wpdb'] = $wpdb;
-
-        Functions\expect('get_permalink')->once()->andReturn('https://example.com/');
-        Functions\when('wp_parse_url')->alias(fn ($url, $comp) => parse_url($url, $comp));
-        Functions\when('wp_parse_str')->alias(function ($str, &$result) { parse_str($str, $result); });
-        Functions\when('add_query_arg')->alias(fn ($args, $url) => $url);
+        $wpdb = stub_tracking_url_request($cm, $hash);
         $bd->shouldReceive('is_bot')->andReturn(false);
         $con->shouldReceive('check')->andReturn(true);
         Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
         $wpdb->shouldReceive('insert')->once()->andReturn(false);
-        Functions\when('get_post_meta')->justReturn('existing');
 
         Filters\expectApplied('kntnt_ad_attr_click_id_capturers')
             ->andReturn(['google' => 'gclid']);
         $cis->shouldReceive('find_original_click')->andReturn(null);
 
-        // Without a click row there is nothing to attach the click ID to.
+        // Without a click row, nothing may point at one: no click ID, no
+        // cookie entry, no click announced.
         $cis->shouldNotReceive('store');
+        $cm->shouldNotReceive('set_clicks_cookie');
+        Actions\expectDone('kntnt_ad_attr_click')->never();
 
-        $cm->shouldReceive('parse')->andReturn([]);
-        $cm->shouldReceive('add')->andReturn([$hash => time()]);
-        $cm->shouldReceive('set_clicks_cookie')->once();
         Functions\expect('nocache_headers')->once();
-        Functions\expect('wp_redirect')->once()->andReturnUsing(fn () => throw new ExitException());
+        Functions\expect('wp_redirect')->once()->andReturnUsing(fn () => throw new ExitException('redirect'));
 
-        expect(fn () => $handler->handle_click())->toThrow(ExitException::class);
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class, 'redirect');
+
+        expect($lines)->toHaveCount(1);
+        expect($lines[0])
+            ->toStartWith('[CORE][error] ')
+            ->toContain('outcome=failed')
+            ->toContain('hash=' . substr($hash, 0, 8));
     });
+
+    it('hands an undetermined-consent visitor no pending click when the click row could not be inserted', function (string $transport) {
+        [$handler, $cm, $con, $bd, $cis] = make_click_handler();
+        $hash = TestFactory::hash('pending-insert-failed');
+
+        $wpdb = stub_tracking_url_request($cm, $hash, 'https://example.com/landing/');
+        $bd->shouldReceive('is_bot')->andReturn(false);
+        $con->shouldReceive('check')->andReturn(null);
+        Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
+        $wpdb->shouldReceive('insert')->once()->andReturn(false);
+        Filters\expectApplied('kntnt_ad_attr_pending_transport')->andReturn($transport);
+
+        $cm->shouldNotReceive('set_transport_cookie');
+
+        $redirect = new \ArrayObject();
+        Functions\expect('nocache_headers')->once();
+        Functions\expect('wp_redirect')->once()->andReturnUsing(function ($url) use ($redirect) {
+            $redirect['url'] = $url;
+            throw new ExitException('redirect');
+        });
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class, 'redirect');
+        expect($redirect['url'])->toBe('https://example.com/landing/');
+    })->with(['cookie', 'fragment']);
 
     it('ignores click ID values longer than 255 chars', function () {
         [$handler, $cm, $con, $bd, $cis] = make_click_handler();

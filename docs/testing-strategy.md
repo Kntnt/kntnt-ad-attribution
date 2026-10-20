@@ -337,7 +337,8 @@ The most complex class. Tests cover the full click flow:
 - Query parameter forwarding and collision handling.
 - Redirect loop guard.
 - `kntnt_ad_attr_click` action fires for every recorded click, before consent check.
-- Click ID capturer integration: stored on the inserted click row's ID, nothing stored when the insert fails, value length validation.
+- Click ID capturer integration: stored on the inserted click row's ID, value length validation.
+- Failed click insert: no click ID, cookie entry, transport cookie, fragment or `kntnt_ad_attr_click`; one CORE ERROR line with outcome `failed`; redirect as usual.
 - Speculative requests (`Sec-Purpose: prefetch`, `prefetch;prerender`, `Purpose: prefetch`): 503 via `status_header` + `nocache_headers`, no redirect, insert, click ID, cookie, transport or action; a `kntnt_ad_attr_is_speculative` callback can overrule detection. The handler gets a real `Speculation_Detector`, and `apply_default_speculation_detection()` makes the filter run its default callback, which Brain Monkey would otherwise skip.
 - Repeats (click ID already recorded on the tracking URL, via a mocked `Click_ID_Store::find_original_click()`): no insert, click ID or action, redirect with query forwarding; with consent the entry points at the original click unless a newer entry has a click row; with undetermined consent the transport carries the original click; the earliest original wins across platforms; the same value on another tracking URL is recorded.
 - Diagnostic log line (the handler gets a `Logger` spy; `capture_log_lines()` collects every level): exactly one CORE INFO line per outcome (`recorded`, `repeat`, `deduplicated`, `speculative`, `bot`) with the hash prefix and the raw `Sec-Purpose`, `Purpose` and `User-Agent` values, and without the `REMOTE_ADDR`.

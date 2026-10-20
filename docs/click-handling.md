@@ -22,8 +22,8 @@ The click handler is registered on `template_redirect` — the conventional hook
 10b. Repeat check (skipped for a test click): if any of them is already recorded on a click of this tracking URL → resolve to the original click, handle consent for it, redirect (skip insert)   [outcome: repeat]
 10c. Click deduplication (skipped for a test click): if consent=true and dedup_seconds>0 and hash in cookie within window and a click row matches the entry → re-send cookie with the original timestamp, redirect (skip insert)   [outcome: deduplicated]
 11. Extract per-click UTM fields (Content, Term, Id, Group) from incoming parameters
-11b. Insert click record into kntnt_ad_attr_clicks table, with is_test = 1 for a test click
-11c. Store the captured click IDs, keyed by the inserted click row's ID (skipped if the insert failed)
+11b. Insert click record into kntnt_ad_attr_clicks table, with is_test = 1 for a test click. If the insert fails → redirect without click IDs, action, cookie entry or transport   [outcome: failed]
+11c. Store the captured click IDs, keyed by the inserted click row's ID
 11d. Populate empty postmeta fields (Source, Medium, Campaign only) from incoming UTM/MTM query parameters
 11e. Fire kntnt_ad_attr_click action (hash, target URL, campaign data) — allows companion plugins to capture platform-specific parameters (e.g. gclid)
 12. Handle consent for cookie storage → three outcomes (see Consent below)
@@ -46,6 +46,8 @@ The handler classifies each request for a published tracking URL with a valid ta
 | 4 | **Repeat** | A platform click ID in the request is already recorded on a click of this tracking URL | 302 redirect with query forwarding | No click row or click ID; the cookie or transport refers to the original click |
 | 5 | **Duplicate** | Click deduplication (opt-in, consent required; see [Click Deduplication](#click-deduplication)) | 302 redirect with query forwarding | No click row; the cookie entry keeps its click |
 | 6 | **Click** | None of the above | 302 redirect with query forwarding | Click row (`is_test = 1` for a test click), click IDs, `kntnt_ad_attr_click`, cookie or transport per consent |
+
+If the click row cannot be inserted, the request records nothing else either: no click IDs, no `kntnt_ad_attr_click`, no cookie entry and no transport, because every one of them must point at a click row. The visitor is redirected as usual.
 
 Bots come first because nothing about their requests is worth recording. Speculative requests come next because declining them must not depend on consent or on what was recorded before. Internal requests follow, so that staff checking their own ads leave no trace. The repeat check precedes deduplication because it works without consent and resolves to a specific earlier click. A test click skips the internal, repeat and deduplication checks: it always gets its own click row, flagged as a test.
 
@@ -267,7 +269,7 @@ All redirect responses shall include `nocache_headers()` to prevent caching.
 
 ## Diagnostic Log Line
 
-When logging is enabled (Tools → Ad Attribution → Logging), every request to a tracking URL that gets past the redirect loop guard writes exactly one line through `Logger::info( 'CORE', … )`, just before its response:
+When logging is enabled (Tools → Ad Attribution → Logging), every request to a tracking URL that gets past the redirect loop guard writes exactly one line through `Logger::info( 'CORE', … )`, just before its response. A click whose row could not be inserted writes the same line through `Logger::error()`, with outcome `failed`:
 
 ```
 [2026-10-20 14:03:11+02:00][CORE][INFO] Tracking URL request: outcome=repeat hash=3f9a1c0b test=0 sec_purpose="" purpose="" user_agent="Mozilla/5.0 (Macintosh; …) Chrome/141.0.0.0 Safari/537.36"
@@ -275,7 +277,7 @@ When logging is enabled (Tools → Ad Attribution → Logging), every request to
 
 | Field | Value |
 |---|---|
-| `outcome` | `recorded`, `repeat`, `deduplicated`, `speculative`, `bot` or `internal` |
+| `outcome` | `recorded`, `repeat`, `deduplicated`, `speculative`, `bot`, `internal` or `failed` |
 | `hash` | The first 8 characters of the tracking URL's hash |
 | `test` | `1` for a test click (`kntnt_ad_attr_test=1`), otherwise `0` |
 | `sec_purpose`, `purpose`, `user_agent` | The raw `Sec-Purpose`, `Purpose` and `User-Agent` request headers, sanitized (no line breaks) and quoted; `""` when absent |

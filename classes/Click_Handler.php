@@ -361,16 +361,22 @@ final class Click_Handler {
 			'utm_source_platform' => $click_group !== '' ? mb_substr( $click_group, 0, 255 ) : null,
 			'is_test'             => $is_test_click ? 1 : 0,
 		] );
-		$click_row_id = $inserted ? (int) $wpdb->insert_id : 0;
+
+		// Every cookie entry, pending click and announced click must point at
+		// a click row, because conversions are linked by an exact match on
+		// it. Without a row there is nothing to point at, so the visitor is
+		// only redirected and the failure logged.
+		if ( ! $inserted ) {
+			$this->log_request( 'failed', $hash, $is_test_click );
+			$this->redirect( $target_url );
+		}
 
 		// Store the captured platform click IDs. Each ID belongs to the click
 		// row just inserted, so a conversion linked to this click reports
-		// this click's IDs and no other visitor's. Without a click row there
-		// is nothing to attach them to.
-		if ( $click_row_id > 0 ) {
-			foreach ( $click_ids as $platform => $value ) {
-				$this->click_id_store->store( $click_row_id, $platform, $value );
-			}
+		// this click's IDs and no other visitor's.
+		$click_row_id = (int) $wpdb->insert_id;
+		foreach ( $click_ids as $platform => $value ) {
+			$this->click_id_store->store( $click_row_id, $platform, $value );
 		}
 
 		// Populate empty Source/Medium/Campaign postmeta from incoming params.
@@ -450,7 +456,7 @@ final class Click_Handler {
 	 * line as one more field, never in a second line. Logger writes nothing
 	 * unless logging is enabled.
 	 *
-	 * @param string $outcome How the request was counted: 'recorded', 'repeat', 'deduplicated', 'speculative', 'bot' or 'internal'.
+	 * @param string $outcome How the request was counted: 'recorded', 'repeat', 'deduplicated', 'speculative', 'bot', 'internal' or 'failed' (the click row could not be written; logged as an error).
 	 * @param string $hash    The tracking URL hash.
 	 * @param bool   $is_test Whether the request is a test click (`kntnt_ad_attr_test=1`).
 	 *
@@ -469,7 +475,13 @@ final class Click_Handler {
 
 		$pairs = array_map( fn( string $key, string $value ) => "{$key}={$value}", array_keys( $fields ), $fields );
 
-		$this->logger?->info( 'CORE', 'Tracking URL request: ' . implode( ' ', $pairs ) );
+		$message = 'Tracking URL request: ' . implode( ' ', $pairs );
+
+		if ( $outcome === 'failed' ) {
+			$this->logger?->error( 'CORE', $message );
+		} else {
+			$this->logger?->info( 'CORE', $message );
+		}
 	}
 
 	/**
