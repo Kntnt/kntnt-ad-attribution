@@ -232,8 +232,18 @@ final class Click_Handler {
 		if ( $consent_state === true && $dedup_seconds > 0 ) {
 			$existing = $this->cookie_manager->parse();
 			if ( isset( $existing[ $hash ] ) && ( $now - $existing[ $hash ] ) < $dedup_seconds ) {
-				$this->set_cookie( $hash, $now );
-				$this->redirect( $target_url );
+
+				// Conversions link to a click row by an exact (hash, clicked_at)
+				// match with the cookie timestamp, so the entry must keep the
+				// original click's time. Re-sending it only refreshes the expiry,
+				// and the window stays anchored to the original click. An entry
+				// without a matching row (written by an older version) is not a
+				// duplicate: falling through records a new row and repoints the
+				// entry at it, which repairs the cookie.
+				if ( $this->click_row_exists( $hash, $existing[ $hash ] ) ) {
+					$this->set_cookie( $hash, $existing[ $hash ] );
+					$this->redirect( $target_url );
+				}
 			}
 		}
 
@@ -315,7 +325,7 @@ final class Click_Handler {
 		match ( $consent_state ) {
 			true  => $this->set_cookie( $hash, $now ),
 			false => null, // Consent denied — attribution lost for this visitor.
-			null  => $this->handle_pending_consent( $hash, $target_url ),
+			null  => $this->handle_pending_consent( $hash, $now, $target_url ),
 		};
 
 		// Step 13: Redirect to the target page.
@@ -339,24 +349,56 @@ final class Click_Handler {
 	}
 
 	/**
+	 * Checks whether a click row exists for a cookie entry.
+	 *
+	 * Uses the same exact `(hash, clicked_at)` match as the conversion
+	 * lookup, so an entry this returns true for is one a conversion can
+	 * be attributed to.
+	 *
+	 * @param string $hash      The tracking URL hash.
+	 * @param int    $timestamp Unix timestamp of the cookie entry.
+	 *
+	 * @return bool True if a matching click row exists.
+	 * @since 1.10.0
+	 */
+	private function click_row_exists( string $hash, int $timestamp ): bool {
+		global $wpdb;
+
+		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
+
+		$click_id = $wpdb->get_var( $wpdb->prepare(
+			"SELECT id FROM {$clicks_table} WHERE hash = %s AND clicked_at = %s LIMIT 1",
+			$hash,
+			gmdate( 'Y-m-d H:i:s', $timestamp ),
+		) );
+
+		return (bool) $click_id;
+	}
+
+	/**
 	 * Handles the transport mechanism when consent state is undetermined.
 	 *
-	 * The transport method is filterable: `cookie` sets a short-lived transport
-	 * cookie, `fragment` appends the hash as a URL fragment.
+	 * Hands the landing page the click as a `hash:timestamp` pair, where the
+	 * timestamp is the `clicked_at` of the click row the visitor's cookie
+	 * entry should point at once consent is granted. The transport method is
+	 * filterable: `cookie` sets a short-lived transport cookie, `fragment`
+	 * appends the pair as a URL fragment.
 	 *
-	 * @param string $hash       The SHA-256 hash to transport.
+	 * @param string $hash        The SHA-256 hash to transport.
+	 * @param int    $timestamp   Unix timestamp of the click row to refer to.
 	 * @param string &$target_url The target URL, modified in place for fragment transport.
 	 *
 	 * @return void
 	 * @since 1.0.0
+	 * @since 1.10.0 Transports the click timestamp along with the hash.
 	 */
-	private function handle_pending_consent( string $hash, string &$target_url ): void {
+	private function handle_pending_consent( string $hash, int $timestamp, string &$target_url ): void {
 		/** @var string $transport Transport method: 'cookie' or 'fragment'. */
 		$transport = apply_filters( 'kntnt_ad_attr_pending_transport', 'cookie' );
 
 		match ( $transport ) {
-			'fragment' => $target_url .= '#_aah=' . $hash,
-			default    => $this->cookie_manager->set_transport_cookie( $hash ),
+			'fragment' => $target_url .= '#_aah=' . $hash . ':' . $timestamp,
+			default    => $this->cookie_manager->set_transport_cookie( $hash, $timestamp ),
 		};
 	}
 

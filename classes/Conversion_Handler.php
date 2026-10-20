@@ -74,6 +74,14 @@ final class Conversion_Handler {
 	private readonly Queue_Processor $queue_processor;
 
 	/**
+	 * Logger for diagnostic output, such as cookie entries without a click row.
+	 *
+	 * @var Logger|null
+	 * @since 1.10.0
+	 */
+	private readonly ?Logger $logger;
+
+	/**
 	 * Initializes the conversion handler with its dependencies.
 	 *
 	 * @param Cookie_Manager  $cookie_manager  Cookie read operations.
@@ -82,16 +90,18 @@ final class Conversion_Handler {
 	 * @param Click_ID_Store  $click_id_store  Platform-specific click ID retrieval.
 	 * @param Queue           $queue           Async job queue.
 	 * @param Queue_Processor $queue_processor Queue processing scheduler.
+	 * @param Logger|null     $logger          Optional diagnostic logger.
 	 *
 	 * @since 1.0.0
 	 */
-	public function __construct( Cookie_Manager $cookie_manager, Consent $consent, Bot_Detector $bot_detector, Click_ID_Store $click_id_store, Queue $queue, Queue_Processor $queue_processor ) {
+	public function __construct( Cookie_Manager $cookie_manager, Consent $consent, Bot_Detector $bot_detector, Click_ID_Store $click_id_store, Queue $queue, Queue_Processor $queue_processor, ?Logger $logger = null ) {
 		$this->cookie_manager  = $cookie_manager;
 		$this->consent         = $consent;
 		$this->bot_detector    = $bot_detector;
 		$this->click_id_store  = $click_id_store;
 		$this->queue           = $queue;
 		$this->queue_processor = $queue_processor;
+		$this->logger          = $logger;
 	}
 
 	/**
@@ -199,14 +209,25 @@ final class Conversion_Handler {
 				continue;
 			}
 
-			// Find the click record matching the cookie timestamp.
+			// Find the click record matching the cookie timestamp. The match
+			// stays exact on purpose: the clicks table is shared by everyone
+			// who clicks the tracking URL, so the nearest earlier row is often
+			// another visitor's click.
 			$click_id = $wpdb->get_var( $wpdb->prepare(
 				"SELECT id FROM {$clicks_table} WHERE hash = %s AND clicked_at = %s LIMIT 1",
 				$hash,
 				gmdate( 'Y-m-d H:i:s', $valid_entries[ $hash ] ),
 			) );
 
+			// A miss breaks the invariant that every _ad_clicks entry points
+			// at a click row, so it is logged without visitor-identifying data.
 			if ( ! $click_id ) {
+				$this->logger?->warning( 'CORE', sprintf(
+					'Conversion not recorded for hash %s...: no click row matches cookie timestamp %d (%s UTC).',
+					substr( $hash, 0, 8 ),
+					$valid_entries[ $hash ],
+					gmdate( 'Y-m-d H:i:s', $valid_entries[ $hash ] ),
+				) );
 				continue;
 			}
 

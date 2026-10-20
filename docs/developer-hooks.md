@@ -28,11 +28,11 @@ Cookie lifetime in days. Default: `90`. Affects the `_ad_clicks` cookie and the 
 
 **`kntnt_ad_attr_dedup_seconds`**
 
-Per-hash deduplication window in seconds. Default: `0` (deduplication disabled). Controls both click deduplication (in Click_Handler) and conversion deduplication (in Conversion_Handler). When non-zero, repeated clicks for the same hash within the window are silently deduplicated (cookie refreshed, no DB insert), and each hash's conversion is independently checked against its last conversion timestamp. Automatically capped to `cookie_lifetime × DAY_IN_SECONDS` for conversion dedup.
+Per-hash deduplication window in seconds. Default: `0` (deduplication disabled). Controls both click deduplication (in Click_Handler) and conversion deduplication (in Conversion_Handler). When non-zero, repeated clicks for the same hash within the window are silently deduplicated (no DB insert; the cookie is re-sent with the original click's timestamp, which refreshes its expiry, and the window is measured from that original click), and each hash's conversion is independently checked against its last conversion timestamp. Automatically capped to `cookie_lifetime × DAY_IN_SECONDS` for conversion dedup.
 
 **`kntnt_ad_attr_pending_transport`**
 
-Transport mechanism for undefined consent: `'cookie'` (default) or `'fragment'`.
+Transport mechanism for undefined consent: `'cookie'` (default) or `'fragment'`. Both carry the click as a `<hash>:<timestamp>` pair, where the timestamp is the click row's `clicked_at`: `'cookie'` sets `_aah_pending=<hash>:<timestamp>` (60 seconds), `'fragment'` appends `#_aah=<hash>:<timestamp>` to the redirect URL. See [click-handling.md](click-handling.md#transport-mechanism-for-undefined-consent).
 
 **`kntnt_ad_attr_is_bot`**
 

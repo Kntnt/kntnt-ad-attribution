@@ -4,6 +4,16 @@
  * Description: REST endpoints for test setup, fixtures, and inspection.
  */
 
+// Dedup window toggle. The plugin's own override lives in the array option
+// kntnt_ad_attr_settings, which test-set-option cannot write, so suites set
+// the plain string option test_dedup_seconds instead. 0 or unset keeps the
+// plugin default. The plugin's settings override runs at PHP_INT_MAX but only
+// applies when a value is saved in settings, which tests never do.
+add_filter('kntnt_ad_attr_dedup_seconds', function ($seconds) {
+    $override = (int) get_option('test_dedup_seconds', 0);
+    return $override > 0 ? $override : $seconds;
+});
+
 /*
  * Probe adapters: a click-ID capturer and a conversion reporter that suites
  * switch on through string options (test-set-option), so no add-on plugin
@@ -333,4 +343,11 @@ add_action('rest_api_init', function () {
         },
         'permission_callback' => fn () => current_user_can('manage_options'),
     ]);
+});
+
+// Pending-consent transport override. Set option `test_pending_transport`
+// to 'fragment' or 'cookie' via test-set-option; '' keeps the plugin default.
+add_filter('kntnt_ad_attr_pending_transport', function (string $transport): string {
+    $override = (string) get_option('test_pending_transport', '');
+    return $override !== '' ? $override : $transport;
 });

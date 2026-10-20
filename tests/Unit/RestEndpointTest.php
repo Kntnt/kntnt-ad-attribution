@@ -26,6 +26,39 @@ function make_rest_endpoint(): array {
     return [new Rest_Endpoint($cm, $con), $cm, $con];
 }
 
+/**
+ * Installs a fake `$wpdb` whose clicks table holds the given rows.
+ *
+ * The fake answers any `get_results()` query with the rows whose hash and
+ * `clicked_at` both appear among the prepared arguments, so the tests state
+ * which click rows exist rather than how the endpoint queries them.
+ *
+ * @param array<int, array{hash: string, clicked_at: string}> $rows Click rows.
+ *
+ * @return Mockery\MockInterface The installed wpdb mock.
+ */
+function fake_clicks_table(array $rows): Mockery\MockInterface {
+    $wpdb = TestFactory::wpdb();
+    $GLOBALS['wpdb'] = $wpdb;
+
+    $wpdb->shouldReceive('prepare')->andReturnUsing(
+        fn (string $sql, ...$args) => ['sql' => $sql, 'args' => array_map('strval', $args)],
+    );
+
+    $wpdb->shouldReceive('get_results')->andReturnUsing(
+        function (array $prepared) use ($rows): array {
+            $hits = array_filter(
+                $rows,
+                fn (array $row) => in_array($row['hash'], $prepared['args'], true)
+                    && in_array($row['clicked_at'], $prepared['args'], true),
+            );
+            return array_map(fn (array $row) => (object) $row, array_values($hits));
+        },
+    );
+
+    return $wpdb;
+}
+
 // ─── register() ───
 
 describe('Rest_Endpoint::register()', function () {
@@ -103,7 +136,7 @@ describe('Rest_Endpoint::set_cookie()', function () {
         Functions\expect('get_transient')->once()->andReturn(10);
 
         $request = new WP_REST_Request('POST', '/set-cookie');
-        $request->set_param('hashes', [TestFactory::hash('rate-limit')]);
+        $request->set_param('hashes', [TestFactory::hash('rate-limit') . ':1700000000']);
 
         $response = $endpoint->set_cookie($request);
 
@@ -128,9 +161,7 @@ describe('Rest_Endpoint::set_cookie()', function () {
                 return true;
             });
 
-        // Hashes will fail validation — return early.
-        $cm->shouldReceive('validate_hash')->andReturn(false);
-
+        // A bare hash is malformed — return early.
         $request = new WP_REST_Request('POST', '/set-cookie');
         $request->set_param('hashes', [$hash]);
 
@@ -144,20 +175,15 @@ describe('Rest_Endpoint::set_cookie()', function () {
         expect($response->get_data()['success'])->toBeFalse();
     });
 
-    it('filters out invalid hash formats', function () {
+    it('ignores malformed items and writes the well-formed pair', function () {
         [$endpoint, $cm, $con] = make_rest_endpoint();
+        $hash = TestFactory::hash('valid');
 
         $_SERVER['REMOTE_ADDR'] = '10.0.0.1';
 
         Functions\expect('get_transient')->once()->andReturn(0);
         Functions\expect('set_transient')->once();
 
-        // Only the valid hash passes validation.
-        $valid_hash = TestFactory::hash('valid');
-        $cm->shouldReceive('validate_hash')->with($valid_hash)->andReturn(true);
-        $cm->shouldReceive('validate_hash')->with('INVALID')->andReturn(false);
-
-        // get_valid_hashes called with only the validated hash.
         \Patchwork\redefine(
             'Kntnt\Ad_Attribution\Post_Type::get_valid_hashes',
             fn (array $hashes) => $hashes,
@@ -165,20 +191,24 @@ describe('Rest_Endpoint::set_cookie()', function () {
 
         $con->shouldReceive('check')->andReturn(true);
 
-        // DB lookup returns the original click timestamp.
-        $wpdb = TestFactory::wpdb();
-        $GLOBALS['wpdb'] = $wpdb;
-        $wpdb->shouldReceive('prepare')->once()->andReturn('SQL');
-        $wpdb->shouldReceive('get_results')->once()->andReturn([
-            (object) ['hash' => $valid_hash, 'ts' => '1700000000'],
+        fake_clicks_table([
+            ['hash' => $hash, 'clicked_at' => '2023-11-14 22:13:20'],
         ]);
 
         $cm->shouldReceive('parse')->andReturn([]);
-        $cm->shouldReceive('add')->with([], $valid_hash, 1700000000)->andReturn([$valid_hash => 1700000000]);
-        $cm->shouldReceive('set_clicks_cookie')->once();
+        $cm->shouldReceive('add')->once()->with([], $hash, 1700000000)->andReturn([$hash => 1700000000]);
+        $cm->shouldReceive('set_clicks_cookie')->once()->with([$hash => 1700000000]);
 
         $request = new WP_REST_Request('POST', '/set-cookie');
-        $request->set_param('hashes', [$valid_hash, 'INVALID']);
+        $request->set_param('hashes', [
+            "{$hash}:1700000000",
+            'INVALID',
+            strtoupper($hash) . ':1700000000',
+            "{$hash}:",
+            "{$hash}:17000000001",
+            "{$hash}:1700000000x",
+            42,
+        ]);
 
         $response = $endpoint->set_cookie($request);
 
@@ -194,16 +224,16 @@ describe('Rest_Endpoint::set_cookie()', function () {
         Functions\expect('get_transient')->once()->andReturn(0);
         Functions\expect('set_transient')->once();
 
-        $cm->shouldReceive('validate_hash')->andReturn(true);
-
-        // All hashes rejected by database lookup.
+        // No published tracking URL has this hash.
         \Patchwork\redefine(
             'Kntnt\Ad_Attribution\Post_Type::get_valid_hashes',
             fn (array $hashes) => [],
         );
 
+        $cm->shouldNotReceive('set_clicks_cookie');
+
         $request = new WP_REST_Request('POST', '/set-cookie');
-        $request->set_param('hashes', [$hash]);
+        $request->set_param('hashes', ["{$hash}:1700000000"]);
 
         $response = $endpoint->set_cookie($request);
 
@@ -219,8 +249,6 @@ describe('Rest_Endpoint::set_cookie()', function () {
         Functions\expect('get_transient')->once()->andReturn(0);
         Functions\expect('set_transient')->once();
 
-        $cm->shouldReceive('validate_hash')->andReturn(true);
-
         \Patchwork\redefine(
             'Kntnt\Ad_Attribution\Post_Type::get_valid_hashes',
             fn (array $hashes) => $hashes,
@@ -234,7 +262,7 @@ describe('Rest_Endpoint::set_cookie()', function () {
         $cm->shouldNotReceive('set_clicks_cookie');
 
         $request = new WP_REST_Request('POST', '/set-cookie');
-        $request->set_param('hashes', [$hash]);
+        $request->set_param('hashes', ["{$hash}:1700000000"]);
 
         $response = $endpoint->set_cookie($request);
 
@@ -250,8 +278,6 @@ describe('Rest_Endpoint::set_cookie()', function () {
         Functions\expect('get_transient')->once()->andReturn(0);
         Functions\expect('set_transient')->once();
 
-        $cm->shouldReceive('validate_hash')->andReturn(true);
-
         \Patchwork\redefine(
             'Kntnt\Ad_Attribution\Post_Type::get_valid_hashes',
             fn (array $hashes) => $hashes,
@@ -265,14 +291,14 @@ describe('Rest_Endpoint::set_cookie()', function () {
         $cm->shouldNotReceive('set_clicks_cookie');
 
         $request = new WP_REST_Request('POST', '/set-cookie');
-        $request->set_param('hashes', [$hash]);
+        $request->set_param('hashes', ["{$hash}:1700000000"]);
 
         $response = $endpoint->set_cookie($request);
 
         expect($response->get_data()['success'])->toBeFalse();
     });
 
-    it('sets cookie on success', function () {
+    it('writes the posted pair\'s timestamp, not that of a later click on the same hash', function () {
         [$endpoint, $cm, $con] = make_rest_endpoint();
         $hash = TestFactory::hash('success');
 
@@ -281,8 +307,6 @@ describe('Rest_Endpoint::set_cookie()', function () {
         Functions\expect('get_transient')->once()->andReturn(0);
         Functions\expect('set_transient')->once();
 
-        $cm->shouldReceive('validate_hash')->andReturn(true);
-
         \Patchwork\redefine(
             'Kntnt\Ad_Attribution\Post_Type::get_valid_hashes',
             fn (array $hashes) => $hashes,
@@ -290,21 +314,19 @@ describe('Rest_Endpoint::set_cookie()', function () {
 
         $con->shouldReceive('check')->once()->andReturn(true);
 
-        // DB lookup returns the original click timestamp.
-        $wpdb = TestFactory::wpdb();
-        $GLOBALS['wpdb'] = $wpdb;
-        $wpdb->shouldReceive('prepare')->once()->andReturn('SQL');
-        $wpdb->shouldReceive('get_results')->once()->andReturn([
-            (object) ['hash' => $hash, 'ts' => '1700000000'],
+        // Visitor A clicked at 1700000000 (2023-11-14 22:13:20 UTC), and
+        // visitor B clicked the same tracking URL two seconds later.
+        fake_clicks_table([
+            ['hash' => $hash, 'clicked_at' => '2023-11-14 22:13:20'],
+            ['hash' => $hash, 'clicked_at' => '2023-11-14 22:13:22'],
         ]);
 
-        // Cookie merge flow — now includes the looked-up timestamp.
         $cm->shouldReceive('parse')->once()->andReturn([]);
         $cm->shouldReceive('add')->once()->with([], $hash, 1700000000)->andReturn([$hash => 1700000000]);
         $cm->shouldReceive('set_clicks_cookie')->once()->with([$hash => 1700000000]);
 
         $request = new WP_REST_Request('POST', '/set-cookie');
-        $request->set_param('hashes', [$hash]);
+        $request->set_param('hashes', ["{$hash}:1700000000"]);
 
         $response = $endpoint->set_cookie($request);
 
@@ -312,7 +334,139 @@ describe('Rest_Endpoint::set_cookie()', function () {
         expect($response->get_data()['success'])->toBeTrue();
     });
 
-    it('merges new hashes with existing cookie entries', function () {
+    it('writes nothing for a pair whose timestamp matches no click row', function () {
+        [$endpoint, $cm, $con] = make_rest_endpoint();
+        $hash = TestFactory::hash('no-row');
+
+        $_SERVER['REMOTE_ADDR'] = '10.0.0.1';
+
+        Functions\expect('get_transient')->once()->andReturn(0);
+        Functions\expect('set_transient')->once();
+
+        \Patchwork\redefine(
+            'Kntnt\Ad_Attribution\Post_Type::get_valid_hashes',
+            fn (array $hashes) => $hashes,
+        );
+
+        $con->shouldReceive('check')->andReturn(true);
+
+        // The hash has a click row, but not at the posted time.
+        fake_clicks_table([
+            ['hash' => $hash, 'clicked_at' => '2023-11-14 22:13:22'],
+        ]);
+
+        $cm->shouldNotReceive('add');
+        $cm->shouldNotReceive('set_clicks_cookie');
+
+        $request = new WP_REST_Request('POST', '/set-cookie');
+        $request->set_param('hashes', ["{$hash}:1700000000"]);
+
+        $response = $endpoint->set_cookie($request);
+
+        expect($response->get_data()['success'])->toBeFalse();
+    });
+
+    it('writes nothing for a bare hash', function () {
+        [$endpoint, $cm, $con] = make_rest_endpoint();
+        $hash = TestFactory::hash('bare');
+
+        $_SERVER['REMOTE_ADDR'] = '10.0.0.1';
+
+        Functions\expect('get_transient')->once()->andReturn(0);
+        Functions\expect('set_transient')->once();
+
+        // The hash is a published tracking URL with a recorded click, as
+        // when a browser still holds the previous script's sessionStorage.
+        \Patchwork\redefine(
+            'Kntnt\Ad_Attribution\Post_Type::get_valid_hashes',
+            fn (array $hashes) => $hashes,
+        );
+
+        $con->shouldReceive('check')->andReturn(true);
+
+        fake_clicks_table([
+            ['hash' => $hash, 'clicked_at' => '2023-11-14 22:13:20'],
+        ]);
+
+        $cm->shouldNotReceive('add');
+        $cm->shouldNotReceive('set_clicks_cookie');
+
+        $request = new WP_REST_Request('POST', '/set-cookie');
+        $request->set_param('hashes', [$hash]);
+
+        $response = $endpoint->set_cookie($request);
+
+        expect($response->get_data()['success'])->toBeFalse();
+    });
+
+    it('writes only the pairs that match a click row', function () {
+        [$endpoint, $cm, $con] = make_rest_endpoint();
+        $recorded   = TestFactory::hash('recorded');
+        $unrecorded = TestFactory::hash('unrecorded');
+
+        $_SERVER['REMOTE_ADDR'] = '10.0.0.1';
+
+        Functions\expect('get_transient')->once()->andReturn(0);
+        Functions\expect('set_transient')->once();
+
+        \Patchwork\redefine(
+            'Kntnt\Ad_Attribution\Post_Type::get_valid_hashes',
+            fn (array $hashes) => $hashes,
+        );
+
+        $con->shouldReceive('check')->andReturn(true);
+
+        fake_clicks_table([
+            ['hash' => $recorded, 'clicked_at' => '2023-11-14 22:13:20'],
+        ]);
+
+        $cm->shouldReceive('parse')->andReturn([]);
+        $cm->shouldReceive('add')->once()->with([], $recorded, 1700000000)->andReturn([$recorded => 1700000000]);
+        $cm->shouldReceive('set_clicks_cookie')->once()->with([$recorded => 1700000000]);
+
+        $request = new WP_REST_Request('POST', '/set-cookie');
+        $request->set_param('hashes', ["{$unrecorded}:1700000000", "{$recorded}:1700000000"]);
+
+        $response = $endpoint->set_cookie($request);
+
+        expect($response->get_data()['success'])->toBeTrue();
+    });
+
+    it('keeps the latest matching click when several pairs share a hash', function () {
+        [$endpoint, $cm, $con] = make_rest_endpoint();
+        $hash = TestFactory::hash('twice');
+
+        $_SERVER['REMOTE_ADDR'] = '10.0.0.1';
+
+        Functions\expect('get_transient')->once()->andReturn(0);
+        Functions\expect('set_transient')->once();
+
+        \Patchwork\redefine(
+            'Kntnt\Ad_Attribution\Post_Type::get_valid_hashes',
+            fn (array $hashes) => $hashes,
+        );
+
+        $con->shouldReceive('check')->andReturn(true);
+
+        // The visitor clicked the same tracking URL twice before consenting.
+        fake_clicks_table([
+            ['hash' => $hash, 'clicked_at' => '2023-11-14 22:13:20'],
+            ['hash' => $hash, 'clicked_at' => '2023-11-14 22:23:20'],
+        ]);
+
+        $cm->shouldReceive('parse')->andReturn([]);
+        $cm->shouldReceive('add')->once()->with([], $hash, 1700000600)->andReturn([$hash => 1700000600]);
+        $cm->shouldReceive('set_clicks_cookie')->once()->with([$hash => 1700000600]);
+
+        $request = new WP_REST_Request('POST', '/set-cookie');
+        $request->set_param('hashes', ["{$hash}:1700000600", "{$hash}:1700000000"]);
+
+        $response = $endpoint->set_cookie($request);
+
+        expect($response->get_data()['success'])->toBeTrue();
+    });
+
+    it('merges new clicks with existing cookie entries', function () {
         [$endpoint, $cm, $con] = make_rest_endpoint();
         $existing_hash = TestFactory::hash('existing');
         $new_hash      = TestFactory::hash('new');
@@ -322,8 +476,6 @@ describe('Rest_Endpoint::set_cookie()', function () {
         Functions\expect('get_transient')->once()->andReturn(0);
         Functions\expect('set_transient')->once();
 
-        $cm->shouldReceive('validate_hash')->andReturn(true);
-
         \Patchwork\redefine(
             'Kntnt\Ad_Attribution\Post_Type::get_valid_hashes',
             fn (array $hashes) => $hashes,
@@ -331,18 +483,13 @@ describe('Rest_Endpoint::set_cookie()', function () {
 
         $con->shouldReceive('check')->once()->andReturn(true);
 
-        // DB lookup returns the original click timestamp for the new hash.
-        $wpdb = TestFactory::wpdb();
-        $GLOBALS['wpdb'] = $wpdb;
-        $wpdb->shouldReceive('prepare')->once()->andReturn('SQL');
-        $wpdb->shouldReceive('get_results')->once()->andReturn([
-            (object) ['hash' => $new_hash, 'ts' => '1700000000'],
+        fake_clicks_table([
+            ['hash' => $new_hash, 'clicked_at' => '2023-11-14 22:13:20'],
         ]);
 
         // Existing cookie has one entry.
         $cm->shouldReceive('parse')->once()->andReturn([$existing_hash => 1699999000]);
 
-        // add() is called with the looked-up timestamp.
         $cm->shouldReceive('add')
             ->once()
             ->with([$existing_hash => 1699999000], $new_hash, 1700000000)
@@ -353,7 +500,7 @@ describe('Rest_Endpoint::set_cookie()', function () {
             ->with([$existing_hash => 1699999000, $new_hash => 1700000000]);
 
         $request = new WP_REST_Request('POST', '/set-cookie');
-        $request->set_param('hashes', [$new_hash]);
+        $request->set_param('hashes', ["{$new_hash}:1700000000"]);
 
         $response = $endpoint->set_cookie($request);
 

@@ -16,7 +16,7 @@ The click handler is registered on `template_redirect` — the conventional hook
 8. Redirect loop guard: verify that target URL does not start with /<prefix>/
 9. Bot check: if is_bot() → redirect without logging or setting cookie
 10. Check consent
-10b. Click deduplication: if consent=true and dedup_seconds>0 and hash in cookie within window → refresh cookie, redirect (skip insert)
+10b. Click deduplication: if consent=true and dedup_seconds>0 and hash in cookie within window and a click row matches the entry → re-send cookie with the original timestamp, redirect (skip insert)
 11. Extract per-click UTM fields (Content, Term, Id, Group) from incoming parameters
 11b. Insert click record into kntnt_ad_attr_clicks table
 11c. Capture platform-specific click IDs via registered kntnt_ad_attr_click_id_capturers filter, keyed by the inserted click row's ID (skipped if the insert failed)
@@ -28,13 +28,17 @@ The click handler is registered on `template_redirect` — the conventional hook
 
 ## Click Deduplication
 
-When `kntnt_ad_attr_dedup_seconds` returns a non-zero value and the visitor has granted consent (`true`), the click handler checks the `_ad_clicks` cookie for an existing entry for the same hash. If the hash exists and the elapsed time since the stored timestamp is less than the dedup window, the click is treated as a duplicate:
+When `kntnt_ad_attr_dedup_seconds` returns a non-zero value and the visitor has granted consent (`true`), the click handler checks the `_ad_clicks` cookie for an existing entry for the same hash. The click is treated as a duplicate when the elapsed time since the stored timestamp is less than the dedup window **and** a click row exists with the same hash and a `clicked_at` equal to the entry's timestamp (the same exact match the conversion lookup uses). Then:
 
-- The cookie timestamp is refreshed (keeping the hash alive).
+- The cookie is sent again with the entry's **original** timestamp. This refreshes the cookie's expiry without moving the entry away from its click row.
 - The visitor is redirected to the target URL.
 - No click record is inserted, no click IDs are captured, no postmeta is populated, and no `kntnt_ad_attr_click` action fires.
 
-This prevents inflated click counts from repeated visits (e.g. page refreshes, back-button navigation).
+This prevents inflated click counts from repeated visits (e.g. page refreshes, back-button navigation). Because the timestamp is never rewritten, the dedup window is measured from the original click: a re-click after the window has passed is recorded as a new click.
+
+**Invariant:** every `_ad_clicks` entry the plugin writes points at an existing click row with the same hash and a `clicked_at` equal to the entry's timestamp. Conversions are linked to clicks by that exact match (see `conversion-handling.md`).
+
+**Self-healing:** if the entry is within the window but no click row matches it, the request is not a duplicate. It is handled as a new click: a click row is inserted and the entry is set to that row's timestamp. This repairs cookies written by versions before 1.10.0, which rewrote the timestamp on duplicates.
 
 When consent is `false` or `null`, the cookie cannot be read, so dedup is impossible — the click is always recorded. This matches the consent-scenarios specification (Cases 7–16).
 
@@ -144,29 +148,31 @@ When no callback is registered, the default `null` (undetermined) activates the 
 
 **Consent = no:** Redirect to target URL. No cookie. Attribution is lost. Accepted.
 
-**Consent = undefined:** Redirect to target URL, but pass the hash via the transport mechanism (see below) so the client-side script can set the cookie if/when the visitor consents.
+**Consent = undefined:** Redirect to target URL, but pass the click (hash and click timestamp) via the transport mechanism (see below) so the client-side script can set the cookie if/when the visitor consents.
 
 The click is logged in the database **always** regardless of consent. Click counting per hash is aggregated statistics and does not constitute personal data processing. It is the cookie that links the click to an individual.
 
 ## Transport Mechanism for Undefined Consent
 
-When consent is undefined, the hash needs to be transferred to the target URL. The mechanism is controlled by the filter `kntnt_ad_attr_pending_transport`.
+When consent is undefined, the click needs to be transferred to the target URL. The transport carries it as a `<hash>:<timestamp>` pair (the same syntax as one `_ad_clicks` entry), where the timestamp is the `clicked_at` of the click row just inserted, as a Unix timestamp. Once consent is granted, the set-cookie endpoint writes an `_ad_clicks` entry only if a click row with exactly that hash and `clicked_at` exists, so the entry points at the visitor's own click and not at a later click on the same tracking URL by someone else (see [rest-api.md](rest-api.md#set-cookie)). The mechanism is controlled by the filter `kntnt_ad_attr_pending_transport`.
 
 **`'cookie'`** (default) — the server sets a temporary cookie in the redirect response:
 
 ```
-Set-Cookie: _aah_pending=<hash>; Path=/; Max-Age=60; Secure; SameSite=Lax
+Set-Cookie: _aah_pending=<hash>%3A<timestamp>; Path=/; Max-Age=60; Secure; SameSite=Lax
 ```
 
-The cookie is *not* HttpOnly (the script must be able to read it). It lives for a maximum of 60 seconds and contains no personal data — it is a technical transport mechanism.
+PHP's `setcookie()` URL-encodes the `:` as `%3A`; the client-side script decodes the value. The cookie is *not* HttpOnly (the script must be able to read it). It lives for a maximum of 60 seconds and contains no personal data — it is a technical transport mechanism.
 
-**`'fragment'`** — the server appends the hash as a URL fragment:
+**`'fragment'`** — the server appends the pair as a URL fragment:
 
 ```
-Location: https://example.com/landing-page#_aah=<hash>
+Location: https://example.com/landing-page#_aah=<hash>:<timestamp>
 ```
 
-The script reads the fragment, stores the hash in `sessionStorage`, and clears the fragment with `history.replaceState`.
+The script reads the fragment, stores the pair in `sessionStorage`, and clears the fragment with `history.replaceState`.
+
+`Click_Handler::handle_pending_consent()` and `Cookie_Manager::set_transport_cookie()` take the timestamp as an explicit argument, so the transport can refer to any recorded click, not only the row inserted by the current request.
 
 ## Redirect Methods
 
