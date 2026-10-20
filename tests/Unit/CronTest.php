@@ -79,7 +79,7 @@ describe('Cron::run_daily_cleanup()', function () {
         Functions\expect('get_posts')->once()->andReturn([]);
 
         // Adapter cleanup.
-        $cis->shouldReceive('cleanup')->once()->with(120);
+        $cis->shouldReceive('delete_orphans')->once()->andReturn(0);
         $queue->shouldReceive('cleanup')->once()->with(30, 90);
 
         $cron->run_daily_cleanup();
@@ -87,7 +87,7 @@ describe('Cron::run_daily_cleanup()', function () {
         expect(true)->toBeTrue();
     });
 
-    it('calls Click_ID_Store::cleanup(120) and Queue::cleanup(30, 90)', function () {
+    it('deletes the click IDs of deleted clicks after the clicks, and cleans the queue', function () {
         [$cron, $cis, $queue] = make_cron();
 
         $wpdb = TestFactory::wpdb();
@@ -96,16 +96,31 @@ describe('Cron::run_daily_cleanup()', function () {
         Functions\when('time')->justReturn(1700000000);
         Functions\when('gmdate')->justReturn('2024-01-01 00:00:00');
 
-        $wpdb->shouldReceive('prepare')->andReturn('SQL');
-        $wpdb->shouldReceive('query')->andReturn(0);
+        // Record the order of deletions: click rows go through $wpdb, click
+        // IDs through the store.
+        $calls = [];
+        $wpdb->shouldReceive('prepare')->andReturnUsing(fn ($sql) => $sql);
+        $wpdb->shouldReceive('query')->andReturnUsing(function ($sql) use (&$calls) {
+            if (preg_match('/DELETE\s+(c\s+)?FROM\s+wp_kntnt_ad_attr_clicks\b/', $sql)) {
+                $calls[] = 'clicks';
+            }
+            return 0;
+        });
         Functions\expect('get_posts')->once()->andReturn([]);
 
-        $cis->shouldReceive('cleanup')->once()->with(120);
+        // There is no age-based click ID cleanup any more: click IDs live
+        // exactly as long as their click row.
+        $cis->shouldNotReceive('cleanup');
+        $cis->shouldReceive('delete_orphans')->once()->andReturnUsing(function () use (&$calls) {
+            $calls[] = 'click_ids';
+            return 0;
+        });
         $queue->shouldReceive('cleanup')->once()->with(30, 90);
 
         $cron->run_daily_cleanup();
 
-        expect(true)->toBeTrue();
+        // Both click deletions (expired and orphaned) precede the sweep.
+        expect($calls)->toBe(['clicks', 'clicks', 'click_ids']);
     });
 
     it('logs when expired clicks are deleted', function () {
@@ -131,7 +146,7 @@ describe('Cron::run_daily_cleanup()', function () {
 
         Functions\expect('get_posts')->once()->andReturn([]);
 
-        $cis->shouldReceive('cleanup')->once();
+        $cis->shouldReceive('delete_orphans')->once()->andReturn(0);
         $queue->shouldReceive('cleanup')->once();
 
         $cron->run_daily_cleanup();
@@ -177,7 +192,7 @@ describe('Cron::run_daily_cleanup()', function () {
             ->once()
             ->with('kntnt_ad_attr_orphaned_urls', ['Orphaned URL'], DAY_IN_SECONDS);
 
-        $cis->shouldReceive('cleanup')->once();
+        $cis->shouldReceive('delete_orphans')->once()->andReturn(0);
         $queue->shouldReceive('cleanup')->once();
 
         $cron->run_daily_cleanup();
@@ -217,7 +232,7 @@ describe('Cron::run_daily_cleanup()', function () {
         Functions\expect('set_transient')->once()
             ->with('kntnt_ad_attr_orphaned_urls', ['Draft Target URL'], DAY_IN_SECONDS);
 
-        $cis->shouldReceive('cleanup')->once();
+        $cis->shouldReceive('delete_orphans')->once()->andReturn(0);
         $queue->shouldReceive('cleanup')->once();
 
         $cron->run_daily_cleanup();
@@ -252,7 +267,7 @@ describe('Cron::run_daily_cleanup()', function () {
         Functions\expect('wp_update_post')->never();
         Functions\expect('set_transient')->never();
 
-        $cis->shouldReceive('cleanup')->once();
+        $cis->shouldReceive('delete_orphans')->once()->andReturn(0);
         $queue->shouldReceive('cleanup')->once();
 
         $cron->run_daily_cleanup();

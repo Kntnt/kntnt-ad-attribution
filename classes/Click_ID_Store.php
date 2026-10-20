@@ -4,7 +4,8 @@
  *
  * Stores, retrieves, and cleans up click IDs (e.g. gclid, fbclid, msclkid)
  * captured by registered adapters via the kntnt_ad_attr_click_id_capturers
- * filter. Each hash/platform combination has exactly one row.
+ * filter. Each click ID belongs to exactly one click row: one row per click
+ * and platform.
  *
  * @package Kntnt\Ad_Attribution
  * @since   1.2.0
@@ -19,72 +20,99 @@ namespace Kntnt\Ad_Attribution;
  *
  * Uses global $wpdb directly — no constructor dependencies.
  *
+ * Since 1.10.0 the table is keyed by `(click_id, platform)`, where
+ * `click_id` is the ID of the row in the clicks table (as in the
+ * conversions table) and `value` holds the platform's click ID.
+ *
  * @since 1.2.0
  */
 final class Click_ID_Store {
 
 	/**
-	 * Stores a click ID for a given hash and platform.
+	 * Table name without the WordPress prefix.
 	 *
-	 * Uses INSERT … ON DUPLICATE KEY UPDATE to upsert. If the same
-	 * hash/platform combination already exists, the click_id and
-	 * clicked_at are updated.
+	 * @var string
+	 * @since 1.10.0
+	 */
+	private const TABLE = 'kntnt_ad_attr_click_ids';
+
+	/**
+	 * Clicks table name without the WordPress prefix.
 	 *
-	 * @param string $hash     SHA-256 hash of the tracking URL.
+	 * @var string
+	 * @since 1.10.0
+	 */
+	private const CLICKS_TABLE = 'kntnt_ad_attr_clicks';
+
+	/**
+	 * Stores the click ID a platform attached to one recorded click.
+	 *
+	 * @param int    $click_id ID of the click row in the clicks table.
 	 * @param string $platform Platform identifier (e.g. 'google_ads').
-	 * @param string $click_id The platform-specific click ID value.
+	 * @param string $value    The platform-specific click ID value (e.g. a gclid).
 	 *
 	 * @return void
 	 * @since 1.2.0
+	 * @since 1.10.0 Takes the click row ID instead of the tracking URL hash.
 	 */
-	public function store( string $hash, string $platform, string $click_id ): void {
+	public function store( int $click_id, string $platform, string $value ): void {
 		global $wpdb;
 
-		$table = $wpdb->prefix . 'kntnt_ad_attr_click_ids';
-		$now   = gmdate( 'Y-m-d H:i:s' );
-
-		$wpdb->query( $wpdb->prepare(
-			"INSERT INTO {$table} (hash, platform, click_id, clicked_at)
-			 VALUES (%s, %s, %s, %s)
-			 ON DUPLICATE KEY UPDATE click_id = %s, clicked_at = %s",
-			$hash,
-			$platform,
-			$click_id,
-			$now,
-			$click_id,
-			$now,
-		) );
+		$wpdb->insert(
+			$wpdb->prefix . self::TABLE,
+			[
+				'click_id' => $click_id,
+				'platform' => $platform,
+				'value'    => $value,
+			],
+			[ '%d', '%s', '%s' ],
+		);
 	}
 
 	/**
-	 * Retrieves click IDs with capture timestamps for a set of hashes.
+	 * Retrieves the click IDs captured on specific click rows.
 	 *
-	 * @param string[] $hashes SHA-256 hashes to look up.
+	 * Takes the click row each tracking URL was credited for and returns
+	 * the IDs captured on exactly those rows, keyed by hash. A click that
+	 * carried no ID for a platform yields no entry for that platform, and a
+	 * click that carried none at all yields no entry for its hash.
 	 *
-	 * @return array<string, array<string, array{id: string, captured_at: int}>> Hash => [ platform => structured data ].
-	 * @since 1.2.0
+	 * @param array<string, int> $linked_clicks Hash => ID of the attributed click row.
+	 *
+	 * @return array<string, array<string, array{id: string, captured_at: int}>> Hash => [ platform => [ 'id' => value, 'captured_at' => the click's clicked_at ] ].
+	 * @since 1.10.0
 	 */
-	public function get_for_hashes( array $hashes ): array {
+	public function get_for_clicks( array $linked_clicks ): array {
 		global $wpdb;
 
-		if ( empty( $hashes ) ) {
+		if ( empty( $linked_clicks ) ) {
 			return [];
 		}
 
-		$table        = $wpdb->prefix . 'kntnt_ad_attr_click_ids';
-		$placeholders = implode( ',', array_fill( 0, count( $hashes ), '%s' ) );
+		$table        = $wpdb->prefix . self::TABLE;
+		$clicks_table = $wpdb->prefix . self::CLICKS_TABLE;
+		$click_ids    = array_values( $linked_clicks );
+		$placeholders = implode( ',', array_fill( 0, count( $click_ids ), '%d' ) );
 
 		$rows = $wpdb->get_results( $wpdb->prepare(
-			"SELECT hash, platform, click_id, clicked_at
-			 FROM {$table}
-			 WHERE hash IN ({$placeholders})",
-			...$hashes,
+			"SELECT ci.click_id, ci.platform, ci.value, c.clicked_at
+			 FROM {$table} ci
+			 JOIN {$clicks_table} c ON c.id = ci.click_id
+			 WHERE ci.click_id IN ({$placeholders})",
+			...$click_ids,
 		) );
+
+		// A click row belongs to exactly one hash, so the map inverts safely.
+		$hash_by_click = array_flip( $linked_clicks );
 
 		$result = [];
 		foreach ( $rows as $row ) {
-			$result[ $row->hash ][ $row->platform ] = [
-				'id'          => $row->click_id,
+			$hash = $hash_by_click[ (int) $row->click_id ] ?? null;
+			if ( $hash === null ) {
+				continue;
+			}
+			$result[ $hash ][ $row->platform ] = [
+				'id'          => $row->value,
 				'captured_at' => strtotime( $row->clicked_at . ' UTC' ),
 			];
 		}
@@ -93,23 +121,79 @@ final class Click_ID_Store {
 	}
 
 	/**
-	 * Deletes click ID rows older than a given number of days.
+	 * Finds the earliest click on a tracking URL that carried a click ID value.
 	 *
-	 * @param int $days Rows with clicked_at older than this are removed.
+	 * Answers "has this click ID already been recorded for this tracking
+	 * URL?". The `(platform, value)` index narrows the click-ID rows to the
+	 * few that carry the value, and the join on the click row's primary key
+	 * keeps those on this tracking URL. The same value on another tracking
+	 * URL does not match.
 	 *
-	 * @return void
-	 * @since 1.2.0
+	 * @param string $hash     SHA-256 hash of the tracking URL.
+	 * @param string $platform Platform identifier (e.g. 'google_ads').
+	 * @param string $value    The platform-specific click ID value.
+	 *
+	 * @return array{click_id: int, clicked_at: int}|null The original click's row ID and Unix timestamp, or null if the value was never recorded for the hash.
+	 * @since 1.10.0
 	 */
-	public function cleanup( int $days ): void {
+	public function find_original_click( string $hash, string $platform, string $value ): ?array {
 		global $wpdb;
 
-		$table  = $wpdb->prefix . 'kntnt_ad_attr_click_ids';
-		$cutoff = gmdate( 'Y-m-d H:i:s', time() - ( $days * DAY_IN_SECONDS ) );
+		$table        = $wpdb->prefix . self::TABLE;
+		$clicks_table = $wpdb->prefix . self::CLICKS_TABLE;
 
-		$wpdb->query( $wpdb->prepare(
-			"DELETE FROM {$table} WHERE clicked_at < %s",
-			$cutoff,
+		$row = $wpdb->get_row( $wpdb->prepare(
+			"SELECT c.id, c.clicked_at
+			 FROM {$table} ci
+			 JOIN {$clicks_table} c ON c.id = ci.click_id
+			 WHERE c.hash = %s AND ci.platform = %s AND ci.value = %s
+			 ORDER BY c.clicked_at ASC, c.id ASC
+			 LIMIT 1",
+			$hash,
+			$platform,
+			$value,
 		) );
+
+		if ( ! $row ) {
+			return null;
+		}
+
+		return [
+			'click_id'   => (int) $row->id,
+			'clicked_at' => strtotime( $row->clicked_at . ' UTC' ),
+		];
+	}
+
+	/**
+	 * Deletes click IDs whose click row no longer exists.
+	 *
+	 * Click IDs live exactly as long as their click row. The daily cleanup
+	 * calls this after deleting expired and orphaned clicks, so the IDs of
+	 * every click deleted there go with them. It also catches IDs left by
+	 * any other path that deletes click rows.
+	 *
+	 * Uses a correlated NOT EXISTS rather than a multi-table
+	 * `DELETE … LEFT JOIN`: both work in MySQL, but the SQLite translator
+	 * used by WordPress Playground silently deletes nothing for the latter.
+	 *
+	 * @return int Number of click-ID rows deleted.
+	 * @since 1.10.0
+	 */
+	public function delete_orphans(): int {
+		global $wpdb;
+
+		$table        = $wpdb->prefix . self::TABLE;
+		$clicks_table = $wpdb->prefix . self::CLICKS_TABLE;
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		$deleted = $wpdb->query(
+			"DELETE FROM {$table}
+			 WHERE NOT EXISTS (
+			     SELECT 1 FROM {$clicks_table} c WHERE c.id = {$table}.click_id
+			 )",
+		);
+
+		return (int) $deleted;
 	}
 
 }

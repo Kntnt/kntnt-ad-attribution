@@ -107,6 +107,54 @@ set_consent_state() {
         -d "{\"option\":\"test_consent_state\",\"value\":\"$state\"}" > /dev/null
 }
 
+# Set a WordPress option to a string value (sanitize_text_field applies).
+# Usage: set_option <option_name> <value>
+set_option() {
+    local option="$1" value="$2"
+    curl -sf "${WP_BASE_URL}/?rest_route=/kntnt-ad-attribution/v1/test-set-option" \
+        -X POST \
+        -H "Content-Type: application/json" \
+        -H "X-WP-Nonce: ${WP_NONCE}" \
+        -b "${ADMIN_COOKIE}" \
+        -d "$(jq -n --arg option "$option" --arg value "$value" '{option: $option, value: $value}')" > /dev/null
+}
+
+# Register probe click-ID capturers (see test-helpers.php).
+# Usage: set_probe_capturers "google_ads=gclid[,meta=fbclid]"  ("" removes them)
+set_probe_capturers() {
+    set_option "test_probe_capturers" "$1"
+}
+
+# Switch the probe conversion reporter (see test-helpers.php).
+# Usage: set_probe_reporter on|supports_test|off
+set_probe_reporter() {
+    local mode="$1"
+    [[ "$mode" == "off" ]] && mode=""
+    set_option "test_probe_reporter" "$mode"
+}
+
+# Print everything the probe reporter's enqueue received, as a JSON array
+# with one {attributions, click_ids, campaigns, context} object per call.
+# Usage: get_probe_calls
+get_probe_calls() {
+    get_option "test_probe_calls" | jq -c '.value | if type == "array" then . else [] end'
+}
+
+# Forget the probe reporter's recorded calls.
+# Usage: reset_probe_calls
+reset_probe_calls() {
+    set_option "test_probe_calls" ""
+}
+
+# Switch off the probe capturers and reporter and forget recorded calls.
+# Call at the end of every suite that uses them.
+# Usage: reset_probes
+reset_probes() {
+    set_probe_capturers ""
+    set_probe_reporter "off"
+    reset_probe_calls
+}
+
 # Query a single row from the database.
 # Usage: query_db "SELECT ..."
 # Returns: JSON object

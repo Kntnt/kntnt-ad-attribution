@@ -259,10 +259,11 @@ final class Conversion_Handler {
 		$reporters = apply_filters( 'kntnt_ad_attr_conversion_reporters', [] );
 		if ( ! empty( $reporters ) ) {
 
-			// Look up click IDs and campaign data for recorded hashes only.
-			$hashes    = array_keys( $recorded );
-			$click_ids = $this->click_id_store->get_for_hashes( $hashes );
-			$campaigns = $this->get_campaign_data( $hashes );
+			// Report what the credited click carried: its click IDs and
+			// per-click fields, not those of the latest click on the hash,
+			// which may belong to another visitor.
+			$click_ids = $this->click_id_store->get_for_clicks( $linked_clicks );
+			$campaigns = $this->get_campaign_data( $linked_clicks );
 
 			$context = [
 				'timestamp'  => gmdate( 'c' ),
@@ -317,23 +318,26 @@ final class Conversion_Handler {
 	}
 
 	/**
-	 * Retrieves campaign data (UTM parameters) for an array of hashes.
+	 * Retrieves campaign data (UTM parameters) for the attributed clicks.
 	 *
-	 * Source/Medium/Campaign are fetched from postmeta. Content/Term/Id/Group
-	 * are fetched from the clicks table based on the cookie timestamps.
+	 * Source/Medium/Campaign are fixed per tracking URL and fetched from
+	 * postmeta. Content/Term/Id/Group vary per click and are fetched from
+	 * the click row each hash was credited for.
 	 *
-	 * @param string[] $hashes SHA-256 hashes.
+	 * @param array<string, int> $linked_clicks Hash => ID of the attributed click row.
 	 *
 	 * @return array<string, array> Hash => ['utm_source' => ..., 'utm_medium' => ..., ...].
 	 * @since 1.2.0
+	 * @since 1.10.0 Takes the attributed click rows instead of hashes.
 	 */
-	private function get_campaign_data( array $hashes ): array {
+	private function get_campaign_data( array $linked_clicks ): array {
 		global $wpdb;
 
-		if ( empty( $hashes ) ) {
+		if ( empty( $linked_clicks ) ) {
 			return [];
 		}
 
+		$hashes       = array_keys( $linked_clicks );
 		$placeholders = implode( ',', array_fill( 0, count( $hashes ), '%s' ) );
 
 		// Fetch Source/Medium/Campaign from postmeta.
@@ -358,22 +362,19 @@ final class Conversion_Handler {
 			$result[ $row->hash ][ $key ] = $row->meta_value;
 		}
 
-		// Fetch Content/Term/Id/Group from the clicks table.
-		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
+		// Fetch Content/Term/Id/Group from the attributed click rows.
+		$clicks_table    = $wpdb->prefix . 'kntnt_ad_attr_clicks';
+		$click_row_ids   = array_values( $linked_clicks );
+		$id_placeholders = implode( ',', array_fill( 0, count( $click_row_ids ), '%d' ) );
 
 		$click_rows = $wpdb->get_results( $wpdb->prepare(
 			"SELECT hash, utm_content, utm_term, utm_id, utm_source_platform
 			 FROM {$clicks_table}
-			 WHERE hash IN ({$placeholders})
-			 ORDER BY clicked_at DESC",
-			...$hashes,
+			 WHERE id IN ({$id_placeholders})",
+			...$click_row_ids,
 		) );
 
-		// Use the most recent click's per-click fields for each hash.
 		foreach ( $click_rows as $row ) {
-			if ( isset( $result[ $row->hash ]['utm_content'] ) ) {
-				continue;
-			}
 			$result[ $row->hash ]['utm_content']         = $row->utm_content ?? '';
 			$result[ $row->hash ]['utm_term']            = $row->utm_term ?? '';
 			$result[ $row->hash ]['utm_id']              = $row->utm_id ?? '';

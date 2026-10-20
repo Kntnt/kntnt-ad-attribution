@@ -78,8 +78,9 @@ final class Cron {
 	/**
 	 * Cron callback for daily housekeeping.
 	 *
-	 * Removes expired clicks, orphaned conversions/clicks, and drafts
-	 * tracking URLs whose target pages no longer exist.
+	 * Removes expired clicks, orphaned conversions/clicks and the click IDs
+	 * of deleted clicks, drafts tracking URLs whose target pages no longer
+	 * exist, and prunes finished queue jobs.
 	 *
 	 * @return void
 	 * @since 1.0.0
@@ -90,8 +91,12 @@ final class Cron {
 		$this->delete_orphaned_clicks();
 		$this->draft_orphaned_urls();
 
-		// Clean up adapter infrastructure tables.
-		$this->click_id_store->cleanup( 120 );
+		// Click IDs live exactly as long as their click row, so delete the
+		// IDs of every click removed above (and any other orphans).
+		$deleted = $this->click_id_store->delete_orphans();
+		if ( $deleted > 0 ) {
+			$this->logger?->info( 'CORE', sprintf( 'Deleted %d click ID(s) of deleted clicks.', $deleted ) );
+		}
 
 		$done_days   = (int) apply_filters( 'kntnt_ad_attr_queue_done_retention_days', 30 );
 		$failed_days = (int) apply_filters( 'kntnt_ad_attr_queue_failed_retention_days', 90 );
