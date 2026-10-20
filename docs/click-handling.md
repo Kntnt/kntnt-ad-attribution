@@ -16,7 +16,7 @@ The click handler is registered on `template_redirect` — the conventional hook
 8. Redirect loop guard: verify that target URL does not start with /<prefix>/
 9. Bot check: if is_bot() → redirect without logging or setting cookie
 10. Check consent
-10b. Click deduplication: if consent=true and dedup_seconds>0 and hash in cookie within window → refresh cookie, redirect (skip insert)
+10b. Click deduplication: if consent=true and dedup_seconds>0 and hash in cookie within window and a click row matches the entry → re-send cookie with the original timestamp, redirect (skip insert)
 11. Extract per-click UTM fields (Content, Term, Id, Group) from incoming parameters
 11b. Insert click record into kntnt_ad_attr_clicks table
 11c. Capture platform-specific click IDs via registered kntnt_ad_attr_click_id_capturers filter
@@ -28,13 +28,17 @@ The click handler is registered on `template_redirect` — the conventional hook
 
 ## Click Deduplication
 
-When `kntnt_ad_attr_dedup_seconds` returns a non-zero value and the visitor has granted consent (`true`), the click handler checks the `_ad_clicks` cookie for an existing entry for the same hash. If the hash exists and the elapsed time since the stored timestamp is less than the dedup window, the click is treated as a duplicate:
+When `kntnt_ad_attr_dedup_seconds` returns a non-zero value and the visitor has granted consent (`true`), the click handler checks the `_ad_clicks` cookie for an existing entry for the same hash. The click is treated as a duplicate when the elapsed time since the stored timestamp is less than the dedup window **and** a click row exists with the same hash and a `clicked_at` equal to the entry's timestamp (the same exact match the conversion lookup uses). Then:
 
-- The cookie timestamp is refreshed (keeping the hash alive).
+- The cookie is sent again with the entry's **original** timestamp. This refreshes the cookie's expiry without moving the entry away from its click row.
 - The visitor is redirected to the target URL.
 - No click record is inserted, no click IDs are captured, no postmeta is populated, and no `kntnt_ad_attr_click` action fires.
 
-This prevents inflated click counts from repeated visits (e.g. page refreshes, back-button navigation).
+This prevents inflated click counts from repeated visits (e.g. page refreshes, back-button navigation). Because the timestamp is never rewritten, the dedup window is measured from the original click: a re-click after the window has passed is recorded as a new click.
+
+**Invariant:** every `_ad_clicks` entry the plugin writes points at an existing click row with the same hash and a `clicked_at` equal to the entry's timestamp. Conversions are linked to clicks by that exact match (see `conversion-handling.md`).
+
+**Self-healing:** if the entry is within the window but no click row matches it, the request is not a duplicate. It is handled as a new click: a click row is inserted and the entry is set to that row's timestamp. This repairs cookies written by versions before 1.10.0, which rewrote the timestamp on duplicates.
 
 When consent is `false` or `null`, the cookie cannot be read, so dedup is impossible — the click is always recorded. This matches the consent-scenarios specification (Cases 7–16).
 
@@ -178,7 +182,7 @@ wp_redirect( $target_url, 302 );
 exit;
 ```
 
-**`'js'`** — JavaScript redirect via `window.location.href`. Relevant for ITP mitigation. Serves a minimal 200 page that redirects via JavaScript.
+**`'js'`** — JavaScript redirect via `window.location.href`. Serves a minimal 200 page that redirects via JavaScript, so that client-side scripts (for example consent managers) can run before the page navigates away.
 
 All redirect responses shall include `nocache_headers()` to prevent caching.
 

@@ -16,11 +16,12 @@ Conversions are triggered via the action hook `kntnt_ad_attr_conversion` from th
    b. Remove hashes whose last conversion is within the dedup window
    c. If no hashes remain → exit
 6. Apply attribution model (default: last-click) via kntnt_ad_attr_attribution filter
-7. Look up click records and write conversion rows to the database (in a transaction)
-8. Write per-hash dedup cookie (only when dedup is enabled and hashes were attributed)
-9. Trigger kntnt_ad_attr_conversion_recorded with attributions and context (timestamp, IP, user-agent)
-10. Look up click IDs and campaign data for attributed hashes
-11. Call registered reporters' enqueue callbacks, insert payloads into queue
+7. Look up click records and write conversion rows to the database (in a transaction). The hashes that got a row, each with the weight written, are the recorded attributions.
+7b. If no conversion row was written → exit (no dedup cookie, no recorded action, no reporters)
+8. Write per-hash dedup cookie for the recorded hashes (only when dedup is enabled)
+9. Trigger kntnt_ad_attr_conversion_recorded with the recorded attributions and context (timestamp, IP, user-agent)
+10. Look up click IDs and campaign data for the recorded hashes
+11. Call registered reporters' enqueue callbacks with the recorded attributions, insert payloads into queue
 12. Schedule queue processing
 ```
 
@@ -38,7 +39,7 @@ $dedup_seconds = min( $dedup_seconds, $lifetime * DAY_IN_SECONDS );
 
 When `$dedup_seconds` is 0 (default), the `_ad_last_conv` cookie is neither read nor written, and all conversions are recorded regardless of previous conversions for the same hash.
 
-When `$dedup_seconds > 0`, after a successful conversion, the attributed hashes are merged into the `_ad_last_conv` cookie with the current timestamp. On the next conversion, hashes whose `_ad_last_conv` timestamp is within the dedup window are skipped.
+When `$dedup_seconds > 0`, after a successful conversion, the recorded hashes are merged into the `_ad_last_conv` cookie with the current timestamp. On the next conversion, hashes whose `_ad_last_conv` timestamp is within the dedup window are skipped.
 
 ## Attribution Logic
 
@@ -56,10 +57,14 @@ The `kntnt_ad_attr_attribution` filter receives `$attributions` (hash => fractio
 
 ## Database Write
 
-The handler looks up click records matching the cookie timestamps, then inserts conversion rows. The write is wrapped in a transaction:
+The handler looks up the click record whose hash and `clicked_at` exactly match each cookie entry, then inserts conversion rows. The write is wrapped in a transaction.
+
+The match is exact on purpose, with no fallback to the nearest earlier click row: the clicks table is shared by everyone who clicks the tracking URL, so the nearest earlier row is often another visitor's click. The click handler keeps the matching row in place by never writing an `_ad_clicks` entry without one (see [Click Deduplication](click-handling.md#click-deduplication)). If an entry still has no matching row, for example a cookie written by a version before 1.10.0, that hash is skipped and one warning is written through `Logger` (prefix `CORE`) with the first eight characters of the hash and the entry's timestamp. The IP address and user agent are not logged.
 
 ```php
 $wpdb->query( 'START TRANSACTION' );
+
+$linked_clicks = [];
 
 foreach ( $attributions as $hash => $value ) {
     if ( $value <= 0 ) {
@@ -73,6 +78,12 @@ foreach ( $attributions as $hash => $value ) {
     ) );
 
     if ( ! $click_id ) {
+        $this->logger?->warning( 'CORE', sprintf(
+            'Conversion not recorded for hash %s...: no click row matches cookie timestamp %d (%s UTC).',
+            substr( $hash, 0, 8 ),
+            $valid_entries[ $hash ],
+            gmdate( 'Y-m-d H:i:s', $valid_entries[ $hash ] ),
+        ) );
         continue;
     }
 
@@ -87,19 +98,32 @@ foreach ( $attributions as $hash => $value ) {
         error_log( '[Kntnt Ad Attribution] Conversion write failed, rolled back.' );
         return;
     }
+
+    $linked_clicks[ $hash ] = (int) $click_id;
 }
 
 $wpdb->query( 'COMMIT' );
+
+$recorded = array_intersect_key( $attributions, $linked_clicks );
+if ( $recorded === [] ) {
+    return;
+}
 ```
+
+## Recorded Attributions
+
+A hash gets a conversion row only when its weight is above 0 and a click row matches its cookie timestamp. `$linked_clicks` maps each such hash to the ID of the click row its conversion row links to. `$recorded` holds the same hashes with the weight written.
+
+Everything after the write uses `$recorded`, not `$attributions`: the dedup cookie, the `kntnt_ad_attr_conversion_recorded` action, and the reporters' `enqueue` callbacks with their click ID and campaign lookups. Weights pass on as written and are not renormalised. Under a multi-touch model they can therefore sum to less than 1.0 when a click row was missing. When no row was written, the handler returns before any of these steps.
 
 ## Conversion Reporting
 
 After the `kntnt_ad_attr_conversion_recorded` action fires, the handler checks for registered reporters via `apply_filters('kntnt_ad_attr_conversion_reporters', [])`. If reporters are registered:
 
-1. **Look up click IDs** — calls `Click_ID_Store::get_for_hashes()` to retrieve platform-specific click IDs for all attributed hashes. Returns structured arrays: `[ hash => [ platform => ['id' => string, 'captured_at' => int] ] ]`.
-2. **Look up campaign data** — calls `get_campaign_data()` to retrieve Source/Medium/Campaign from postmeta and Content/Term/Id/Group from the clicks table for all attributed hashes.
+1. **Look up click IDs** — calls `Click_ID_Store::get_for_hashes()` to retrieve platform-specific click IDs for the recorded hashes only. Returns structured arrays: `[ hash => [ platform => ['id' => string, 'captured_at' => int] ] ]`.
+2. **Look up campaign data** — calls `get_campaign_data()` to retrieve Source/Medium/Campaign from postmeta and Content/Term/Id/Group from the clicks table for the recorded hashes only.
 3. **Build context** — assembles timestamp, IP, user-agent, and page URL.
-4. **Call each reporter's `enqueue` callback** — passes `$attributions`, `$click_ids`, `$campaigns`, and `$context`. Each reporter returns an array of structured items (with `payload`, optional `label`, optional `retry_params`, and optional `not_before` keys) or raw payload arrays (legacy format).
+4. **Call each reporter's `enqueue` callback** — passes the recorded attributions, `$click_ids`, `$campaigns`, and `$context`. Each reporter returns an array of structured items (with `payload`, optional `label`, optional `retry_params`, and optional `not_before` keys) or raw payload arrays (legacy format).
 5. **Enqueue items** — each item's payload is JSON-encoded and inserted into the `kntnt_ad_attr_queue` table with `status = 'pending'`, along with optional `label`, per-job retry parameters, and optional `not_before` timestamp for deferred processing.
 6. **Schedule processing** — calls `Queue_Processor::schedule()` to trigger a cron event.
 

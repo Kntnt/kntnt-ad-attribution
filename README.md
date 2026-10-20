@@ -33,7 +33,7 @@ The plugin does not hardcode integrations with any specific consent management o
 - **Three-state consent model** — integrates with any cookie consent plugin via a filter hook, supporting yes, no, and undefined consent states with a transport mechanism for deferred consent.
 - **Platform-agnostic form support** — integrates with any form plugin via an action hook.
 - **Bot detection** — filters out known bots via User-Agent matching and `robots.txt` rules.
-- **Two redirect methods** — 302 redirect (default) or JavaScript redirect via filter, providing flexibility for different ITP mitigation strategies.
+- **Two redirect methods** — 302 redirect (default) or, via filter, a JavaScript redirect that serves a minimal page and navigates with JavaScript, so that client-side scripts such as consent managers can run first.
 - **Companion plugin hooks** — fires `kntnt_ad_attr_click` on every non-bot click with hash, target URL, campaign data, and access to URL parameters (gclid, fbclid, etc.). Companion plugins can capture platform-specific data and implement server-side API integrations without modifying the core plugin.
 - **Query parameter forwarding** — ad platform parameters (gclid, fbclid, msclkid, etc.) appended to the tracking URL are automatically forwarded to the target page through the redirect. Target URL parameters take precedence, and the merged set is filterable.
 - **Adapter infrastructure for add-ons** — a built-in adapter system lets add-on plugins or code snippets register click-ID capturers (for `gclid`, `fbclid`, `msclkid`, etc.) and conversion reporters (for Google Ads, Meta, Matomo, GA4, etc.). The core captures click IDs and processes a report queue; adapters define what to capture and where to report. If no adapters are registered, the plugin behaves identically to previous versions.
@@ -45,7 +45,7 @@ Ad platforms tell you how many clicks an ad received, but not how many of those 
 **It is increasingly unreliable:**
 
 - **Ad blockers** prevent the tracking script from loading at all.
-- **Safari's Intelligent Tracking Prevention (ITP)** limits the lifetime of cookies set in a cross-site context, causing conversions to go unrecorded if the visitor returns after a few days.
+- **Safari's Intelligent Tracking Prevention (ITP)** deletes cookies and other storage created by JavaScript after 7 days without user interaction, and caps such cookies to 24 hours when the visitor arrives through a link with tracking parameters from a domain ITP classifies as a tracker (as of October 2026, per [WebKit's tracking prevention documentation](https://webkit.org/tracking-prevention/)). Client-side tags store their data this way, so conversions go unrecorded if the visitor returns later.
 - **Privacy-focused browsers** (Firefox Strict Mode, Brave, etc.) strip or block tracking parameters like `gclid` before they reach your server.
 
 **It raises privacy concerns:**
@@ -67,13 +67,13 @@ Kntnt Ad Attribution solves both problems. It moves the tracking to the server s
 2. When a visitor clicks the ad, your server — not a JavaScript tag — records the click and stores the ad hash in a first-party cookie.
 3. When the visitor later submits a lead form, the server reads the cookie and attributes the conversion.
 
-Because the click recording and attribution happen on your server, they are immune to ad blockers and JavaScript-blocking browser features. The cookie is a standard first-party HTTP cookie set by your own domain, which makes it more resilient than third-party or JavaScript-set cookies (though Safari's ITP may still limit its lifetime — see [Limitations](#limitations)).
+Because the click recording and attribution happen on your server, they are immune to ad blockers and JavaScript-blocking browser features. The cookie is a standard first-party HTTP cookie set by your own domain, which makes it more resilient than third-party or JavaScript-set cookies.
 
 Unlike Enhanced Conversions and similar features, the plugin never sends personal data — hashed or otherwise — to any external server. No email addresses, no phone numbers, no names. The only data stored is a list of opaque hashes in a cookie on the visitor's browser and aggregated click/conversion counts in your WordPress database. This means there is no third-country transfer issue and no dependency on the EU-US Data Privacy Framework or any other international data transfer mechanism.
 
 ### Limitations
 
-- **ITP still applies.** Safari may cap the cookie lifetime to 7 days when the visitor arrives from a classified tracking domain (such as Google). Conversions after that window are lost. A JavaScript redirect method (configurable via filter) may improve this in some cases, but there are no guarantees.
+- **Attribution requires consent.** The click is always counted, but the `_ad_clicks` cookie is set only once the visitor consents. Without consent, a later conversion cannot be attributed to the ad. See [Privacy and GDPR](#privacy-and-gdpr).
 - **No built-in feedback to ad platforms.** The core plugin provides internal statistics only and does not include integrations with any external API. However, the adapter system allows add-on plugins to register click-ID capturers and conversion reporters for any ad platform or analytics tool. See [Adapter System](#adapter-system) for details.
 - **Cookies can be cleared.** If the visitor clears their cookies or uses a private/incognito window for the return visit, the attribution link is broken.
 - **Cross-device tracking is not supported.** A visitor who clicks an ad on their phone but converts on their laptop will not be attributed.
@@ -238,7 +238,7 @@ The plugin is designed to keep all data on your own server — no personal data 
 
 **What happens with Safari's Intelligent Tracking Prevention (ITP)?**
 
-Safari's ITP may limit the cookie lifetime to 7 days (or less) when the visitor arrives from a classified cross-site source such as a Google Ads click. This means conversions that happen more than 7 days after the ad click may not be attributed on Safari/iOS. A JavaScript redirect method is available as a filter option that may improve this in some cases, but there are no guarantees.
+As of October 2026, [WebKit's tracking prevention documentation](https://webkit.org/tracking-prevention/) applies ITP's 7-day and 24-hour caps to cookies created in JavaScript. The `_ad_clicks` cookie is not created in JavaScript: your own server always sets it in an HTTP response, with the `HttpOnly` flag, in the click response, whichever redirect method is used, or in the REST response after deferred consent. WebKit caps cookies set in HTTP responses only in the third-party CNAME and IP-address cloaking cases it lists. Browser behavior changes, so check WebKit's page for the current rules. The limitations that do apply are listed under [Limitations](#limitations).
 
 **What if a visitor clicks more than 50 ads?**
 
@@ -417,7 +417,7 @@ add_filter( 'kntnt_ad_attr_has_consent', function (): ?bool {
 Controls the redirect method used after an ad click. Default: `'302'`.
 
 ```php
-// Switch to JavaScript redirect for better ITP handling
+// Redirect via a minimal JavaScript page so client-side scripts can run first
 add_filter( 'kntnt_ad_attr_redirect_method', function () {
     return 'js';
 } );
@@ -545,7 +545,7 @@ add_filter( 'kntnt_ad_attr_redirect_query_params', function ( array $merged, arr
 
 **`kntnt_ad_attr_attribution`**
 
-Filters the attribution weights for a conversion. Receives an associative array of hash => fractional value (default: 1.0 for the most recent click, 0.0 for all others) and an array of click data with timestamps. Must return an array where values sum to 1.0.
+Filters the attribution weights for a conversion. Receives an associative array of hash => fractional value (default: 1.0 for the most recent click, 0.0 for all others) and an array of click data with timestamps. Return weights that sum to 1.0. Only hashes with a weight above 0 and a matching click row are recorded, so the weights that `kntnt_ad_attr_conversion_recorded` and the reporters receive can sum to less.
 
 ```php
 // Example: time-weighted multi-click attribution.
@@ -679,13 +679,13 @@ do_action( 'kntnt_ad_attr_conversion' );
 
 **`kntnt_ad_attr_conversion_recorded`**
 
-Fires after a conversion has been successfully recorded. Receives the array of attributed hashes with their fractional values and a context array with metadata.
+Fires after a conversion has been successfully recorded, and only when at least one conversion row was written. Receives the recorded attributions and a context array with metadata.
 
 Parameters:
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `$attributions` | `array<string, float>` | Hash => fractional attribution value (sums to 1.0). |
+| `$attributions` | `array<string, float>` | Hash => fractional attribution value, for the recorded hashes only: each got a conversion row and has a weight above 0, passed as written. Not renormalised, so it can sum to less than 1.0 when a click row was missing. |
 | `$context` | `array` | Associative array with keys: `timestamp` (ISO 8601 UTC), `ip` (visitor IP), `user_agent` (visitor user-agent string). |
 
 ```php
@@ -716,7 +716,7 @@ The core handles sanitization, validation, and storage. Click IDs are stored in 
 
 A *conversion reporter* tells the core how to report a conversion to an external service. Each reporter defines two callbacks:
 
-- **`enqueue`** — called synchronously at conversion time. Receives attribution data, click IDs, campaign data, and context. Returns an array of structured items (with `payload`, optional `label`, optional `retry_params`, and optional `not_before` keys) to be queued for async processing.
+- **`enqueue`** — called synchronously at conversion time, only when at least one conversion row was written. Receives the recorded attributions, plus click IDs and campaign data for those hashes only, and context. Returns an array of structured items (with `payload`, optional `label`, optional `retry_params`, and optional `not_before` keys) to be queued for async processing.
 - **`process`** — called asynchronously by the queue processor. Receives a single payload and performs the actual API call. Returns `true` on success, `false` on failure.
 
 ```php
@@ -843,7 +843,7 @@ Requires `zip` and `msgfmt` (GNU gettext). With `--tag`: `git`. With `--update` 
 10. `Queue(Settings)` — async job queue with configurable retry
 11. `Queue_Processor(Queue, Logger)` — queue job dispatcher
 12. `Click_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store)` — click processing & redirect
-13. `Conversion_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store, Queue, Queue_Processor)` — conversion attribution
+13. `Conversion_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store, Queue, Queue_Processor, Logger)` — conversion attribution
 14. `Cron(Click_ID_Store, Queue, Logger)` — scheduled cleanup tasks
 15. `Admin_Page(Queue, Queue_Processor, Settings, Logger)` — admin UI orchestration
 16. `Rest_Endpoint(Cookie_Manager, Consent)` — REST API routes
