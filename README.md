@@ -912,7 +912,7 @@ Requires `zip` and `msgfmt` (GNU gettext). With `--tag`: `git`. With `--update` 
 14. `Click_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store, Speculation_Detector, Logger)` — click processing & redirect
 15. `Conversion_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store, Queue, Queue_Processor, Logger)` — conversion attribution
 16. `Cron(Click_ID_Store, Queue, Logger)` — scheduled cleanup tasks
-17. `Admin_Page(Queue, Queue_Processor, Settings, Logger)` — admin UI orchestration
+17. `Admin_Page(Queue, Queue_Processor, Settings, Logger, Conversion_Store)` — admin UI orchestration; `Conversion_Store` holds the SQL of the conversion list's actions
 18. `Rest_Endpoint(Cookie_Manager, Consent)` — REST API routes
 19. `Settings_Page(Settings, Logger)` — settings page under Settings > Ad Attribution
 
@@ -957,6 +957,7 @@ kntnt-ad-attribution/
 │   ├── Utm_Options.php           ← Predefined UTM source/medium options (filterable)
 │   ├── Settings_Page.php         ← Settings page under Settings > Ad Attribution
 │   ├── Cron.php                  ← Daily cleanup job, target page warnings
+│   ├── Conversion_Store.php      ← SQL of the conversion list actions (count, delete, flag)
 │   ├── Click_Lookup.php          ← Exact (hash, clicked_at) click-row lookup
 │   ├── Job_Status.php            ← Queue job statuses (enum)
 │   ├── Request_Outcome.php       ← How a tracking URL request was counted (enum)

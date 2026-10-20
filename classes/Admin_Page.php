@@ -57,6 +57,14 @@ final class Admin_Page {
 	private readonly Logger $logger;
 
 	/**
+	 * Data access for the actions on recorded conversions.
+	 *
+	 * @var Conversion_Store
+	 * @since 1.10.0
+	 */
+	private readonly Conversion_Store $conversions;
+
+	/**
 	 * The hook suffix returned by add_management_page().
 	 *
 	 * Used for targeting admin_enqueue_scripts and load-{$hook_suffix}.
@@ -72,15 +80,18 @@ final class Admin_Page {
 	 * @param Queue           $queue           Async job queue for status display.
 	 * @param Queue_Processor $queue_processor Queue processor for single-job actions.
 	 * @param Settings        $settings        Plugin settings for logging config.
-	 * @param Logger          $logger          Logger for log file management.
+	 * @param Logger           $logger          Logger for log file management.
+	 * @param Conversion_Store $conversions     Data access for the conversion actions.
 	 *
 	 * @since 1.2.0
+	 * @since 1.10.0 Takes a Conversion_Store.
 	 */
-	public function __construct( Queue $queue, Queue_Processor $queue_processor, Settings $settings, Logger $logger ) {
+	public function __construct( Queue $queue, Queue_Processor $queue_processor, Settings $settings, Logger $logger, Conversion_Store $conversions ) {
 		$this->queue           = $queue;
 		$this->queue_processor = $queue_processor;
 		$this->settings        = $settings;
 		$this->logger          = $logger;
+		$this->conversions     = $conversions;
 	}
 
 	/**
@@ -746,13 +757,13 @@ final class Admin_Page {
 			// are the conversions Mark and Unmark affect. Mark must delete
 			// their unfinished jobs too, or a reporter without test support
 			// could still upload a conversion that is now a test.
-			$affected = $action === Conversion_Action::Delete ? $refs : $this->conversions_sharing_clicks( $refs );
-			$count    = $this->count_conversions( $affected );
+			$affected = $action === Conversion_Action::Delete ? $refs : $this->conversions->sharing_clicks( $refs );
+			$count    = $this->conversions->count( $affected );
 
 			match ( $action ) {
-				Conversion_Action::Delete         => $this->delete_conversions( $refs ),
-				Conversion_Action::Mark_As_Test   => $this->flag_conversions_as_test( $refs, true ),
-				Conversion_Action::Unmark_As_Test => $this->flag_conversions_as_test( $refs, false ),
+				Conversion_Action::Delete         => $this->conversions->delete( $refs ),
+				Conversion_Action::Mark_As_Test   => $this->conversions->flag_clicks_as_test( $refs, true ),
+				Conversion_Action::Unmark_As_Test => $this->conversions->flag_clicks_as_test( $refs, false ),
 			};
 
 			if ( $action !== Conversion_Action::Unmark_As_Test ) {
@@ -798,102 +809,6 @@ final class Admin_Page {
 		);
 
 		return array_values( array_unique( $valid ) );
-	}
-
-	/**
-	 * Counts how many of the given conversions exist.
-	 *
-	 * @param string[] $refs Conversion references.
-	 *
-	 * @return int Number of distinct conversions found.
-	 * @since 1.10.0
-	 */
-	private function count_conversions( array $refs ): int {
-		global $wpdb;
-
-		$conv_table   = Table::Conversions->prefixed();
-		$placeholders = implode( ',', array_fill( 0, count( $refs ), '%s' ) );
-
-		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-		return (int) $wpdb->get_var( $wpdb->prepare(
-			"SELECT COUNT(DISTINCT conversion_ref) FROM {$conv_table} WHERE conversion_ref IN ({$placeholders})",
-			...$refs,
-		) );
-	}
-
-	/**
-	 * Returns the conversions linked to any attributed click of the given conversions.
-	 *
-	 * The given conversions are included, as far as they exist.
-	 *
-	 * @param string[] $refs Conversion references.
-	 *
-	 * @return string[] References of the conversions sharing those clicks.
-	 * @since 1.10.0
-	 */
-	private function conversions_sharing_clicks( array $refs ): array {
-		global $wpdb;
-
-		$conv_table   = Table::Conversions->prefixed();
-		$placeholders = implode( ',', array_fill( 0, count( $refs ), '%s' ) );
-
-		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-		return $wpdb->get_col( $wpdb->prepare(
-			"SELECT DISTINCT conversion_ref FROM {$conv_table} WHERE click_id IN (SELECT click_id FROM {$conv_table} WHERE conversion_ref IN ({$placeholders}))",
-			...$refs,
-		) );
-	}
-
-	/**
-	 * Deletes the rows of the given conversions. Their clicks stay.
-	 *
-	 * @param string[] $refs Conversion references.
-	 *
-	 * @return void
-	 * @since 1.10.0
-	 */
-	private function delete_conversions( array $refs ): void {
-		global $wpdb;
-
-		$conv_table   = Table::Conversions->prefixed();
-		$placeholders = implode( ',', array_fill( 0, count( $refs ), '%s' ) );
-
-		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-		$wpdb->query( $wpdb->prepare(
-			"DELETE FROM {$conv_table} WHERE conversion_ref IN ({$placeholders})",
-			...$refs,
-		) );
-	}
-
-	/**
-	 * Sets or clears the test flag on the attributed clicks of the given conversions.
-	 *
-	 * The flag lives on the click row, and the main view excludes test
-	 * clicks together with their conversions (Campaign_List_Table), so
-	 * this also flags any other conversion linked to the same click.
-	 *
-	 * @param string[] $refs    Conversion references.
-	 * @param bool     $is_test True to mark as test, false to unmark.
-	 *
-	 * @return void
-	 * @since 1.10.0
-	 */
-	private function flag_conversions_as_test( array $refs, bool $is_test ): void {
-		global $wpdb;
-
-		$clicks_table = Table::Clicks->prefixed();
-		$conv_table   = Table::Conversions->prefixed();
-		$placeholders = implode( ',', array_fill( 0, count( $refs ), '%s' ) );
-
-		// A subquery rather than a multi-table UPDATE … JOIN, so the same
-		// statement runs in the SQLite translator used by WordPress
-		// Playground, where the integration tests exercise it.
-		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-		$wpdb->query( $wpdb->prepare(
-			"UPDATE {$clicks_table} SET is_test = %d WHERE id IN (SELECT click_id FROM {$conv_table} WHERE conversion_ref IN ({$placeholders}))",
-			$is_test ? 1 : 0,
-			...$refs,
-		) );
 	}
 
 	/**

@@ -260,6 +260,7 @@ Stateless data manipulation class. Tests cover:
 - **`set_clicks_cookie()`** — cookie name `_ad_clicks`, serialization format, attributes (path, httponly, secure, samesite), lifetime filter.
 - **`set_transport_cookie()`** — cookie name `_aah_pending`, not HttpOnly, 60-second lifetime, value is the `hash:timestamp` pair.
 - **`validate_hash()`** — valid 64-char lowercase hex, wrong lengths, uppercase, non-hex characters, empty string.
+- **`format_entry()` / `parse_entry()`** — one `hash:timestamp` entry formatted and parsed; a bare hash, uppercase hex, a short hash, an 11-digit timestamp and two entries are rejected.
 
 ---
 
@@ -290,6 +291,24 @@ Stateless data manipulation class. Tests cover:
 - **`detect()`** — the current user with `kntnt_ad_attr` (no cookie validation needed); a valid logged-in cookie of a user with the capability when WordPress has reset the current user to 0 (`wp_validate_auth_cookie( '', 'logged_in' )` + `user_can()`); no valid cookie; a logged-in user without the capability; previous filter short-circuit.
 - **`is_internal()`** — `false` by default, returns what `kntnt_ad_attr_is_internal` decides.
 - **`register()`** — hooks `detect()` into the filter.
+
+---
+
+#### Click_Lookup (`ClickLookupTest.php`)
+
+- **`find()`** — one query asking for every hash–timestamp pair by exact `hash` and `clicked_at`; returns each matching row's ID and test flag by hash and timestamp; ignores a row of the same hash at another time; the oldest row wins a tie; no query for no pairs. The handler and REST tests state which click rows exist through `TestFactory::clickRows()` / `everyClickRecorded()` (a Patchwork redefinition of `find()`), except `RestEndpointTest`, whose fake `$wpdb` answers the real query.
+
+---
+
+#### Conversion_Store (`ConversionStoreTest.php`)
+
+- **`count()`**, **`sharing_clicks()`**, **`delete()`**, **`flag_clicks_as_test()`** — the exact SQL and arguments: `COUNT(DISTINCT conversion_ref)`, the conversions on the same `click_id`s, `DELETE` on conversions only, `UPDATE clicks SET is_test = 1/0 WHERE id IN (SELECT click_id …)`; nothing is queried without references.
+
+---
+
+#### Table (`TableTest.php`)
+
+- **`prefixed()`** — every table name gets the site's table prefix.
 
 ---
 
@@ -411,7 +430,7 @@ The most complex class. Tests cover the full click flow:
 - **Nonce verification** — invalid/missing nonce rejected.
 - **Tab extensibility** — `kntnt_ad_attr_admin_tabs` filter, custom tab dispatch via action.
 - **SRI attributes** — integrity/crossorigin on Select2, other handles unchanged.
-- **Conversion actions** — `run_conversion_action()` drives `add_screen_options()` with a request in `$_GET`, a fake `$wpdb` and `wp_safe_redirect`/`wp_die` throwing, and records nonces checked, statements run, conversions passed to the queue and the redirect. Delete runs one `DELETE … conversion_ref IN (…)` on conversions only and cleans up the jobs; Mark/Unmark run one `UPDATE clicks SET is_test = 1/0 WHERE id IN (SELECT click_id …)`, and only Mark cleans up jobs; Mark cleans up, and Mark and Unmark count, every conversion on the flagged clicks (from a `get_col` of the conversions sharing those clicks); a bulk action checks `bulk-conversions` and drops malformed and duplicate references; every row and bulk action is refused, with nothing written, without a valid nonce or without `kntnt_ad_attr`.
+- **Conversion actions** — `run_conversion_action()` drives `add_screen_options()` with a request in `$_GET`, a `Conversion_Store` mock and `wp_safe_redirect`/`wp_die` throwing, and records nonces checked, the store writes asked for, conversions passed to the queue and the redirect. Delete deletes the selected conversions and cleans up their jobs; Mark/Unmark flag the selected conversions' clicks (`true`/`false`), and only Mark cleans up jobs; Mark cleans up, and Mark and Unmark count, every conversion on the flagged clicks (`Conversion_Store::sharing_clicks()`); a bulk action checks `bulk-conversions` and drops malformed and duplicate references; every row and bulk action is refused, with nothing written, without a valid nonce or without `kntnt_ad_attr`.
 - **Conversions section** — rendered on the main view; the notice reports conversions and deleted jobs, with a warning for processing jobs left alone.
 
 ---
