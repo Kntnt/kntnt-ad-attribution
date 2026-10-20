@@ -205,9 +205,10 @@ describe('Conversion_List_Table rendering', function () {
     it('offers Mark as test and Delete for an ordinary conversion, each with its own nonce', function () use ($load) {
         [$table, $item] = $load([conversion_row('ref-1')]);
 
-        $html = render_conversion_list($table, 'column_converted_at', $item);
+        expect(render_conversion_list($table, 'column_converted_at', $item))->toBe('2024-03-10 12:00');
 
-        expect($html)->toContain('2024-03-10 12:00');
+        $html = render_conversion_list($table, 'handle_row_actions', $item, 'converted_at', 'converted_at');
+
         expect($html)->toContain('action=conversion_mark_test&conversion=ref-1');
         expect($html)->toContain('_wpnonce=conversion_mark_test_ref-1');
         expect($html)->toContain('action=conversion_delete&conversion=ref-1');
@@ -219,11 +220,17 @@ describe('Conversion_List_Table rendering', function () {
     it('offers Unmark instead of Mark as test for a test conversion', function () use ($load) {
         [$table, $item] = $load([conversion_row('ref-1', ['is_test' => '1'])]);
 
-        $html = render_conversion_list($table, 'column_converted_at', $item);
+        $html = render_conversion_list($table, 'handle_row_actions', $item, 'converted_at', 'converted_at');
 
         expect($html)->toContain('action=conversion_unmark_test&conversion=ref-1');
         expect($html)->toContain('_wpnonce=conversion_unmark_test_ref-1');
         expect($html)->not->toContain('action=conversion_mark_test');
+    });
+
+    it('puts the row actions only under the conversion time', function () use ($load) {
+        [$table, $item] = $load([conversion_row('ref-1')]);
+
+        expect(render_conversion_list($table, 'handle_row_actions', $item, 'tracking_url', 'converted_at'))->toBe('');
     });
 
     it('shows each attributed click of a multi-touch conversion on its own line', function () use ($load) {

@@ -236,11 +236,7 @@ final class Conversion_List_Table extends WP_List_Table {
 	}
 
 	/**
-	 * Renders the conversion time with the row actions.
-	 *
-	 * A test conversion offers Unmark, any other Mark as test; both offer
-	 * Delete. Each link carries a nonce for its action and conversion, and
-	 * the date range, so the page returns to the same view.
+	 * Renders the conversion time.
 	 *
 	 * @param object $item Conversion item.
 	 *
@@ -248,15 +244,35 @@ final class Conversion_List_Table extends WP_List_Table {
 	 * @since 1.10.0
 	 */
 	protected function column_converted_at( object $item ): string {
+		return esc_html( $this->format_time( $item->converted_at ) );
+	}
+
+	/**
+	 * Renders the row actions under the primary column, the conversion time.
+	 *
+	 * A test conversion offers Unmark, any other Mark as test; both offer
+	 * Delete. Each link carries a nonce for its action and conversion, and
+	 * the date range, so the page returns to the same view.
+	 *
+	 * @param object $item        Conversion item.
+	 * @param string $column_name Column being rendered.
+	 * @param string $primary     Primary column.
+	 *
+	 * @return string Row actions HTML for the primary column, otherwise empty.
+	 * @since 1.10.0
+	 */
+	protected function handle_row_actions( $item, $column_name, $primary ): string {
+		if ( $column_name !== $primary ) {
+			return '';
+		}
+
 		$flag_action = $item->is_test ? 'conversion_unmark_test' : 'conversion_mark_test';
 		$flag_label  = $item->is_test ? __( 'Unmark as test', 'kntnt-ad-attr' ) : __( 'Mark as test', 'kntnt-ad-attr' );
 
-		$actions = [
+		return $this->row_actions( [
 			'mark_test' => sprintf( '<a href="%s">%s</a>', esc_url( $this->action_url( $flag_action, $item->conversion_ref ) ), esc_html( $flag_label ) ),
 			'delete'    => sprintf( '<a href="%s" class="submitdelete">%s</a>', esc_url( $this->action_url( 'conversion_delete', $item->conversion_ref ) ), esc_html__( 'Delete', 'kntnt-ad-attr' ) ),
-		];
-
-		return esc_html( $this->format_time( $item->converted_at ) ) . $this->row_actions( $actions );
+		] );
 	}
 
 	/**
