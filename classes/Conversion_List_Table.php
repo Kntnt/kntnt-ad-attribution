@@ -221,18 +221,15 @@ final class Conversion_List_Table extends WP_List_Table {
 	/**
 	 * Returns the bulk actions.
 	 *
-	 * The slugs differ from the tracking URLs' `trash`, `restore` and
-	 * `delete`, which Admin_Page routes to the tracking-URL handlers.
-	 *
 	 * @return array<string, string> Action slug => label.
 	 * @since 1.10.0
 	 */
 	protected function get_bulk_actions(): array {
-		return [
-			'conversion_mark_test'   => __( 'Mark as test', 'kntnt-ad-attr' ),
-			'conversion_unmark_test' => __( 'Unmark as test', 'kntnt-ad-attr' ),
-			'conversion_delete'      => __( 'Delete', 'kntnt-ad-attr' ),
-		];
+		$actions = [];
+		foreach ( [ Conversion_Action::Mark_As_Test, Conversion_Action::Unmark_As_Test, Conversion_Action::Delete ] as $action ) {
+			$actions[ $action->value ] = $action->label();
+		}
+		return $actions;
 	}
 
 	/**
@@ -266,12 +263,12 @@ final class Conversion_List_Table extends WP_List_Table {
 			return '';
 		}
 
-		$flag_action = $item->is_test ? 'conversion_unmark_test' : 'conversion_mark_test';
-		$flag_label  = $item->is_test ? __( 'Unmark as test', 'kntnt-ad-attr' ) : __( 'Mark as test', 'kntnt-ad-attr' );
+		$flag_action = $item->is_test ? Conversion_Action::Unmark_As_Test : Conversion_Action::Mark_As_Test;
+		$delete      = Conversion_Action::Delete;
 
 		return $this->row_actions( [
-			'mark_test' => sprintf( '<a href="%s">%s</a>', esc_url( $this->action_url( $flag_action, $item->conversion_ref ) ), esc_html( $flag_label ) ),
-			'delete'    => sprintf( '<a href="%s" class="submitdelete">%s</a>', esc_url( $this->action_url( 'conversion_delete', $item->conversion_ref ) ), esc_html__( 'Delete', 'kntnt-ad-attr' ) ),
+			'mark_test' => sprintf( '<a href="%s">%s</a>', esc_url( $this->action_url( $flag_action, $item->conversion_ref ) ), esc_html( $flag_action->label() ) ),
+			'delete'    => sprintf( '<a href="%s" class="submitdelete">%s</a>', esc_url( $this->action_url( $delete, $item->conversion_ref ) ), esc_html( $delete->label() ) ),
 		] );
 	}
 
@@ -453,23 +450,23 @@ final class Conversion_List_Table extends WP_List_Table {
 	/**
 	 * Builds the URL of a row action for one conversion, nonce included.
 	 *
-	 * @param string $action Action slug, e.g. `conversion_delete`.
-	 * @param string $ref    Conversion reference.
+	 * @param Conversion_Action $action The action.
+	 * @param string            $ref    Conversion reference.
 	 *
 	 * @return string Unescaped URL.
 	 * @since 1.10.0
 	 */
-	private function action_url( string $action, string $ref ): string {
+	private function action_url( Conversion_Action $action, string $ref ): string {
 		return wp_nonce_url(
 			admin_url( sprintf(
 				'tools.php?page=%s&action=%s&conversion=%s&date_start=%s&date_end=%s',
 				Plugin::get_slug(),
-				$action,
+				$action->value,
 				rawurlencode( $ref ),
 				$this->date_start,
 				$this->date_end,
 			) ),
-			"{$action}_{$ref}",
+			"{$action->value}_{$ref}",
 		);
 	}
 

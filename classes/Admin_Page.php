@@ -25,15 +25,6 @@ namespace Kntnt\Ad_Attribution;
 final class Admin_Page {
 
 	/**
-	 * Actions of the conversion list, as row action (`conversion=<ref>`) or
-	 * bulk action (`conversion[]`).
-	 *
-	 * @var string[]
-	 * @since 1.10.0
-	 */
-	private const CONVERSION_ACTIONS = [ 'conversion_delete', 'conversion_mark_test', 'conversion_unmark_test' ];
-
-	/**
 	 * Queue for displaying status information in the admin UI.
 	 *
 	 * @var Queue
@@ -548,11 +539,11 @@ final class Admin_Page {
 		// and those it left alone because they were being sent.
 		$conversion_notices = [
 			/* translators: %d: Number of conversions */
-			'conversions-deleted'  => __( '%d conversion(s) deleted.', 'kntnt-ad-attr' ),
+			Conversion_Action::Delete->message()         => __( '%d conversion(s) deleted.', 'kntnt-ad-attr' ),
 			/* translators: %d: Number of conversions */
-			'conversions-marked'   => __( '%d conversion(s) marked as test.', 'kntnt-ad-attr' ),
+			Conversion_Action::Mark_As_Test->message()   => __( '%d conversion(s) marked as test.', 'kntnt-ad-attr' ),
 			/* translators: %d: Number of conversions */
-			'conversions-unmarked' => __( '%d conversion(s) no longer marked as test.', 'kntnt-ad-attr' ),
+			Conversion_Action::Unmark_As_Test->message() => __( '%d conversion(s) no longer marked as test.', 'kntnt-ad-attr' ),
 		];
 
 		if ( isset( $conversion_notices[ $message ] ) ) {
@@ -646,8 +637,9 @@ final class Admin_Page {
 		// Conversion row and bulk actions. Routed before the tracking-URL
 		// actions; their slugs and their selection (conversion[], not
 		// post[]) never match those.
-		if ( in_array( $action, self::CONVERSION_ACTIONS, true ) ) {
-			$this->handle_conversion_action( $action );
+		$conversion_action = Conversion_Action::tryFrom( $action );
+		if ( $conversion_action !== null ) {
+			$this->handle_conversion_action( $conversion_action );
 			return;
 		}
 
@@ -723,12 +715,12 @@ final class Admin_Page {
 	 * or failed); processing jobs are left alone and reported, done jobs
 	 * are untouched. Unmark leaves the jobs as they are.
 	 *
-	 * @param string $action One of self::CONVERSION_ACTIONS.
+	 * @param Conversion_Action $action The action.
 	 *
 	 * @return void
 	 * @since 1.10.0
 	 */
-	private function handle_conversion_action( string $action ): void {
+	private function handle_conversion_action( Conversion_Action $action ): void {
 		$selection = wp_unslash( $_GET['conversion'] ?? '' );
 
 		// A row action's nonce is bound to its action and conversion; a bulk
@@ -738,7 +730,7 @@ final class Admin_Page {
 			$refs = $selection;
 		} else {
 			$ref = sanitize_text_field( (string) $selection );
-			check_admin_referer( "{$action}_{$ref}" );
+			check_admin_referer( "{$action->value}_{$ref}" );
 			$refs = [ $ref ];
 		}
 
@@ -754,27 +746,23 @@ final class Admin_Page {
 			// are the conversions Mark and Unmark affect. Mark must delete
 			// their unfinished jobs too, or a reporter without test support
 			// could still upload a conversion that is now a test.
-			$affected = $action === 'conversion_delete' ? $refs : $this->conversions_sharing_clicks( $refs );
+			$affected = $action === Conversion_Action::Delete ? $refs : $this->conversions_sharing_clicks( $refs );
 			$count    = $this->count_conversions( $affected );
 
 			match ( $action ) {
-				'conversion_delete'      => $this->delete_conversions( $refs ),
-				'conversion_mark_test'   => $this->flag_conversions_as_test( $refs, true ),
-				'conversion_unmark_test' => $this->flag_conversions_as_test( $refs, false ),
+				Conversion_Action::Delete         => $this->delete_conversions( $refs ),
+				Conversion_Action::Mark_As_Test   => $this->flag_conversions_as_test( $refs, true ),
+				Conversion_Action::Unmark_As_Test => $this->flag_conversions_as_test( $refs, false ),
 			};
 
-			if ( $action !== 'conversion_unmark_test' ) {
+			if ( $action !== Conversion_Action::Unmark_As_Test ) {
 				$jobs = $this->queue->delete_unfinished_for_conversions( $affected );
 			}
 		}
 
 		$redirect_args = [
 			'page'            => Plugin::get_slug(),
-			'message'         => match ( $action ) {
-				'conversion_delete'      => 'conversions-deleted',
-				'conversion_mark_test'   => 'conversions-marked',
-				'conversion_unmark_test' => 'conversions-unmarked',
-			},
+			'message'         => $action->message(),
 			'count'           => $count,
 			'jobs_deleted'    => $jobs['deleted'],
 			'jobs_processing' => $jobs['processing'],

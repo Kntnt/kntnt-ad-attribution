@@ -957,6 +957,7 @@ kntnt-ad-attribution/
 │   ├── Utm_Options.php           ← Predefined UTM source/medium options (filterable)
 │   ├── Settings_Page.php         ← Settings page under Settings > Ad Attribution
 │   ├── Cron.php                  ← Daily cleanup job, target page warnings
+│   ├── Conversion_Action.php     ← Conversion list actions: delete, mark/unmark as test (enum)
 │   ├── Table.php                 ← Names of the custom tables (enum)
 │   ├── Click_ID_Store.php        ← Platform-specific click ID storage
 │   ├── Queue.php                 ← Async job queue with configurable per-job retry
