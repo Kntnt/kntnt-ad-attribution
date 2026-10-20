@@ -2,6 +2,8 @@
 
 This document describes the expected plugin behaviour for every combination of consent state, existing cookies, and visitor action. The three consent states correspond to the return value of `apply_filters( 'kntnt_ad_attr_has_consent', null )`: `true` (granted), `false` (denied), or `null` (undetermined). The implementation must match this specification exactly.
 
+The tracking-URL cases assume a request that counts as a click under the [counting rules](click-handling.md#counting-rules). A bot or a speculative (prefetch) request records nothing and sets no cookie in any consent state. A repeat (a platform click ID already recorded for the tracking URL) records no click in any consent state; with consent it points the cookie entry at the later of the existing entry's click and the original click, with undetermined consent it transports the original click, and without consent it stores nothing.
+
 ## Consent granted (`true`)
 
 ### Case 1 – No cookies, visits tracking URL outside dedup window

@@ -22,6 +22,7 @@ kntnt-ad-attribution/
 │   ├── Cookie_Manager.php        ← Cookie read/write/validate (stateless)
 │   ├── Consent.php               ← Three-state consent check logic
 │   ├── Bot_Detector.php          ← User-Agent filtering, robots.txt rule
+│   ├── Speculation_Detector.php  ← Prefetch/prerender detection (Sec-Purpose, Purpose)
 │   ├── Rest_Endpoint.php         ← REST API (set-cookie with rate limiting, search-posts)
 │   ├── Admin_Page.php            ← Tools page with merged view, URL CRUD, CSV export
 │   ├── Campaign_List_Table.php   ← WP_List_Table for campaign reporting
