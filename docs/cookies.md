@@ -38,11 +38,13 @@ Each entry records the last conversion timestamp for a specific hash. On subsequ
 
 ## `_aah_pending`
 
-Temporary transport cookie for undefined consent.
+Temporary transport cookie for undefined consent. It hands the landing page's client-side script the click the visitor just made, so that the set-cookie endpoint can point the visitor's `_ad_clicks` entry at that exact click row once consent is granted (see [click-handling.md](click-handling.md#transport-mechanism-for-undefined-consent)).
 
 | Property | Value |
 |----------|-------|
 | Name | `_aah_pending` |
-| Format | SHA-256 hash (64 characters) |
+| Format | `<hash>:<unix_timestamp>` — one click, same syntax as an `_ad_clicks` entry. The timestamp is the click row's `clicked_at`. Sent URL-encoded (`:` as `%3A`) by PHP's `setcookie()`. |
 | Attributes | `Path=/`, **Not** HttpOnly, `Secure`, `SameSite=Lax` |
 | Lifetime | 60 seconds |
+
+**Validation:** The client-side script accepts the value only if it matches `^[a-f0-9]{64}:\d{1,10}$`, and expires the cookie after reading it whether it matched or not. Before version 1.10.0 the value was a bare hash.

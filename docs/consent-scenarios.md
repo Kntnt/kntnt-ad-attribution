@@ -134,7 +134,7 @@ Gaining access to the `_ad_clicks` cookie requires consent under ePrivacy Articl
 | **Click recorded?** | Yes |
 | **Conversion attributed?** | – |
 
-The new hash is transported to the landing page via the `_aah_pending` cookie (60 s, treated as strictly necessary) or a URL fragment (`#_aah=<hash>`). The method is controlled by the `kntnt_ad_attr_pending_transport` filter (`'cookie'` or `'fragment'`). Once consent is resolved on the landing page, the client-side script either persists the hash (consent granted) or discards it (consent denied).
+The new click is transported to the landing page as a `<hash>:<timestamp>` pair, where the timestamp is the `clicked_at` of the click row just recorded. The transport is the `_aah_pending` cookie (60 s, treated as strictly necessary) or a URL fragment (`#_aah=<hash>:<timestamp>`). The method is controlled by the `kntnt_ad_attr_pending_transport` filter (`'cookie'` or `'fragment'`). Once consent is resolved on the landing page, the client-side script either posts the pair to the set-cookie endpoint (consent granted) or discards it (consent denied). The endpoint writes the `_ad_clicks` entry only if a click row with exactly that hash and `clicked_at` exists, and with the pair's own timestamp, so the entry points at this visitor's click even if others clicked the same tracking URL in the meantime.
 
 ### Case 14 – No cookies, visits tracking URL within dedup window
 
@@ -154,7 +154,7 @@ Same reasoning as cases 2 and 8: no cookie to read, so dedup is impossible regar
 | **Click recorded?** | Yes |
 | **Conversion attributed?** | – |
 
-Cookies were set lawfully and consent has not been denied (`null` means undetermined, not denied). Existing cookies are left intact but are not read — gaining access requires confirmed consent under ePrivacy Article 5(3). The new hash is handled via pending consent transport.
+Cookies were set lawfully and consent has not been denied (`null` means undetermined, not denied). Existing cookies are left intact but are not read — gaining access requires confirmed consent under ePrivacy Article 5(3). The new click is handled via pending consent transport, as in case 13.
 
 ### Case 16 – Has cookies (set lawfully under prior consent), visits tracking URL within dedup window
 
@@ -164,7 +164,7 @@ Cookies were set lawfully and consent has not been denied (`null` means undeterm
 | **Click recorded?** | Yes |
 | **Conversion attributed?** | – |
 
-Existing cookies are left intact; new hash is handled via pending consent transport. Gaining access requires consent. Without confirmed consent, the cookie cannot be read for dedup, so the click is recorded. Same principle as cases 10 and 15.
+Existing cookies are left intact; the new click is handled via pending consent transport, as in case 13. Gaining access requires consent. Without confirmed consent, the cookie cannot be read for dedup, so the click is recorded. Same principle as cases 10 and 15.
 
 ### Case 17 – No cookies, submits lead form
 
@@ -182,7 +182,7 @@ Existing cookies are left intact; new hash is handled via pending consent transp
 | **Click recorded?** | – |
 | **Conversion attributed?** | No |
 
-Gaining access to the `_ad_clicks` cookie requires confirmed consent under ePrivacy Article 5(3). With consent undetermined, the cookie cannot be read for attribution. If consent is later granted (e.g. on a subsequent page load), the pending consent mechanism will persist any pending hashes and future conversions can be attributed.
+Gaining access to the `_ad_clicks` cookie requires confirmed consent under ePrivacy Article 5(3). With consent undetermined, the cookie cannot be read for attribution. If consent is later granted (e.g. on a subsequent page load), the pending consent mechanism will persist any pending clicks that match a recorded click row, and future conversions can be attributed.
 
 ## Bot detection (all consent states)
 

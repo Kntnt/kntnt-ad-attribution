@@ -32,7 +32,7 @@ Per-hash deduplication window in seconds. Default: `0` (deduplication disabled).
 
 **`kntnt_ad_attr_pending_transport`**
 
-Transport mechanism for undefined consent: `'cookie'` (default) or `'fragment'`.
+Transport mechanism for undefined consent: `'cookie'` (default) or `'fragment'`. Both carry the click as a `<hash>:<timestamp>` pair, where the timestamp is the click row's `clicked_at`: `'cookie'` sets `_aah_pending=<hash>:<timestamp>` (60 seconds), `'fragment'` appends `#_aah=<hash>:<timestamp>` to the redirect URL. See [click-handling.md](click-handling.md#transport-mechanism-for-undefined-consent).
 
 **`kntnt_ad_attr_is_bot`**
 

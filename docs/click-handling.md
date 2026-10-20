@@ -144,29 +144,31 @@ When no callback is registered, the default `null` (undetermined) activates the 
 
 **Consent = no:** Redirect to target URL. No cookie. Attribution is lost. Accepted.
 
-**Consent = undefined:** Redirect to target URL, but pass the hash via the transport mechanism (see below) so the client-side script can set the cookie if/when the visitor consents.
+**Consent = undefined:** Redirect to target URL, but pass the click (hash and click timestamp) via the transport mechanism (see below) so the client-side script can set the cookie if/when the visitor consents.
 
 The click is logged in the database **always** regardless of consent. Click counting per hash is aggregated statistics and does not constitute personal data processing. It is the cookie that links the click to an individual.
 
 ## Transport Mechanism for Undefined Consent
 
-When consent is undefined, the hash needs to be transferred to the target URL. The mechanism is controlled by the filter `kntnt_ad_attr_pending_transport`.
+When consent is undefined, the click needs to be transferred to the target URL. The transport carries it as a `<hash>:<timestamp>` pair (the same syntax as one `_ad_clicks` entry), where the timestamp is the `clicked_at` of the click row just inserted, as a Unix timestamp. Once consent is granted, the set-cookie endpoint writes an `_ad_clicks` entry only if a click row with exactly that hash and `clicked_at` exists, so the entry points at the visitor's own click and not at a later click on the same tracking URL by someone else (see [rest-api.md](rest-api.md#set-cookie)). The mechanism is controlled by the filter `kntnt_ad_attr_pending_transport`.
 
 **`'cookie'`** (default) — the server sets a temporary cookie in the redirect response:
 
 ```
-Set-Cookie: _aah_pending=<hash>; Path=/; Max-Age=60; Secure; SameSite=Lax
+Set-Cookie: _aah_pending=<hash>%3A<timestamp>; Path=/; Max-Age=60; Secure; SameSite=Lax
 ```
 
-The cookie is *not* HttpOnly (the script must be able to read it). It lives for a maximum of 60 seconds and contains no personal data — it is a technical transport mechanism.
+PHP's `setcookie()` URL-encodes the `:` as `%3A`; the client-side script decodes the value. The cookie is *not* HttpOnly (the script must be able to read it). It lives for a maximum of 60 seconds and contains no personal data — it is a technical transport mechanism.
 
-**`'fragment'`** — the server appends the hash as a URL fragment:
+**`'fragment'`** — the server appends the pair as a URL fragment:
 
 ```
-Location: https://example.com/landing-page#_aah=<hash>
+Location: https://example.com/landing-page#_aah=<hash>:<timestamp>
 ```
 
-The script reads the fragment, stores the hash in `sessionStorage`, and clears the fragment with `history.replaceState`.
+The script reads the fragment, stores the pair in `sessionStorage`, and clears the fragment with `history.replaceState`.
+
+`Click_Handler::handle_pending_consent()` and `Cookie_Manager::set_transport_cookie()` take the timestamp as an explicit argument, so the transport can refer to any recorded click, not only the row inserted by the current request.
 
 ## Redirect Methods
 

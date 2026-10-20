@@ -153,16 +153,20 @@ final class Cookie_Manager {
 	 * Writes the _aah_pending transport cookie for deferred consent handling.
 	 *
 	 * Short-lived cookie (60 seconds) readable by JavaScript (not HttpOnly)
-	 * so the client-side script can pick up the hash and store it once consent
-	 * is granted.
+	 * so the client-side script can pick up the click and store it until
+	 * consent is granted. The value is one `hash:timestamp` pair, the same
+	 * syntax as an `_ad_clicks` entry, where the timestamp is the click row's
+	 * `clicked_at` so the set-cookie endpoint can find that exact row.
 	 *
-	 * @param string $hash The SHA-256 hash to transport.
+	 * @param string $hash      The SHA-256 hash to transport.
+	 * @param int    $timestamp Unix timestamp of the click row being referred to.
 	 *
 	 * @return void
 	 * @since 1.0.0
+	 * @since 1.10.0 Carries the click timestamp as `hash:timestamp`.
 	 */
-	public function set_transport_cookie( string $hash ): void {
-		setcookie( '_aah_pending', $hash, [
+	public function set_transport_cookie( string $hash, int $timestamp ): void {
+		setcookie( '_aah_pending', $this->serialize_entries( [ $hash => $timestamp ] ), [
 			'expires'  => time() + 60,
 			'path'     => '/',
 			'secure'   => true,

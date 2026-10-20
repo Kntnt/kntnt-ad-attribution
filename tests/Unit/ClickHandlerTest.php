@@ -459,12 +459,16 @@ describe('Click_Handler::handle_click()', function () {
         // Consent pending — checked before DB insert.
         $con->shouldReceive('check')->once()->andReturn(null);
 
-        Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
-        $wpdb->shouldReceive('insert')->once()->andReturn(true);
+        // The click row is recorded at 1700000000 (2023-11-14 22:13:20 UTC).
+        Functions\when('time')->justReturn(1700000000);
+        $wpdb->shouldReceive('insert')
+            ->once()
+            ->withArgs(fn ($table, $data) => $data['clicked_at'] === '2023-11-14 22:13:20')
+            ->andReturn(true);
         Functions\when('get_post_meta')->justReturn('existing');
 
-        // Transport cookie should be set.
-        $cm->shouldReceive('set_transport_cookie')->once()->with($hash);
+        // The transport cookie refers to that click row.
+        $cm->shouldReceive('set_transport_cookie')->once()->with($hash, 1700000000);
 
         Functions\expect('nocache_headers')->once();
         Functions\expect('wp_redirect')->once()->andReturnUsing(fn () => throw new ExitException());
@@ -494,8 +498,12 @@ describe('Click_Handler::handle_click()', function () {
         // Consent pending — checked before DB insert.
         $con->shouldReceive('check')->once()->andReturn(null);
 
-        Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
-        $wpdb->shouldReceive('insert')->once()->andReturn(true);
+        // The click row is recorded at 1700000000 (2023-11-14 22:13:20 UTC).
+        Functions\when('time')->justReturn(1700000000);
+        $wpdb->shouldReceive('insert')
+            ->once()
+            ->withArgs(fn ($table, $data) => $data['clicked_at'] === '2023-11-14 22:13:20')
+            ->andReturn(true);
         Functions\when('get_post_meta')->justReturn('existing');
 
         // Transport set to fragment via filter.
@@ -506,12 +514,12 @@ describe('Click_Handler::handle_click()', function () {
         // Should NOT call set_transport_cookie.
         $cm->shouldNotReceive('set_transport_cookie');
 
-        // The redirect URL should contain the hash fragment.
+        // The redirect URL's fragment refers to that click row.
         Functions\expect('nocache_headers')->once();
         Functions\expect('wp_redirect')
             ->once()
             ->withArgs(function ($url) use ($hash) {
-                expect($url)->toContain('#_aah=' . $hash);
+                expect($url)->toEndWith('#_aah=' . $hash . ':1700000000');
                 return true;
             })
             ->andReturnUsing(fn () => throw new ExitException());
@@ -1115,7 +1123,7 @@ describe('Click_Handler::handle_click()', function () {
         Functions\when('get_post_meta')->justReturn('existing');
 
         // Transport cookie for pending consent.
-        $cm->shouldReceive('set_transport_cookie')->once()->with($hash);
+        $cm->shouldReceive('set_transport_cookie')->once()->with($hash, Mockery::type('int'));
 
         Functions\expect('nocache_headers')->once();
         Functions\expect('wp_redirect')->once()->andReturnUsing(fn () => throw new ExitException());

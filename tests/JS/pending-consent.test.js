@@ -26,9 +26,29 @@ function loadScript() {
     fn();
 }
 
-/** Generates a valid 64-char hex hash. */
+/** Generates a valid 64-char lowercase hex hash, distinct per seed. */
 function fakeHash(seed = 'a') {
-    return seed.repeat(64).slice(0, 64);
+    const hex = Array.from(seed, (c) => c.charCodeAt(0).toString(16).padStart(2, '0')).join('');
+    return hex.repeat(64).slice(0, 64);
+}
+
+/** Generates a valid `hash:timestamp` click pair. */
+function fakeClick(seed = 'a', timestamp = 1700000000) {
+    return `${fakeHash(seed)}:${timestamp}`;
+}
+
+/**
+ * Sets the transport cookie the way the server does: PHP's setcookie()
+ * URL-encodes the value, so ':' arrives as '%3A'.
+ */
+function setTransportCookie(value) {
+    document.cookie = `_aah_pending=${encodeURIComponent(value)}; path=/`;
+}
+
+/** Returns the stored clicks, or null when nothing is stored. */
+function storedClicks() {
+    const raw = sessionStorage.getItem('kntnt_ad_attr_hashes');
+    return raw === null ? null : JSON.parse(raw);
 }
 
 describe('pending-consent.js', () => {
@@ -63,24 +83,22 @@ describe('pending-consent.js', () => {
         vi.restoreAllMocks();
     });
 
-    // ─── Hash discovery ───
+    // ─── Click discovery ───
 
-    describe('hash discovery', () => {
+    describe('click discovery', () => {
 
-        it('reads _aah_pending cookie and stores in sessionStorage', () => {
-            const hash = fakeHash('b');
-            document.cookie = `_aah_pending=${hash}; path=/`;
+        it('reads the hash:timestamp pair from the _aah_pending cookie and stores it', () => {
+            const click = fakeClick('b');
+            setTransportCookie(click);
 
-            // Consent returns 'unknown' so hashes stay in storage.
+            // Consent returns 'unknown' so clicks stay in storage.
             loadScript();
 
-            const stored = JSON.parse(sessionStorage.getItem('kntnt_ad_attr_hashes'));
-            expect(stored).toContain(hash);
+            expect(storedClicks()).toEqual([click]);
         });
 
         it('expires _aah_pending cookie after reading', () => {
-            const hash = fakeHash('c');
-            document.cookie = `_aah_pending=${hash}; path=/`;
+            setTransportCookie(fakeClick('c'));
 
             loadScript();
 
@@ -89,14 +107,13 @@ describe('pending-consent.js', () => {
             expect(!match || match[1] === '').toBe(true);
         });
 
-        it('reads hash from URL fragment #_aah=<hash>', () => {
-            const hash = fakeHash('d');
-            history.replaceState(null, '', `${window.location.pathname}#_aah=${hash}`);
+        it('reads the hash:timestamp pair from the URL fragment #_aah=<hash>:<timestamp>', () => {
+            const click = fakeClick('d');
+            history.replaceState(null, '', `${window.location.pathname}#_aah=${click}`);
 
             loadScript();
 
-            const stored = JSON.parse(sessionStorage.getItem('kntnt_ad_attr_hashes'));
-            expect(stored).toContain(hash);
+            expect(storedClicks()).toEqual([click]);
         });
 
         it('ignores invalid fragment format (too short)', () => {
@@ -104,35 +121,93 @@ describe('pending-consent.js', () => {
 
             loadScript();
 
-            const stored = sessionStorage.getItem('kntnt_ad_attr_hashes');
-            expect(stored).toBeNull();
+            expect(storedClicks()).toBeNull();
         });
 
         it('clears fragment via history.replaceState', () => {
-            const hash = fakeHash('e');
-            history.replaceState(null, '', `${window.location.pathname}#_aah=${hash}`);
+            history.replaceState(null, '', `${window.location.pathname}#_aah=${fakeClick('e')}`);
 
             const spy = vi.spyOn(history, 'replaceState');
             loadScript();
 
             expect(spy).toHaveBeenCalled();
-            // After replaceState, hash should be cleared from URL.
+            // After replaceState, the fragment should be cleared from URL.
             expect(window.location.hash).toBe('');
         });
 
-        it('merges new hashes with existing sessionStorage entries', () => {
-            const existing = fakeHash('f');
-            const newHash = fakeHash('g');
+        it('merges new clicks with existing sessionStorage entries', () => {
+            const existing = fakeClick('f');
+            const newClick = fakeClick('g');
 
             // Pre-populate storage.
             sessionStorage.setItem('kntnt_ad_attr_hashes', JSON.stringify([existing]));
-            document.cookie = `_aah_pending=${newHash}; path=/`;
+            setTransportCookie(newClick);
 
             loadScript();
 
-            const stored = JSON.parse(sessionStorage.getItem('kntnt_ad_attr_hashes'));
-            expect(stored).toContain(existing);
-            expect(stored).toContain(newHash);
+            expect(storedClicks()).toEqual([existing, newClick]);
+        });
+
+    });
+
+    // ─── Malformed values ───
+
+    describe('malformed values', () => {
+
+        it.each([
+            ['a bare hash', fakeHash('q')],
+            ['a non-numeric timestamp', `${fakeHash('q')}:17000000x0`],
+            ['a timestamp longer than ten digits', `${fakeHash('q')}:17000000000`],
+            ['an empty timestamp', `${fakeHash('q')}:`],
+            ['an uppercase hash', `${'A'.repeat(64)}:1700000000`],
+            ['a short hash', 'abc123:1700000000'],
+        ])('ignores %s in the _aah_pending cookie but still expires it', (_label, value) => {
+            setTransportCookie(value);
+
+            loadScript();
+
+            expect(storedClicks()).toBeNull();
+            const match = document.cookie.match(/_aah_pending=([^;]*)/);
+            expect(!match || match[1] === '').toBe(true);
+        });
+
+        it.each([
+            ['a bare hash', fakeHash('r')],
+            ['a non-numeric timestamp', `${fakeHash('r')}:abc`],
+            ['an uppercase hash', `${'B'.repeat(64)}:1700000000`],
+        ])('ignores %s in the URL fragment', (_label, value) => {
+            history.replaceState(null, '', `${window.location.pathname}#_aah=${value}`);
+
+            loadScript();
+
+            expect(storedClicks()).toBeNull();
+        });
+
+        it('drops bare hashes left in sessionStorage by the previous script', async () => {
+            const click = fakeClick('s');
+            sessionStorage.setItem('kntnt_ad_attr_hashes', JSON.stringify([fakeHash('t'), click]));
+
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}'));
+            window.kntntAdAttributionGetConsent = (callback) => callback('yes');
+
+            loadScript();
+
+            await vi.waitFor(() => {
+                expect(fetchSpy).toHaveBeenCalledOnce();
+            });
+
+            expect(JSON.parse(fetchSpy.mock.calls[0][1].body)).toEqual({ hashes: [click] });
+        });
+
+        it('does nothing when sessionStorage holds only bare hashes', () => {
+            sessionStorage.setItem('kntnt_ad_attr_hashes', JSON.stringify([fakeHash('u')]));
+
+            const consentSpy = vi.fn();
+            window.kntntAdAttributionGetConsent = consentSpy;
+
+            loadScript();
+
+            expect(consentSpy).not.toHaveBeenCalled();
         });
 
     });
@@ -141,18 +216,28 @@ describe('pending-consent.js', () => {
 
     describe('deduplication', () => {
 
-        it('deduplicates identical hashes in sessionStorage', () => {
-            const hash = fakeHash('h');
+        it('deduplicates identical clicks in sessionStorage', () => {
+            const click = fakeClick('h');
 
-            // Pre-populate with the hash, then add the same via cookie.
-            sessionStorage.setItem('kntnt_ad_attr_hashes', JSON.stringify([hash]));
-            document.cookie = `_aah_pending=${hash}; path=/`;
+            // Pre-populate with the click, then add the same via cookie.
+            sessionStorage.setItem('kntnt_ad_attr_hashes', JSON.stringify([click]));
+            setTransportCookie(click);
 
             loadScript();
 
-            const stored = JSON.parse(sessionStorage.getItem('kntnt_ad_attr_hashes'));
-            const occurrences = stored.filter(h => h === hash).length;
-            expect(occurrences).toBe(1);
+            expect(storedClicks()).toEqual([click]);
+        });
+
+        it('keeps two clicks on the same hash made at different times', () => {
+            const first = fakeClick('h', 1700000000);
+            const second = fakeClick('h', 1700000600);
+
+            sessionStorage.setItem('kntnt_ad_attr_hashes', JSON.stringify([first]));
+            setTransportCookie(second);
+
+            loadScript();
+
+            expect(storedClicks()).toEqual([first, second]);
         });
 
     });
@@ -161,9 +246,9 @@ describe('pending-consent.js', () => {
 
     describe('consent callbacks', () => {
 
-        it('sends POST to REST endpoint when consent is yes', async () => {
-            const hash = fakeHash('i');
-            sessionStorage.setItem('kntnt_ad_attr_hashes', JSON.stringify([hash]));
+        it('posts the stored hash:timestamp pairs to the REST endpoint when consent is yes', async () => {
+            const click = fakeClick('i');
+            sessionStorage.setItem('kntnt_ad_attr_hashes', JSON.stringify([click]));
 
             const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}'));
 
@@ -180,13 +265,28 @@ describe('pending-consent.js', () => {
             const [url, options] = fetchSpy.mock.calls[0];
             expect(url).toBe('https://example.com/wp-json/kntnt-ad-attribution/v1/set-cookie');
             expect(options.method).toBe('POST');
-            expect(JSON.parse(options.body)).toEqual({ hashes: [hash] });
+            expect(JSON.parse(options.body)).toEqual({ hashes: [click] });
             expect(options.headers['X-WP-Nonce']).toBe('test-nonce-123');
         });
 
+        it('posts a pair read from the transport cookie on the same page load', async () => {
+            const click = fakeClick('v');
+            setTransportCookie(click);
+
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}'));
+            window.kntntAdAttributionGetConsent = (callback) => callback('yes');
+
+            loadScript();
+
+            await vi.waitFor(() => {
+                expect(fetchSpy).toHaveBeenCalledOnce();
+            });
+
+            expect(JSON.parse(fetchSpy.mock.calls[0][1].body)).toEqual({ hashes: [click] });
+        });
+
         it('clears sessionStorage when consent is no', () => {
-            const hash = fakeHash('j');
-            sessionStorage.setItem('kntnt_ad_attr_hashes', JSON.stringify([hash]));
+            sessionStorage.setItem('kntnt_ad_attr_hashes', JSON.stringify([fakeClick('j')]));
 
             window.kntntAdAttributionGetConsent = (callback) => callback('no');
 
@@ -197,20 +297,18 @@ describe('pending-consent.js', () => {
         });
 
         it('preserves sessionStorage when consent is unknown', () => {
-            const hash = fakeHash('k');
-            sessionStorage.setItem('kntnt_ad_attr_hashes', JSON.stringify([hash]));
+            const click = fakeClick('k');
+            sessionStorage.setItem('kntnt_ad_attr_hashes', JSON.stringify([click]));
 
             window.kntntAdAttributionGetConsent = (callback) => callback('unknown');
 
             loadScript();
 
-            const stored = JSON.parse(sessionStorage.getItem('kntnt_ad_attr_hashes'));
-            expect(stored).toContain(hash);
+            expect(storedClicks()).toEqual([click]);
         });
 
         it('only processes first callback invocation', async () => {
-            const hash = fakeHash('l');
-            sessionStorage.setItem('kntnt_ad_attr_hashes', JSON.stringify([hash]));
+            sessionStorage.setItem('kntnt_ad_attr_hashes', JSON.stringify([fakeClick('l')]));
 
             const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}'));
 
@@ -237,8 +335,7 @@ describe('pending-consent.js', () => {
     describe('retry logic', () => {
 
         it('increments retry counter on network error', async () => {
-            const hash = fakeHash('m');
-            sessionStorage.setItem('kntnt_ad_attr_hashes', JSON.stringify([hash]));
+            sessionStorage.setItem('kntnt_ad_attr_hashes', JSON.stringify([fakeClick('m')]));
 
             vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Network error'));
 
@@ -253,8 +350,7 @@ describe('pending-consent.js', () => {
         });
 
         it('clears storage after 3 failures', async () => {
-            const hash = fakeHash('n');
-            sessionStorage.setItem('kntnt_ad_attr_hashes', JSON.stringify([hash]));
+            sessionStorage.setItem('kntnt_ad_attr_hashes', JSON.stringify([fakeClick('n')]));
             sessionStorage.setItem('kntnt_ad_attr_retries', '2');
 
             vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Network error'));
@@ -270,8 +366,7 @@ describe('pending-consent.js', () => {
         });
 
         it('clears storage on successful fetch', async () => {
-            const hash = fakeHash('o');
-            sessionStorage.setItem('kntnt_ad_attr_hashes', JSON.stringify([hash]));
+            sessionStorage.setItem('kntnt_ad_attr_hashes', JSON.stringify([fakeClick('o')]));
             sessionStorage.setItem('kntnt_ad_attr_retries', '1');
 
             vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}'));
@@ -293,22 +388,21 @@ describe('pending-consent.js', () => {
     describe('default consent function', () => {
 
         it('calls callback with unknown when no custom function defined', () => {
-            const hash = fakeHash('p');
-            sessionStorage.setItem('kntnt_ad_attr_hashes', JSON.stringify([hash]));
+            const click = fakeClick('p');
+            sessionStorage.setItem('kntnt_ad_attr_hashes', JSON.stringify([click]));
 
             // Do NOT define kntntAdAttributionGetConsent — default should be used.
-            // The default calls callback('unknown'), so hashes stay.
+            // The default calls callback('unknown'), so clicks stay.
             loadScript();
 
-            const stored = JSON.parse(sessionStorage.getItem('kntnt_ad_attr_hashes'));
-            expect(stored).toContain(hash);
+            expect(storedClicks()).toEqual([click]);
         });
 
     });
 
-    // ─── No hashes scenario ───
+    // ─── No clicks scenario ───
 
-    describe('no hashes', () => {
+    describe('no clicks', () => {
 
         it('exits early without calling consent function', () => {
             const consentSpy = vi.fn();
@@ -316,7 +410,7 @@ describe('pending-consent.js', () => {
 
             loadScript();
 
-            // With no hashes, consent function should not be called.
+            // With no clicks, consent function should not be called.
             expect(consentSpy).not.toHaveBeenCalled();
         });
 

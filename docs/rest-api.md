@@ -14,17 +14,23 @@ POST /wp-json/kntnt-ad-attribution/v1/set-cookie
 
 ```json
 {
-    "hashes": [ "a1b2c3…", "d4e5f6…" ]
+    "hashes": [ "a1b2c3…:1700000000", "d4e5f6…:1700000600" ]
 }
 ```
 
 Content-Type: `application/json`. Header: `X-WP-Nonce: <nonce>`.
 
-**Rate limiting:** 10 requests per minute per IP address. Tracked via a WordPress transient (`kntnt_ad_attr_rate_{$ip_hash}`). Exceeding the limit returns HTTP 429 with `{ "code": "rate_limit_exceeded" }`.
+Each item of `hashes` is a pending click as a `<hash>:<timestamp>` pair: the tracking URL's hash and the Unix timestamp of the visitor's click row (its `clicked_at`), exactly as the click handler handed it over through the pending-consent transport (see [click-handling.md](click-handling.md#transport-mechanism-for-undefined-consent)). The syntax is that of one `_ad_clicks` entry. The parameter keeps its historical name.
 
-**Validation:** Each hash is validated against `/^[a-f0-9]{64}$/` and against the database via `Post_Type::get_valid_hashes()` (must exist as a published tracking URL). Invalid/unknown hashes are silently ignored.
+*Changed in 1.10.0:* items used to be bare hashes, and the endpoint gave each hash the timestamp of the most recent click row for that hash, from any visitor, or the current time if there was none. Bare hashes are now ignored.
+
+**Rate limiting:** 10 requests per minute per IP address. Tracked via a WordPress transient (`kntnt_ad_attr_rl_{md5($ip)}`). Exceeding the limit returns HTTP 429 with `{ "success": false }`.
+
+**Validation:** Each item must match `/^[a-f0-9]{64}:\d{1,10}$/`. Its hash must exist as a published tracking URL (`Post_Type::get_valid_hashes()`). Items that fail either check, including bare hashes, are silently ignored. If none remain, the endpoint returns `{ "success": false }`.
 
 **Consent check:** The endpoint calls `Consent::check()`. If consent is not `true` (granted), HTTP 200 is returned with `{ "success": false }` without setting a cookie.
+
+**Click-row lookup:** For each remaining pair, the endpoint looks for a click row with exactly that hash and `clicked_at = gmdate('Y-m-d H:i:s', timestamp)`, the same lookup `Conversion_Handler` uses to link a conversion to a click. Only pairs with a matching row are written, and each is written with its own timestamp. The endpoint never substitutes another click row or the current time, so every entry it writes points at the visitor's own click row. If several matching pairs share a hash, the latest one is written, because `_ad_clicks` holds one entry per hash. If no pair matches, the endpoint returns `{ "success": false }` and sets no cookie.
 
 **Response on successful request:**
 
@@ -36,10 +42,10 @@ Content-Type: application/json
 { "success": true }
 ```
 
-**Merge behavior:** The endpoint reads the existing `_ad_clicks` cookie (if present), merges the new hashes with the existing ones, and writes back the updated cookie. Specifically:
+**Merge behavior:** The endpoint reads the existing `_ad_clicks` cookie (if present), merges the matched clicks with the existing entries, and writes back the updated cookie. Specifically:
 
 1. Parse the existing cookie into a `hash => timestamp` map.
-2. For each new hash: if the hash already exists in the map, update the timestamp to `time()`. If the hash does not exist, add it with `time()`.
+2. For each matched pair: set the hash's entry to the pair's timestamp, adding the hash if it is not in the map.
 3. If total > 50 hashes: remove the oldest (lowest timestamp) until 50 remain.
 4. Serialize back to cookie format and set the cookie.
 
@@ -47,7 +53,7 @@ This means the REST endpoint and the click handler use the same `Cookie_Manager`
 
 **Permission:** `permission_callback` is set to `'__return_true'` — all visitors must be able to call the endpoint (CSRF protection is handled via nonce, abuse protection via rate limiting).
 
-**Protection:** Nonce validation, rate limiting, hash validation against database, consent check, cookie limit (max 50 hashes), no write side effects to database.
+**Protection:** Nonce validation, rate limiting, format validation, hash validation against database, exact click-row match, consent check, cookie limit (max 50 hashes), no write side effects to database.
 
 ## Search Posts
 

@@ -320,7 +320,7 @@ final class Click_Handler {
 		match ( $consent_state ) {
 			true  => $this->set_cookie( $hash, $now ),
 			false => null, // Consent denied — attribution lost for this visitor.
-			null  => $this->handle_pending_consent( $hash, $target_url ),
+			null  => $this->handle_pending_consent( $hash, $now, $target_url ),
 		};
 
 		// Step 13: Redirect to the target page.
@@ -373,22 +373,27 @@ final class Click_Handler {
 	/**
 	 * Handles the transport mechanism when consent state is undetermined.
 	 *
-	 * The transport method is filterable: `cookie` sets a short-lived transport
-	 * cookie, `fragment` appends the hash as a URL fragment.
+	 * Hands the landing page the click as a `hash:timestamp` pair, where the
+	 * timestamp is the `clicked_at` of the click row the visitor's cookie
+	 * entry should point at once consent is granted. The transport method is
+	 * filterable: `cookie` sets a short-lived transport cookie, `fragment`
+	 * appends the pair as a URL fragment.
 	 *
-	 * @param string $hash       The SHA-256 hash to transport.
+	 * @param string $hash        The SHA-256 hash to transport.
+	 * @param int    $timestamp   Unix timestamp of the click row to refer to.
 	 * @param string &$target_url The target URL, modified in place for fragment transport.
 	 *
 	 * @return void
 	 * @since 1.0.0
+	 * @since 1.10.0 Transports the click timestamp along with the hash.
 	 */
-	private function handle_pending_consent( string $hash, string &$target_url ): void {
+	private function handle_pending_consent( string $hash, int $timestamp, string &$target_url ): void {
 		/** @var string $transport Transport method: 'cookie' or 'fragment'. */
 		$transport = apply_filters( 'kntnt_ad_attr_pending_transport', 'cookie' );
 
 		match ( $transport ) {
-			'fragment' => $target_url .= '#_aah=' . $hash,
-			default    => $this->cookie_manager->set_transport_cookie( $hash ),
+			'fragment' => $target_url .= '#_aah=' . $hash . ':' . $timestamp,
+			default    => $this->cookie_manager->set_transport_cookie( $hash, $timestamp ),
 		};
 	}
 
