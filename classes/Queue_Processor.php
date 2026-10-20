@@ -129,7 +129,7 @@ final class Queue_Processor {
 	public function process_single( int $job_id, bool $is_failed_job = false ): bool {
 		global $wpdb;
 
-		$table = $wpdb->prefix . 'kntnt_ad_attr_queue';
+		$table = Table::Queue->prefixed();
 
 		// Fetch the job directly.
 		$job = $wpdb->get_row( $wpdb->prepare(

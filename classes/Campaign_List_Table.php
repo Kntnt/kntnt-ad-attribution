@@ -394,8 +394,8 @@ final class Campaign_List_Table extends WP_List_Table {
 	private function build_from_where( bool $include_target = true ): array {
 		global $wpdb;
 
-		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
-		$conv_table   = $wpdb->prefix . 'kntnt_ad_attr_conversions';
+		$clicks_table = Table::Clicks->prefixed();
+		$conv_table   = Table::Conversions->prefixed();
 
 		// Start FROM posts so zero-click tracking URLs are included.
 		$from_where = "FROM {$wpdb->posts} p
