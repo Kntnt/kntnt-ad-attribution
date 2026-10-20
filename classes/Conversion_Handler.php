@@ -119,8 +119,9 @@ final class Conversion_Handler {
 	 *
 	 * Steps: cookie parse → hash validation → internal-traffic restriction
 	 * to test clicks → per-hash deduplication → attribution calculation →
-	 * conversions DB write → dedup cookie → test flag → recorded hook →
-	 * reporter enqueueing (test conversions only to reporters with
+	 * conversions DB write (one conversion reference on every row) → dedup
+	 * cookie → test flag → recorded hook → reporter enqueueing with the
+	 * conversion reference (test conversions only to reporters with
 	 * `supports_test`).
 	 *
 	 * @return void
@@ -210,6 +211,12 @@ final class Conversion_Handler {
 		$conv_table   = $wpdb->prefix . 'kntnt_ad_attr_conversions';
 		$converted_at = gmdate( 'Y-m-d H:i:s' );
 
+		// One reference for the whole conversion. A multi-touch model writes
+		// one row per credited click, and the shared reference is what makes
+		// those rows one conversion; every report job enqueued below carries
+		// it too, so the admin can delete or flag a conversion and its jobs.
+		$conversion_ref = wp_generate_uuid4();
+
 		$wpdb->query( 'START TRANSACTION' );
 
 		// Recorded hash => ID of the click row its conversion row links to.
@@ -248,6 +255,7 @@ final class Conversion_Handler {
 				'click_id'              => (int) $click_id,
 				'converted_at'          => $converted_at,
 				'fractional_conversion' => $value,
+				'conversion_ref'        => $conversion_ref,
 			] );
 
 			if ( $result === false ) {
@@ -335,11 +343,12 @@ final class Conversion_Handler {
 							$item['label'] ?? '',
 							$item['retry_params'] ?? [],
 							$item['not_before'] ?? null,
+							$conversion_ref,
 						);
 					} else {
 
 						// Legacy format: raw payload array.
-						$this->queue->enqueue( (string) $reporter_id, $item );
+						$this->queue->enqueue( (string) $reporter_id, $item, conversion_ref: $conversion_ref );
 					}
 				}
 			}

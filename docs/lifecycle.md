@@ -50,7 +50,7 @@ migrations/
 ├── 1.5.0.php    ← clicks + conversions tables, drops stats
 ├── 1.8.0.php    ← per-job retry columns and index on queue table
 ├── 1.9.0.php    ← deferred processing (not_before, last_attempt_at) columns
-└── 1.10.0.php   ← click-ID table keyed by click row (replaces the per-hash table), clicks.is_test test flag
+└── 1.10.0.php   ← click-ID table keyed by click row (replaces the per-hash table), clicks.is_test test flag, conversion_ref on conversions and queue
 ```
 
 Each file returns a callable:

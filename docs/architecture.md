@@ -125,15 +125,19 @@ CREATE TABLE {prefix}kntnt_ad_attr_conversions (
     click_id              BIGINT UNSIGNED NOT NULL,
     converted_at          DATETIME        NOT NULL,
     fractional_conversion DECIMAL(10,4)   NOT NULL,
+    conversion_ref        VARCHAR(36)     NULL,  -- v1.10.0
     PRIMARY KEY (id),
     INDEX idx_click_id (click_id),
-    INDEX idx_converted_at (converted_at)
+    INDEX idx_converted_at (converted_at),
+    INDEX idx_conversion_ref (conversion_ref)  -- v1.10.0
 ) {charset}
 ```
 
 **On conversion:**
 
 The handler looks up the click record matching the cookie timestamp, then inserts a conversion row with the fractional attribution value.
+
+`conversion_ref` (added by migration 1.10.0) identifies the conversion a row belongs to. `Conversion_Handler` generates one UUID (`wp_generate_uuid4()`) per conversion and writes it on every row, so the rows a multi-touch model writes for one conversion share it; `converted_at`, with one-second resolution, cannot tell two conversions apart. The report jobs enqueued for the conversion carry the same reference (see the queue table below). The migration gives each row written before 1.10.0 its own row ID as reference, so each old row is a conversion of its own; a UUID never looks like a row ID. The admin's conversion list groups, deletes and flags conversions by this column (see [admin-ui.md](admin-ui.md#conversions)).
 
 Aggregated statistics (total clicks, total conversions per tracking URL) are computed at query time via `COUNT()` and `SUM()` on these tables.
 
@@ -183,12 +187,14 @@ CREATE TABLE {prefix}kntnt_ad_attr_queue (
     retry_delay        INT UNSIGNED     NULL,
     max_rounds         TINYINT UNSIGNED NULL,
     round_delay        INT UNSIGNED     NULL,
+    conversion_ref     VARCHAR(36)      NULL,  -- v1.10.0
     PRIMARY KEY (id),
-    INDEX idx_status_eligible (status, not_before, retry_after, created_at)
+    INDEX idx_status_eligible (status, not_before, retry_after, created_at),
+    INDEX idx_queue_conversion_ref (conversion_ref)  -- v1.10.0
 ) {charset}
 ```
 
-Status transitions: `pending` → `processing` → `done` | `failed`. `status` is `VARCHAR(20)` instead of `ENUM` to avoid schema changes if new statuses are added. Retry logic is configurable per job via `attempts_per_round`, `retry_delay`, `max_rounds`, and `round_delay` columns (with global defaults from `Settings`). The `not_before` column defers processing until a specific time (NULL = immediately eligible); used by reporters like Google Ads that need a delay after click capture. The `last_attempt_at` column tracks when each job was last processed. The `label` column stores a human-readable job description for the admin queue management UI. Completed jobs are cleaned up after 30 days, failed jobs after 90 days.
+Status transitions: `pending` → `processing` → `done` | `failed`. `status` is `VARCHAR(20)` instead of `ENUM` to avoid schema changes if new statuses are added. Retry logic is configurable per job via `attempts_per_round`, `retry_delay`, `max_rounds`, and `round_delay` columns (with global defaults from `Settings`). The `not_before` column defers processing until a specific time (NULL = immediately eligible); used by reporters like Google Ads that need a delay after click capture. The `last_attempt_at` column tracks when each job was last processed. The `label` column stores a human-readable job description for the admin queue management UI. The `conversion_ref` column (v1.10.0) holds the reference of the conversion the job reports, set by `Conversion_Handler` through `Queue::enqueue()`; reporters neither see nor set it. Deleting a conversion or marking it as a test in the admin deletes its `pending` and `failed` jobs by this reference (`Queue::delete_unfinished_for_conversions()`). Jobs created before 1.10.0 have NULL and are never touched. Completed jobs are cleaned up after 30 days, failed jobs after 90 days.
 
 ### Target URL — Dynamic Resolving
 

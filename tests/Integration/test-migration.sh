@@ -112,6 +112,47 @@ flag_default=$(query_db "SELECT is_test FROM wp_kntnt_ad_attr_clicks WHERE hash 
 assert_equals "0" "$flag_default" "clicks.is_test defaults to 0 (a real click)"
 execute_sql "DELETE FROM wp_kntnt_ad_attr_clicks WHERE hash = '${flag_hash}'" > /dev/null
 
+# --- Conversions and report jobs carry a conversion reference (1.10.0) ---
+
+# Asserts that a table has the conversion_ref column exactly once and one
+# index on it.
+# Usage: assert_conversion_ref_column <table suffix> <label>
+assert_conversion_ref_column() {
+    local table="wp_kntnt_ad_attr_$1" label="$2" columns indexes
+    columns=$(query_db "SELECT COUNT(*) AS cnt FROM pragma_table_info('${table}') WHERE name = 'conversion_ref'" | jq -r '.cnt')
+    assert_equals "1" "$columns" "${label}: $1.conversion_ref exists exactly once"
+    indexes=$(query_db "SELECT COUNT(*) AS cnt FROM sqlite_master WHERE type='index' AND tbl_name='${table}' AND sql LIKE '%conversion_ref%'" | jq -r '.cnt')
+    assert_equals "1" "$indexes" "${label}: $1.conversion_ref has one index"
+}
+
+# The fresh install and the two re-runs above have all run the 1.10.0 file.
+assert_conversion_ref_column "conversions" "After re-runs"
+assert_conversion_ref_column "queue" "After re-runs"
+
+# Rows as code before 1.10.0 wrote them: a conversion row and a report job
+# without a reference.
+execute_sql "INSERT INTO wp_kntnt_ad_attr_conversions (click_id, converted_at, fractional_conversion) VALUES (999999998, '2026-01-01 00:00:00', 1.0)" > /dev/null
+legacy_conversion=$(query_db "SELECT id FROM wp_kntnt_ad_attr_conversions WHERE click_id = 999999998" | jq -r '.id')
+execute_sql "INSERT INTO wp_kntnt_ad_attr_queue (reporter, payload, status, created_at, label) VALUES ('legacy', '{}', 'done', '2026-01-01 00:00:00', 'LEGACY-JOB')" > /dev/null
+
+set_option "kntnt_ad_attr_version" "1.9.1"
+legacy_status=$(curl -sS -o /dev/null -w "%{http_code}" "${WP_BASE_URL}/" || true)
+assert_status "200" "$legacy_status" "Legacy rows: request that re-runs the migration succeeds"
+
+# Each conversion row from before 1.10.0 becomes a conversion of its own.
+legacy_ref=$(query_db "SELECT conversion_ref FROM wp_kntnt_ad_attr_conversions WHERE id = ${legacy_conversion}" | jq -r '.conversion_ref')
+assert_equals "$legacy_conversion" "$legacy_ref" "Legacy rows: an old conversion row gets its own row ID as reference"
+
+# Jobs from before 1.10.0 keep no reference, so no conversion action touches them.
+legacy_job_ref=$(query_db "SELECT conversion_ref FROM wp_kntnt_ad_attr_queue WHERE label = 'LEGACY-JOB'" | jq -r '.conversion_ref')
+assert_equals "null" "$legacy_job_ref" "Legacy rows: an old report job keeps no reference"
+
+assert_conversion_ref_column "conversions" "Legacy rows"
+assert_conversion_ref_column "queue" "Legacy rows"
+
+execute_sql "DELETE FROM wp_kntnt_ad_attr_conversions WHERE id = ${legacy_conversion}" > /dev/null
+execute_sql "DELETE FROM wp_kntnt_ad_attr_queue WHERE label = 'LEGACY-JOB'" > /dev/null
+
 # --- Queue table has status column with default ---
 
 queue_sql=$(query_db "SELECT sql FROM sqlite_master WHERE type='table' AND name='wp_kntnt_ad_attr_queue'" | jq -r '.sql')

@@ -179,6 +179,10 @@ The plugin adds **Ad Attribution** under **Tools** in the WordPress admin menu. 
 - **Bulk actions:** Move to Trash (for published URLs), Restore / Delete Permanently (for trashed URLs).
 - **Summary:** Shows total clicks and total (fractional) conversions for the selected filters.
 - **Export:** Export the filtered results as a CSV file (UTF-8 with BOM; semicolon delimiter when the locale uses comma as decimal separator). The CSV includes all fields including per-click Content, Term, Id, and Group from the clicks table.
+- **Conversions:** Below the campaign list, the recorded conversions for clicks in the selected date range, newest first: when each converted, the tracking URL (source, medium, campaign), click time, content, term and attribution weight of each attributed click, whether it is a test, and the status of its report jobs. A conversion credited to several clicks (multi-touch) is one row. To remove a conversion that should not count, such as a test you made with a real ad click:
+  - **Mark as test** flags its clicks as test clicks, which takes the clicks and the conversion out of the campaign list, its totals and the CSV export. **Unmark as test** puts them back.
+  - **Delete** removes the conversion and keeps its clicks.
+  - Both also delete its report jobs that have not been sent (pending or failed). A job that is being sent right now is left alone, and the notice says so; jobs already sent stay. Retracting a conversion already reported to an ad platform is up to the platform's add-on.
 
 **Note:** The plugin tracks clicks (requests to `/ad/<hash>`) and conversions. Requests from bots, speculative browser prefetches, internal traffic (logged-in users who can manage ad attribution) and repeats of an already recorded platform click ID (reloads, back/forward navigation, bookmarks) are not counted as clicks, and test clicks are left out of the statistics; see [Counting rules](docs/click-handling.md#counting-rules). Ad impressions are not available since they occur on the ad platform and never reach your server.
 
@@ -236,6 +240,8 @@ Logged-in administrators and editors (users with the `kntnt_ad_attr` capability)
 8. **Check the statistics.** The campaign list, its totals and the CSV export are unchanged by the test.
 
 Test clicks and test conversions stay in the database, flagged as tests, until the click retention cleanup removes them or the tracking URL is deleted permanently.
+
+A test made with an ordinary click, without the test parameter, is recorded as a real click and conversion. Mark it as a test in the **Conversions** list on the same page to take it out of the statistics and delete its unsent report jobs.
 
 If you want your own visits recorded as real ones, for example on a site where you are the only user, switch internal-traffic detection off:
 
@@ -776,6 +782,8 @@ A *conversion reporter* tells the core how to report a conversion to an external
 
 A reporter may also declare `'supports_test' => true`. Test conversions (those linked to a test click, see [Testing a live setup](#testing-a-live-setup)) are passed only to such reporters, with `$context['test'] === true`, so that they can call the platform's validate-only mode instead of uploading. A reporter without the key never sees a test conversion, so existing add-ons cannot upload one by accident.
 
+Since v1.10.0 each queued job records which conversion it reports. This is internal and does not change the item format, but it means that when an administrator deletes a conversion or marks it as a test, its jobs that are still pending or failed are deleted before `process` runs. Jobs already processing or done are left alone.
+
 ```php
 add_filter( 'kntnt_ad_attr_conversion_reporters', function ( array $reporters ): array {
     $reporters['my_platform'] = [
@@ -908,7 +916,7 @@ Requires `zip` and `msgfmt` (GNU gettext). With `--tag`: `git`. With `--update` 
 18. `Rest_Endpoint(Cookie_Manager, Consent)` — REST API routes
 19. `Settings_Page(Settings, Logger)` — settings page under Settings > Ad Attribution
 
-**Data model:** Tracking URLs are stored as a custom post type `kntnt_ad_attr_url` (with meta `_hash`, `_target_post_id`, `_utm_source`, `_utm_medium`, `_utm_campaign`). Individual clicks are stored in `{prefix}kntnt_ad_attr_clicks` with per-click UTM fields and a test flag (`is_test`, v1.10.0); a conversion is a test if it links to a test click, and the campaign list, its totals and the CSV export leave test clicks and their conversions out. Conversions are stored in `{prefix}kntnt_ad_attr_conversions` linked to specific clicks via `click_id`, with fractional attribution values. Platform-specific click IDs are stored per click in `{prefix}kntnt_ad_attr_click_ids` with composite PK `(click_id, platform)`, where `click_id` is the click row's ID, and an index on `(platform, value)` for looking up whether a click ID was already recorded for a tracking URL; they are deleted together with their click rows. Async report jobs are stored in `{prefix}kntnt_ad_attr_queue` with auto-increment PK and status-based processing.
+**Data model:** Tracking URLs are stored as a custom post type `kntnt_ad_attr_url` (with meta `_hash`, `_target_post_id`, `_utm_source`, `_utm_medium`, `_utm_campaign`). Individual clicks are stored in `{prefix}kntnt_ad_attr_clicks` with per-click UTM fields and a test flag (`is_test`, v1.10.0); a conversion is a test if it links to a test click, and the campaign list, its totals and the CSV export leave test clicks and their conversions out. Conversions are stored in `{prefix}kntnt_ad_attr_conversions` linked to specific clicks via `click_id`, with fractional attribution values; the rows of one conversion share a `conversion_ref` (v1.10.0, a UUID), which the report jobs enqueued for it carry too. Platform-specific click IDs are stored per click in `{prefix}kntnt_ad_attr_click_ids` with composite PK `(click_id, platform)`, where `click_id` is the click row's ID, and an index on `(platform, value)` for looking up whether a click ID was already recorded for a tracking URL; they are deleted together with their click rows. Async report jobs are stored in `{prefix}kntnt_ad_attr_queue` with auto-increment PK and status-based processing.
 
 **Lifecycle:** On activation, the plugin grants capabilities, runs migrations, registers rewrite rules, schedules cron, and creates the log directory (`wp-content/uploads/kntnt-ad-attribution/`) with `.htaccess` protection. On deactivation, it clears cron, transients, and rewrite rules but preserves all data. On uninstallation, it performs complete data removal — dropping all custom tables, deleting CPT posts, removing capabilities, clearing options (including `kntnt_ad_attr_settings`), and removing the log directory.
 
@@ -944,6 +952,7 @@ kntnt-ad-attribution/
 │   ├── Admin_Page.php            ← Tools page with merged view, URL CRUD, CSV export
 │   ├── Campaign_List_Table.php   ← WP_List_Table for the campaign list with bulk actions
 │   ├── Queue_List_Table.php      ← WP_List_Table for queue job management (run/delete)
+│   ├── Conversion_List_Table.php ← WP_List_Table for recorded conversions (delete, mark as test)
 │   ├── Csv_Exporter.php          ← CSV export with locale-aware formatting
 │   ├── Utm_Options.php           ← Predefined UTM source/medium options (filterable)
 │   ├── Settings_Page.php         ← Settings page under Settings > Ad Attribution
@@ -957,7 +966,7 @@ kntnt-ad-attribution/
 │   ├── 1.5.0.php                 ← Clicks + conversions tables, drops stats
 │   ├── 1.8.0.php                 ← Per-job retry columns and index on queue table
 │   ├── 1.9.0.php                 ← Deferred processing (not_before, last_attempt_at) columns
-│   └── 1.10.0.php                ← Click-ID table keyed by click row (replaces the per-hash table), clicks.is_test
+│   └── 1.10.0.php                ← Click-ID table keyed by click row (replaces the per-hash table), clicks.is_test, conversion_ref on conversions and queue
 ├── js/
 │   ├── pending-consent.js        ← Client-side: pending consent, sessionStorage, REST call
 │   └── admin.js                  ← Admin: select2, page selector, UTM field auto-fill

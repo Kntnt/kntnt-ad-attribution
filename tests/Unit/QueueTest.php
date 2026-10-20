@@ -628,3 +628,154 @@ describe('Queue::get_status()', function () {
     });
 
 });
+
+// ─── Conversion reference ───
+
+/**
+ * Creates a Settings mock that answers the queue's retry defaults.
+ *
+ * @return Mockery\MockInterface Settings mock.
+ */
+function queue_settings_with_retry_defaults(): Mockery\MockInterface {
+    $settings = Mockery::mock(Settings::class);
+    $settings->shouldReceive('get')->with('attempts_per_round')->andReturn(3);
+    $settings->shouldReceive('get')->with('retry_delay')->andReturn(60);
+    $settings->shouldReceive('get')->with('max_rounds')->andReturn(3);
+    $settings->shouldReceive('get')->with('round_delay')->andReturn(21600);
+    return $settings;
+}
+
+describe('Queue::enqueue() with a conversion reference', function () {
+
+    afterEach(function () {
+        unset($GLOBALS['wpdb']);
+    });
+
+    it('records the conversion the job reports', function () {
+        $wpdb = TestFactory::wpdb();
+        $GLOBALS['wpdb'] = $wpdb;
+        Functions\when('wp_json_encode')->alias(fn ($v) => json_encode($v));
+
+        $inserted = null;
+        $wpdb->shouldReceive('insert')
+            ->once()
+            ->withArgs(function (string $table, array $data, array $format) use (&$inserted) {
+                $inserted = array_combine(array_keys($data), $format);
+                expect($data['conversion_ref'])->toBe('8f14e45f-ceea-4e67-a1b2-c3d4e5f60718');
+                return true;
+            });
+
+        (new Queue(queue_settings_with_retry_defaults()))
+            ->enqueue('reporter', [], '', [], null, '8f14e45f-ceea-4e67-a1b2-c3d4e5f60718');
+
+        expect($inserted['conversion_ref'])->toBe('%s');
+    });
+
+    it('records no conversion for a job enqueued outside a conversion', function () {
+        $wpdb = TestFactory::wpdb();
+        $GLOBALS['wpdb'] = $wpdb;
+        Functions\when('wp_json_encode')->alias(fn ($v) => json_encode($v));
+
+        $wpdb->shouldReceive('insert')
+            ->once()
+            ->withArgs(function (string $table, array $data, array $format) {
+                expect($data)->toHaveKey('conversion_ref');
+                expect($data['conversion_ref'])->toBeNull();
+                expect(count($format))->toBe(count($data));
+                return true;
+            });
+
+        (new Queue(queue_settings_with_retry_defaults()))->enqueue('reporter', []);
+    });
+
+});
+
+describe('Queue::delete_unfinished_for_conversions()', function () {
+
+    afterEach(function () {
+        unset($GLOBALS['wpdb']);
+    });
+
+    it('deletes the pending and failed jobs of the given conversions and counts those still processing', function () {
+        $wpdb = TestFactory::wpdb();
+        $GLOBALS['wpdb'] = $wpdb;
+
+        $prepared = [];
+        $wpdb->shouldReceive('prepare')->andReturnUsing(function ($sql, ...$args) use (&$prepared) {
+            $prepared[] = [$sql, $args];
+            return 'q' . (count($prepared) - 1);
+        });
+        $wpdb->shouldReceive('query')->once()->with('q0')->andReturn(3);
+        $wpdb->shouldReceive('get_var')->once()->with('q1')->andReturn('1');
+
+        $result = (new Queue(Mockery::mock(Settings::class)))
+            ->delete_unfinished_for_conversions(['ref-a', 'ref-b']);
+
+        expect($result)->toBe(['deleted' => 3, 'processing' => 1]);
+
+        [$delete_sql, $delete_args] = $prepared[0];
+        expect($delete_sql)->toStartWith('DELETE FROM wp_kntnt_ad_attr_queue');
+        expect($delete_sql)->toContain('conversion_ref IN (%s,%s)');
+        expect($delete_sql)->toContain("status IN ('pending', 'failed')");
+        expect($delete_args)->toBe(['ref-a', 'ref-b']);
+
+        [$count_sql, $count_args] = $prepared[1];
+        expect($count_sql)->toContain('conversion_ref IN (%s,%s)');
+        expect($count_sql)->toContain("status = 'processing'");
+        expect($count_args)->toBe(['ref-a', 'ref-b']);
+    });
+
+    it('touches nothing when no conversion is given', function () {
+        $wpdb = TestFactory::wpdb();
+        $GLOBALS['wpdb'] = $wpdb;
+        $wpdb->shouldNotReceive('query');
+        $wpdb->shouldNotReceive('get_var');
+
+        $result = (new Queue(Mockery::mock(Settings::class)))->delete_unfinished_for_conversions([]);
+
+        expect($result)->toBe(['deleted' => 0, 'processing' => 0]);
+    });
+
+});
+
+describe('Queue::count_jobs_for_conversions()', function () {
+
+    afterEach(function () {
+        unset($GLOBALS['wpdb']);
+    });
+
+    it('returns the number of jobs per status for each conversion', function () {
+        $wpdb = TestFactory::wpdb();
+        $GLOBALS['wpdb'] = $wpdb;
+
+        $prepared = null;
+        $wpdb->shouldReceive('prepare')->once()->andReturnUsing(function ($sql, ...$args) use (&$prepared) {
+            $prepared = [$sql, $args];
+            return 'q';
+        });
+        $wpdb->shouldReceive('get_results')->once()->with('q')->andReturn([
+            (object) ['conversion_ref' => 'ref-a', 'status' => 'pending', 'cnt' => '2'],
+            (object) ['conversion_ref' => 'ref-a', 'status' => 'done', 'cnt' => '1'],
+            (object) ['conversion_ref' => 'ref-b', 'status' => 'processing', 'cnt' => '1'],
+        ]);
+
+        $counts = (new Queue(Mockery::mock(Settings::class)))->count_jobs_for_conversions(['ref-a', 'ref-b', 'ref-c']);
+
+        expect($counts)->toBe([
+            'ref-a' => ['pending' => 2, 'done' => 1],
+            'ref-b' => ['processing' => 1],
+        ]);
+        expect($prepared[0])->toContain('conversion_ref IN (%s,%s,%s)');
+        expect($prepared[0])->toContain('GROUP BY conversion_ref, status');
+        expect($prepared[1])->toBe(['ref-a', 'ref-b', 'ref-c']);
+    });
+
+    it('returns nothing without querying when no conversion is given', function () {
+        $wpdb = TestFactory::wpdb();
+        $GLOBALS['wpdb'] = $wpdb;
+        $wpdb->shouldNotReceive('get_results');
+
+        expect((new Queue(Mockery::mock(Settings::class)))->count_jobs_for_conversions([]))->toBe([]);
+    });
+
+});

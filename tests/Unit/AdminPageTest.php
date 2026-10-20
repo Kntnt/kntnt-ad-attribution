@@ -300,3 +300,240 @@ describe('Admin_Page::render_page()', function () {
     });
 
 });
+
+// ─── Conversion actions ───
+
+/**
+ * Exception standing in for wp_die(), which ends the request.
+ */
+class AdminDieException extends \RuntimeException {}
+
+/**
+ * Runs the page's load hook for a conversion action request and records
+ * what happened.
+ *
+ * `$_GET` must hold the request. Nonce checks pass unless `$nonce_ok` is
+ * false, the capability check passes unless `$can` is false, and the
+ * queue reports `$jobs`. Returns what the handler did: the nonce actions it
+ * checked, the prepared SQL statements [sql, args] it ran, the conversions
+ * it asked the queue to clean up, and the URL it redirected to, or the
+ * exception that ended the request.
+ *
+ * @param bool  $nonce_ok Whether check_admin_referer() accepts the nonce.
+ * @param bool  $can      Whether the user has the kntnt_ad_attr capability.
+ * @param array $jobs     What Queue::delete_unfinished_for_conversions() returns.
+ * @param int   $found    How many of the conversions exist.
+ *
+ * @return \ArrayObject Recorded effects.
+ */
+function run_conversion_action(bool $nonce_ok = true, bool $can = true, array $jobs = ['deleted' => 0, 'processing' => 0], int $found = 1): \ArrayObject {
+    [$page, $queue] = make_admin_page();
+    $did = new \ArrayObject(['nonces' => [], 'statements' => [], 'cleaned' => [], 'redirect' => null, 'ended_by' => null]);
+
+    $wpdb = TestFactory::wpdb();
+    $GLOBALS['wpdb'] = $wpdb;
+    $prepared = [];
+    $wpdb->shouldReceive('prepare')->andReturnUsing(function ($sql, ...$args) use (&$prepared) {
+        $prepared[] = [$sql, $args];
+        return count($prepared) - 1;
+    });
+    $wpdb->shouldReceive('get_var')->andReturn((string) $found);
+    $wpdb->shouldReceive('query')->andReturnUsing(function ($token) use (&$prepared, $did) {
+        $did['statements'] = [...$did['statements'], $prepared[$token]];
+        return 1;
+    });
+
+    $queue->shouldReceive('delete_unfinished_for_conversions')->andReturnUsing(function (array $refs) use ($did, $jobs) {
+        $did['cleaned'] = [...$did['cleaned'], $refs];
+        return $jobs;
+    });
+
+    \Patchwork\redefine('Kntnt\Ad_Attribution\Plugin::get_slug', fn () => 'kntnt-ad-attribution');
+    Functions\when('check_admin_referer')->alias(function ($action) use ($did, $nonce_ok) {
+        $did['nonces'] = [...$did['nonces'], $action];
+        if (!$nonce_ok) {
+            throw new AdminDieException('The link you followed has expired.');
+        }
+        return 1;
+    });
+    Functions\when('current_user_can')->alias(fn ($cap) => $cap === 'kntnt_ad_attr' ? $can : false);
+    Functions\when('wp_die')->alias(function ($message) {
+        throw new AdminDieException((string) $message);
+    });
+    Functions\when('admin_url')->alias(fn ($path = '') => 'https://example.com/wp-admin/' . $path);
+    Functions\when('add_query_arg')->alias(fn (array $args, string $url) => $url . '?' . http_build_query($args));
+    Functions\when('wp_safe_redirect')->alias(function ($url) {
+        throw new AdminExitException($url);
+    });
+    Functions\when('add_screen_option')->justReturn(null);
+
+    try {
+        $page->add_screen_options();
+    } catch (AdminExitException $e) {
+        $did['redirect'] = $e->getMessage();
+    } catch (AdminDieException $e) {
+        $did['ended_by'] = $e;
+    }
+
+    return $did;
+}
+
+describe('Admin_Page conversion actions', function () {
+
+    beforeEach(function () {
+        $_GET = [];
+    });
+
+    afterEach(function () {
+        $_GET = [];
+        unset($GLOBALS['wpdb']);
+    });
+
+    it('deletes a conversion\'s rows and its unfinished jobs, keeping its clicks', function () {
+        $_GET = [
+            'action'     => 'conversion_delete',
+            'conversion' => '8f14e45f-ceea-4e67-a1b2-c3d4e5f60718',
+            'date_start' => '2024-03-01',
+            'date_end'   => '2024-03-31',
+        ];
+
+        $did = run_conversion_action(jobs: ['deleted' => 2, 'processing' => 1]);
+
+        expect($did['nonces'])->toBe(['conversion_delete_8f14e45f-ceea-4e67-a1b2-c3d4e5f60718']);
+        expect($did['statements'])->toHaveCount(1);
+        [$sql, $args] = $did['statements'][0];
+        expect($sql)->toStartWith('DELETE FROM wp_kntnt_ad_attr_conversions');
+        expect($sql)->toContain('conversion_ref IN (%s)');
+        expect($args)->toBe(['8f14e45f-ceea-4e67-a1b2-c3d4e5f60718']);
+        expect($did['cleaned'])->toBe([['8f14e45f-ceea-4e67-a1b2-c3d4e5f60718']]);
+
+        parse_str((string) parse_url($did['redirect'], PHP_URL_QUERY), $back);
+        expect($back)->toBe([
+            'page'            => 'kntnt-ad-attribution',
+            'message'         => 'conversions-deleted',
+            'count'           => '1',
+            'jobs_deleted'    => '2',
+            'jobs_processing' => '1',
+            'date_start'      => '2024-03-01',
+            'date_end'        => '2024-03-31',
+        ]);
+    });
+
+    it('marks a conversion\'s attributed clicks as test clicks and deletes its unfinished jobs', function () {
+        $_GET = ['action' => 'conversion_mark_test', 'conversion' => 'ref-1'];
+
+        $did = run_conversion_action(jobs: ['deleted' => 1, 'processing' => 0]);
+
+        expect($did['nonces'])->toBe(['conversion_mark_test_ref-1']);
+        expect($did['statements'])->toHaveCount(1);
+        [$sql, $args] = $did['statements'][0];
+        expect($sql)->toStartWith('UPDATE wp_kntnt_ad_attr_clicks SET is_test = %d');
+        expect($sql)->toContain('WHERE id IN (SELECT click_id FROM wp_kntnt_ad_attr_conversions WHERE conversion_ref IN (%s))');
+        expect($args)->toBe([1, 'ref-1']);
+        expect($did['cleaned'])->toBe([['ref-1']]);
+        expect($did['redirect'])->toContain('message=conversions-marked');
+        expect($did['redirect'])->toContain('jobs_deleted=1');
+    });
+
+    it('unmarks a conversion\'s attributed clicks without touching its jobs', function () {
+        $_GET = ['action' => 'conversion_unmark_test', 'conversion' => 'ref-1'];
+
+        $did = run_conversion_action();
+
+        expect($did['nonces'])->toBe(['conversion_unmark_test_ref-1']);
+        [$sql, $args] = $did['statements'][0];
+        expect($sql)->toStartWith('UPDATE wp_kntnt_ad_attr_clicks SET is_test = %d');
+        expect($args)->toBe([0, 'ref-1']);
+        expect($did['cleaned'])->toBe([]);
+        expect($did['redirect'])->toContain('message=conversions-unmarked');
+    });
+
+    it('applies a bulk action to every selected conversion under the list\'s bulk nonce', function () {
+        $_GET = [
+            'action'     => '-1',
+            'action2'    => 'conversion_delete',
+            'conversion' => ['ref-1', 'ref-2', 'not a reference', 'ref-1'],
+        ];
+
+        $did = run_conversion_action(found: 2);
+
+        expect($did['nonces'])->toBe(['bulk-conversions']);
+        [$sql, $args] = $did['statements'][0];
+        expect($sql)->toContain('conversion_ref IN (%s,%s)');
+        expect($args)->toBe(['ref-1', 'ref-2']);
+        expect($did['cleaned'])->toBe([['ref-1', 'ref-2']]);
+        expect($did['redirect'])->toContain('count=2');
+    });
+
+    it('refuses an action without a valid nonce', function (array $request) {
+        $_GET = $request;
+
+        $did = run_conversion_action(nonce_ok: false);
+
+        expect($did['ended_by'])->toBeInstanceOf(AdminDieException::class);
+        expect($did['statements'])->toBe([]);
+        expect($did['cleaned'])->toBe([]);
+        expect($did['redirect'])->toBeNull();
+    })->with([
+        'row delete'      => [['action' => 'conversion_delete', 'conversion' => 'ref-1']],
+        'row mark'        => [['action' => 'conversion_mark_test', 'conversion' => 'ref-1']],
+        'row unmark'      => [['action' => 'conversion_unmark_test', 'conversion' => 'ref-1']],
+        'bulk delete'     => [['action' => 'conversion_delete', 'conversion' => ['ref-1']]],
+        'bulk mark'       => [['action' => 'conversion_mark_test', 'conversion' => ['ref-1']]],
+    ]);
+
+    it('refuses an action without the kntnt_ad_attr capability', function (array $request) {
+        $_GET = $request;
+
+        $did = run_conversion_action(can: false);
+
+        expect($did['ended_by'])->toBeInstanceOf(AdminDieException::class);
+        expect($did['statements'])->toBe([]);
+        expect($did['cleaned'])->toBe([]);
+        expect($did['redirect'])->toBeNull();
+    })->with([
+        'row delete'  => [['action' => 'conversion_delete', 'conversion' => 'ref-1']],
+        'row mark'    => [['action' => 'conversion_mark_test', 'conversion' => 'ref-1']],
+        'bulk unmark' => [['action' => 'conversion_unmark_test', 'conversion' => ['ref-1']]],
+    ]);
+
+});
+
+describe('Admin_Page conversions on the main view', function () {
+
+    beforeEach(function () {
+        $_GET = [];
+    });
+
+    afterEach(function () {
+        $_GET = [];
+        unset($GLOBALS['wpdb']);
+    });
+
+    it('lists the recorded conversions below the tracking URLs', function () {
+        [$page] = setup_render_env();
+        Filters\expectApplied('kntnt_ad_attr_conversion_reporters')->andReturn([]);
+
+        ob_start();
+        $page->render_page();
+        $output = ob_get_clean();
+
+        expect($output)->toContain('<h3>Conversions</h3>');
+        expect($output)->toContain('class="kntnt-ad-attr-conversions"');
+    });
+
+    it('reports what a conversion action did, and the jobs it left alone because they were processing', function () {
+        [$page] = setup_render_env();
+        Filters\expectApplied('kntnt_ad_attr_conversion_reporters')->andReturn([]);
+        $_GET = ['message' => 'conversions-deleted', 'count' => '1', 'jobs_deleted' => '2', 'jobs_processing' => '1'];
+
+        ob_start();
+        $page->render_page();
+        $output = ob_get_clean();
+
+        expect($output)->toContain('1 conversion(s) deleted. 2 unfinished report job(s) deleted.');
+        expect($output)->toContain('notice-warning');
+        expect($output)->toContain('1 report job(s) still processing were left untouched.');
+    });
+
+});

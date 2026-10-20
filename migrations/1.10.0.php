@@ -1,6 +1,7 @@
 <?php
 /**
- * Migration 1.10.0 — Per-click click IDs and the test flag on click rows.
+ * Migration 1.10.0 — Per-click click IDs, the test flag on click rows and
+ * the conversion reference on conversion rows and report jobs.
  *
  * Every section in this file must be safe to run more than once. The
  * Migrator records only the version reached, not which files or sections
@@ -72,6 +73,42 @@ return function ( \wpdb $wpdb ): void {
 
 	if ( $clicks_columns !== [] && ! in_array( 'is_test', $clicks_columns, true ) ) {
 		$wpdb->query( "ALTER TABLE {$clicks_table} ADD COLUMN is_test TINYINT(1) NOT NULL DEFAULT 0" );
+	}
+
+	// ─── Conversion reference on conversion rows and report jobs ───
+
+	// A multi-touch model writes one conversion as several rows, so the rows
+	// of one conversion share a reference (a UUID, see Conversion_Handler).
+	// Report jobs enqueued for a conversion carry the same reference, which
+	// lets the admin delete or flag a conversion together with its jobs. The
+	// column and its index are added together, only when the column is
+	// missing, so a re-run is a no-op.
+	$conversions_table  = $wpdb->prefix . 'kntnt_ad_attr_conversions';
+	$conversion_columns = $columns_of( $conversions_table );
+
+	if ( $conversion_columns !== [] && ! in_array( 'conversion_ref', $conversion_columns, true ) ) {
+		$wpdb->query( "ALTER TABLE {$conversions_table}
+			ADD COLUMN conversion_ref VARCHAR(36) NULL,
+			ADD INDEX idx_conversion_ref (conversion_ref)" );
+	}
+
+	// Rows written before 1.10.0 cannot be grouped reliably (rows of one
+	// conversion share only a converted_at with second resolution), so each
+	// becomes a conversion of its own, referenced by its row ID. A UUID never
+	// looks like a row ID, and only rows without a reference are touched.
+	if ( $conversion_columns !== [] ) {
+		$wpdb->query( "UPDATE {$conversions_table} SET conversion_ref = id WHERE conversion_ref IS NULL" );
+	}
+
+	// Jobs created before 1.10.0 keep NULL: they belong to no conversion, and
+	// no conversion action touches them.
+	$queue_table   = $wpdb->prefix . 'kntnt_ad_attr_queue';
+	$queue_columns = $columns_of( $queue_table );
+
+	if ( $queue_columns !== [] && ! in_array( 'conversion_ref', $queue_columns, true ) ) {
+		$wpdb->query( "ALTER TABLE {$queue_table}
+			ADD COLUMN conversion_ref VARCHAR(36) NULL,
+			ADD INDEX idx_queue_conversion_ref (conversion_ref)" );
 	}
 
 };

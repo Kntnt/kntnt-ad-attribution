@@ -150,9 +150,99 @@ Button below the list table (visible on publish view). Same query without LIMIT/
 
 **Nonce:** CSV export requires its own nonce validation (`kntnt_ad_attr_export`).
 
+## Conversions
+
+Below the CSV export button (publish view only), the admin page lists the recorded conversions in a **Conversions** section, rendered by `Conversion_List_Table` (a `WP_List_Table` subclass, v1.10.0). It is where a conversion that should not count, such as a test made with a real ad click, is deleted or marked as a test.
+
+**What a row is.** One row per conversion. A conversion is the set of conversion rows that share a `conversion_ref`: one row per credited click, so several under a multi-touch attribution model (see [conversion-handling.md](conversion-handling.md#database-write)). The per-click columns show one line per attributed click, highest weight first. A conversion recorded before 1.10.0 has its row ID as reference and is listed as a conversion of its own, even if a multi-touch model wrote it as several rows.
+
+**Selection and order.** The list follows the page's date range (`date_start`/`date_end`, as validated by `Campaign_List_Table::get_filter_params()`) and applies it to the attributed click's `clicked_at`, the same selection the main view counts conversions by. A conversion is listed when any of its attributed clicks falls in the range, and it is then shown whole. The source, medium, campaign and search filters do not apply. Test conversions are listed, flagged, although the main view leaves them out; conversions whose tracking URL has since been trashed or deleted are listed too. Newest first by `converted_at`, then by row ID.
+
+**Pagination.** 20 conversions per page. The table pages with its own query argument `conversions_paged` (`Conversion_List_Table::PAGE_ARG`), because the campaign table on the same screen uses `paged`. Its page links keep the rest of the current URL and drop the notice arguments of a finished action.
+
+**Columns:**
+
+| Column | Content |
+|--------|---------|
+| Checkbox | `conversion[]` with the conversion reference |
+| Converted | `converted_at` (`Y-m-d H:i` in site timezone). Row actions below it. |
+| Tracking URL | `source / medium / campaign` of each attributed click's tracking URL, or *(deleted)* |
+| Clicked | Each attributed click's `clicked_at` |
+| Content, Term | Each attributed click's `utm_content` and `utm_term`, or `—` |
+| Weight | Each attribution's `fractional_conversion`, two decimals |
+| Test | Each attributed click's test flag: Yes or No |
+| Report Jobs | The conversion's report jobs per status, e.g. "1 pending, 2 done", or `—` |
+
+**Row actions:** **Mark as test** (or **Unmark as test** for a test conversion, i.e. one with any test click) and **Delete**.
+
+**Bulk actions:** Mark as test, Unmark as test, Delete.
+
+### Actions
+
+| Action | Effect on conversion rows | Effect on clicks | Effect on report jobs |
+|--------|---------------------------|------------------|-----------------------|
+| Delete (`conversion_delete`) | Deleted | Kept | `pending` and `failed` deleted |
+| Mark as test (`conversion_mark_test`) | Kept | Attributed click rows get `is_test = 1` | `pending` and `failed` deleted |
+| Unmark as test (`conversion_unmark_test`) | Kept | Attributed click rows get `is_test = 0` | Untouched |
+
+- **Statistics.** Delete lowers the main view's conversions by the conversion's weight. Mark as test removes the attributed clicks and, through them, the conversion from the main view, its totals and the CSV export: the exclusion is the single `c.is_test = 0` condition described above. Unmark restores them.
+- **Shared clicks.** The test flag lives on the click row, so marking a conversion as a test also takes any other conversion linked to the same click out of the statistics, for example a second form submission by the same visitor after the same ad click, and unmarking puts it back. Such a conversion is then listed with Unmark too. Its report jobs are not deleted; mark it itself to delete them.
+- **Report jobs.** A job knows its conversion through `queue.conversion_ref` (see [architecture.md](architecture.md#report-queue--custom-table)). `pending` and `failed` jobs have not reached the platform and are deleted. A `processing` job may be talking to the platform right now; it is left alone and the notice says so. `done` jobs have already been sent and stay, shown in the Report Jobs column; retracting a conversion at the platform is up to the reporter's add-on. Jobs created before 1.10.0 have no reference and are never touched. Unmark does not recreate deleted jobs.
+
+**Routing.** Row actions are GET links `tools.php?page=kntnt-ad-attribution&action=<action>&conversion=<ref>&date_start=…&date_end=…&_wpnonce=…`. Bulk actions submit the list's own GET form, with `action`/`action2` from the bulk select and `conversion[]`. `Admin_Page::handle_form_submission()` routes the three action slugs to `handle_conversion_action()` **before** the tracking-URL actions; neither the slugs nor `conversion[]` overlap with the tracking URLs' `trash`/`restore`/`delete` and `post[]`.
+
+**Security.** Each request needs a valid nonce (row action: `{action}_{ref}`, e.g. `conversion_delete_<ref>`; bulk action: `bulk-conversions`, emitted by `WP_List_Table`) checked with `check_admin_referer()`, and the `kntnt_ad_attr` capability checked with `Plugin::authorize()`. A failed nonce ends in WordPress's 403 "link expired" page, a missing capability in a 403 `wp_die()`. References are kept only if they are up to 36 letters, digits and hyphens; all SQL is prepared.
+
+**Notice.** The handler redirects back to the page (with the same date range) with `message=conversions-deleted|conversions-marked|conversions-unmarked`, `count` (conversions found), `jobs_deleted` and `jobs_processing`. The success notice reads e.g. "1 conversion(s) deleted. 2 unfinished report job(s) deleted."; when `jobs_processing` is above zero, a warning adds "N report job(s) still processing were left untouched. They may still reach the ad platform."
+
+### SQL (Conversions)
+
+```sql
+-- Page of conversions (count: COUNT(DISTINCT cv.conversion_ref) with the same FROM/WHERE)
+SELECT cv.conversion_ref, MAX(cv.converted_at) AS converted_at, MAX(cv.id) AS last_row
+FROM {prefix}kntnt_ad_attr_conversions cv
+INNER JOIN {prefix}kntnt_ad_attr_clicks c ON c.id = cv.click_id
+WHERE c.clicked_at BETWEEN %s AND %s
+GROUP BY cv.conversion_ref
+ORDER BY converted_at DESC, last_row DESC
+LIMIT %d OFFSET %d
+
+-- All rows of the page's conversions, with click and tracking-URL fields
+SELECT cv.conversion_ref, cv.fractional_conversion,
+       c.clicked_at, c.utm_content, c.utm_term, c.is_test,
+       pm_src.meta_value AS utm_source, pm_med.meta_value AS utm_medium, pm_camp.meta_value AS utm_campaign
+FROM {prefix}kntnt_ad_attr_conversions cv
+INNER JOIN {prefix}kntnt_ad_attr_clicks c ON c.id = cv.click_id
+LEFT JOIN {wpdb->postmeta} pm_hash ON pm_hash.meta_key = '_hash' AND pm_hash.meta_value = c.hash
+LEFT JOIN {wpdb->postmeta} pm_src  ON pm_src.post_id  = pm_hash.post_id AND pm_src.meta_key  = '_utm_source'
+LEFT JOIN {wpdb->postmeta} pm_med  ON pm_med.post_id  = pm_hash.post_id AND pm_med.meta_key  = '_utm_medium'
+LEFT JOIN {wpdb->postmeta} pm_camp ON pm_camp.post_id = pm_hash.post_id AND pm_camp.meta_key = '_utm_campaign'
+WHERE cv.conversion_ref IN (%s, …)
+ORDER BY cv.fractional_conversion DESC, c.clicked_at DESC
+
+-- Report jobs per status (Queue::count_jobs_for_conversions)
+SELECT conversion_ref, status, COUNT(*) AS cnt
+FROM {prefix}kntnt_ad_attr_queue
+WHERE conversion_ref IN (%s, …)
+GROUP BY conversion_ref, status
+
+-- Delete
+DELETE FROM {prefix}kntnt_ad_attr_conversions WHERE conversion_ref IN (%s, …)
+
+-- Mark as test (1) / Unmark (0)
+UPDATE {prefix}kntnt_ad_attr_clicks SET is_test = %d
+WHERE id IN (SELECT click_id FROM {prefix}kntnt_ad_attr_conversions WHERE conversion_ref IN (%s, …))
+
+-- Unfinished jobs (Queue::delete_unfinished_for_conversions), then the processing count
+DELETE FROM {prefix}kntnt_ad_attr_queue WHERE conversion_ref IN (%s, …) AND status IN ('pending', 'failed')
+SELECT COUNT(*) FROM {prefix}kntnt_ad_attr_queue WHERE conversion_ref IN (%s, …) AND status = 'processing'
+```
+
+The writes use subqueries rather than multi-table `… JOIN` statements, so they run unchanged in the SQLite translator used by the integration tests.
+
 ## Report Queue
 
-Below the campaign list table and CSV export button, the admin page displays a **Report Queue** section (rendered by `Queue_List_Table`, a `WP_List_Table` subclass). This section is always present but shows "No jobs in the queue." when empty. It displays active and recently completed queue jobs.
+Below the conversion list, the admin page displays a **Report Queue** section (rendered by `Queue_List_Table`, a `WP_List_Table` subclass). This section is always present but shows "No jobs in the queue." when empty. It displays active and recently completed queue jobs.
 
 **Columns:**
 

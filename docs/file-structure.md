@@ -28,6 +28,7 @@ kntnt-ad-attribution/
 │   ├── Admin_Page.php            ← Tools page with merged view, URL CRUD, CSV export
 │   ├── Campaign_List_Table.php   ← WP_List_Table for campaign reporting
 │   ├── Queue_List_Table.php      ← WP_List_Table for queue job management (run/delete)
+│   ├── Conversion_List_Table.php ← WP_List_Table for recorded conversions (delete, mark as test)
 │   ├── Csv_Exporter.php          ← CSV export with locale-aware formatting
 │   ├── Utm_Options.php           ← Predefined UTM source/medium options (filterable)
 │   ├── Settings_Page.php         ← Settings page under Settings > Ad Attribution
@@ -41,7 +42,7 @@ kntnt-ad-attribution/
 │   ├── 1.5.0.php                 ← Clicks + conversions tables, drops stats
 │   ├── 1.8.0.php                 ← Per-job retry columns and index on queue table
 │   ├── 1.9.0.php                 ← Deferred processing (not_before, last_attempt_at) columns
-│   └── 1.10.0.php                ← Click-ID table keyed by click row (replaces the per-hash table), clicks.is_test
+│   └── 1.10.0.php                ← Click-ID table keyed by click row (replaces the per-hash table), clicks.is_test, conversion_ref on conversions and queue
 ├── js/
 │   ├── pending-consent.js        ← Client-side: pending consent, sessionStorage, REST call
 │   └── admin.js                  ← Admin: select2, page selector, UTM field auto-fill
