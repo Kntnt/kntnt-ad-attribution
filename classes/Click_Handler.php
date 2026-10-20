@@ -27,6 +27,17 @@ namespace Kntnt\Ad_Attribution;
 final class Click_Handler {
 
 	/**
+	 * Number of leading hash characters written to the diagnostic log.
+	 *
+	 * Enough to tell tracking URLs apart, without writing the full
+	 * identifier to a file.
+	 *
+	 * @var int
+	 * @since 1.10.0
+	 */
+	private const LOG_HASH_PREFIX_LENGTH = 8;
+
+	/**
 	 * Cookie manager for reading/writing tracking cookies.
 	 *
 	 * @var Cookie_Manager
@@ -67,6 +78,14 @@ final class Click_Handler {
 	private readonly Speculation_Detector $speculation_detector;
 
 	/**
+	 * Logger for the per-request diagnostic line.
+	 *
+	 * @var Logger|null
+	 * @since 1.10.0
+	 */
+	private readonly ?Logger $logger;
+
+	/**
 	 * Initializes the click handler with its dependencies.
 	 *
 	 * @param Cookie_Manager       $cookie_manager       Cookie read/write operations.
@@ -74,16 +93,18 @@ final class Click_Handler {
 	 * @param Bot_Detector         $bot_detector         Bot traffic detection.
 	 * @param Click_ID_Store       $click_id_store       Platform-specific click ID storage.
 	 * @param Speculation_Detector $speculation_detector Speculative request detection.
+	 * @param Logger|null          $logger               Optional diagnostic logger.
 	 *
 	 * @since 1.0.0
-	 * @since 1.10.0 Takes a Speculation_Detector.
+	 * @since 1.10.0 Takes a Speculation_Detector and an optional Logger.
 	 */
-	public function __construct( Cookie_Manager $cookie_manager, Consent $consent, Bot_Detector $bot_detector, Click_ID_Store $click_id_store, Speculation_Detector $speculation_detector ) {
+	public function __construct( Cookie_Manager $cookie_manager, Consent $consent, Bot_Detector $bot_detector, Click_ID_Store $click_id_store, Speculation_Detector $speculation_detector, ?Logger $logger = null ) {
 		$this->cookie_manager       = $cookie_manager;
 		$this->consent              = $consent;
 		$this->bot_detector         = $bot_detector;
 		$this->click_id_store       = $click_id_store;
 		$this->speculation_detector = $speculation_detector;
+		$this->logger               = $logger;
 	}
 
 	/**
@@ -223,8 +244,9 @@ final class Click_Handler {
 			$this->send_404();
 		}
 
-		// Step 9: Bot check — bots get redirected without logging or cookies.
+		// Step 9: Bot check — bots get redirected without a click row or cookies.
 		if ( $this->bot_detector->is_bot() ) {
+			$this->log_request( 'bot', $hash );
 			$this->redirect( $target_url );
 		}
 
@@ -233,6 +255,7 @@ final class Click_Handler {
 		// makes the browser discard it, so a real click that follows reaches
 		// the server as a fresh request and is counted once.
 		if ( $this->speculation_detector->is_speculative() ) {
+			$this->log_request( 'speculative', $hash );
 			$this->decline_speculative();
 		}
 
@@ -259,6 +282,7 @@ final class Click_Handler {
 				false => null,
 				null  => $this->handle_pending_consent( $hash, $original_click['clicked_at'], $target_url ),
 			};
+			$this->log_request( 'repeat', $hash );
 			$this->redirect( $target_url );
 		}
 
@@ -281,6 +305,7 @@ final class Click_Handler {
 				// entry at it, which repairs the cookie.
 				if ( $this->click_row_exists( $hash, $existing[ $hash ] ) ) {
 					$this->set_cookie( $hash, $existing[ $hash ] );
+					$this->log_request( 'deduplicated', $hash );
 					$this->redirect( $target_url );
 				}
 			}
@@ -346,8 +371,8 @@ final class Click_Handler {
 			}
 		}
 
-		// Notify companion plugins about the click. Fires for all non-bot
-		// clicks regardless of consent state. Allows add-ons to capture
+		// Notify companion plugins about the click. Fires for every recorded
+		// click regardless of consent state. Allows add-ons to capture
 		// platform-specific parameters (e.g. gclid) from $_GET.
 		do_action( 'kntnt_ad_attr_click', $hash, $target_url, [
 			'post_id'     => $post_id,
@@ -364,6 +389,7 @@ final class Click_Handler {
 		};
 
 		// Step 13: Redirect to the target page.
+		$this->log_request( 'recorded', $hash );
 		$this->redirect( $target_url );
 	}
 
@@ -381,6 +407,54 @@ final class Click_Handler {
 		$entries = $this->cookie_manager->parse();
 		$entries = $this->cookie_manager->add( $entries, $hash, $timestamp );
 		$this->cookie_manager->set_clicks_cookie( $entries );
+	}
+
+	/**
+	 * Writes the diagnostic line for a tracking URL request.
+	 *
+	 * Called exactly once per request that reaches a decision, just before
+	 * the response ends it, so the log shows how every request was counted.
+	 * The line holds the outcome, the hash prefix and the raw speculation
+	 * and User-Agent headers, which is what is needed to measure what
+	 * prefetches, previews and scanners still get counted. It deliberately
+	 * holds no IP address. Another per-request fact belongs in the same
+	 * line as one more field, never in a second line. Logger writes nothing
+	 * unless logging is enabled.
+	 *
+	 * @param string $outcome How the request was counted: 'recorded', 'repeat', 'deduplicated', 'speculative' or 'bot'.
+	 * @param string $hash    The tracking URL hash.
+	 *
+	 * @return void
+	 * @since 1.10.0
+	 */
+	private function log_request( string $outcome, string $hash ): void {
+		$fields = [
+			'outcome'     => $outcome,
+			'hash'        => substr( $hash, 0, self::LOG_HASH_PREFIX_LENGTH ),
+			'sec_purpose' => self::quote_header( 'HTTP_SEC_PURPOSE' ),
+			'purpose'     => self::quote_header( 'HTTP_PURPOSE' ),
+			'user_agent'  => self::quote_header( 'HTTP_USER_AGENT' ),
+		];
+
+		$pairs = array_map( fn( string $key, string $value ) => "{$key}={$value}", array_keys( $fields ), $fields );
+
+		$this->logger?->info( 'CORE', 'Tracking URL request: ' . implode( ' ', $pairs ) );
+	}
+
+	/**
+	 * Returns a request header from $_SERVER as a double-quoted log value.
+	 *
+	 * Sanitizing strips line breaks, so a crafted header cannot forge a log
+	 * line; escaping keeps quotes inside the value unambiguous.
+	 *
+	 * @param string $key The $_SERVER key, e.g. 'HTTP_USER_AGENT'.
+	 *
+	 * @return string The value in double quotes, `""` if the header is absent.
+	 * @since 1.10.0
+	 */
+	private static function quote_header( string $key ): string {
+		$value = sanitize_text_field( wp_unslash( (string) ( $_SERVER[ $key ] ?? '' ) ) );
+		return '"' . addcslashes( $value, '"\\' ) . '"';
 	}
 
 	/**

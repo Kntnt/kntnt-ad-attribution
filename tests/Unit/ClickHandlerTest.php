@@ -14,6 +14,7 @@ use Kntnt\Ad_Attribution\Consent;
 use Kntnt\Ad_Attribution\Bot_Detector;
 use Kntnt\Ad_Attribution\Click_ID_Store;
 use Kntnt\Ad_Attribution\Speculation_Detector;
+use Kntnt\Ad_Attribution\Logger;
 use Brain\Monkey\Functions;
 use Brain\Monkey\Actions;
 use Brain\Monkey\Filters;
@@ -29,16 +30,18 @@ class ExitException extends \RuntimeException {}
  *
  * The speculation detector is the real one: it only reads request headers
  * through the kntnt_ad_attr_is_speculative filter, which Brain Monkey
- * passes through as false unless a test sets an expectation on it.
+ * passes through as false unless a test sets an expectation on it. The
+ * logger is a spy, so tests that do not care about logging can ignore it.
  *
- * @return array{0: Click_Handler, 1: Mockery\MockInterface, 2: Mockery\MockInterface, 3: Mockery\MockInterface, 4: Mockery\MockInterface}
+ * @return array{0: Click_Handler, 1: Mockery\MockInterface, 2: Mockery\MockInterface, 3: Mockery\MockInterface, 4: Mockery\MockInterface, 5: Mockery\MockInterface}
  */
 function make_click_handler(): array {
-    $cm  = Mockery::mock(Cookie_Manager::class);
-    $con = Mockery::mock(Consent::class);
-    $bd  = Mockery::mock(Bot_Detector::class);
-    $cis = Mockery::mock(Click_ID_Store::class);
-    return [new Click_Handler($cm, $con, $bd, $cis, new Speculation_Detector()), $cm, $con, $bd, $cis];
+    $cm     = Mockery::mock(Cookie_Manager::class);
+    $con    = Mockery::mock(Consent::class);
+    $bd     = Mockery::mock(Bot_Detector::class);
+    $cis    = Mockery::mock(Click_ID_Store::class);
+    $logger = Mockery::spy(Logger::class);
+    return [new Click_Handler($cm, $con, $bd, $cis, new Speculation_Detector(), $logger), $cm, $con, $bd, $cis, $logger];
 }
 
 /**
@@ -1478,6 +1481,146 @@ describe('Click_Handler::handle_click() repeat click IDs', function () {
             ->andReturnUsing(fn () => throw new ExitException('redirect'));
 
         expect(fn () => $handler->handle_click())->toThrow(ExitException::class, 'redirect');
+    });
+
+});
+
+// ─── handle_click(): diagnostic log line ───
+
+/**
+ * Collects every line written through the logger, at any level.
+ *
+ * @return ArrayObject<int, string> Lines as "[PREFIX][level] message".
+ */
+function capture_log_lines(Mockery\MockInterface $logger): ArrayObject {
+    $lines = new ArrayObject();
+    foreach (['info', 'warning', 'error'] as $level) {
+        $logger->shouldReceive($level)->andReturnUsing(function (string $prefix, string $message) use ($lines, $level) {
+            $lines[] = "[{$prefix}][{$level}] {$message}";
+        });
+    }
+    return $lines;
+}
+
+/**
+ * Asserts that exactly one line was logged, at INFO under CORE, holding
+ * the outcome, the hash prefix and the raw request headers, and no IP.
+ */
+function expect_single_request_log_line(ArrayObject $lines, string $outcome, string $hash, string $sec_purpose, string $purpose, string $user_agent): void {
+    expect($lines)->toHaveCount(1);
+    expect($lines[0])
+        ->toStartWith('[CORE][info] ')
+        ->toContain("outcome={$outcome}")
+        ->toContain('hash=' . substr($hash, 0, 8))
+        ->toContain("sec_purpose=\"{$sec_purpose}\"")
+        ->toContain("purpose=\"{$purpose}\"")
+        ->toContain("user_agent=\"{$user_agent}\"")
+        ->not->toContain($_SERVER['REMOTE_ADDR']);
+}
+
+describe('Click_Handler::handle_click() diagnostic log line', function () {
+
+    beforeEach(function () {
+        $_SERVER['REMOTE_ADDR']     = '203.0.113.7';
+        $_SERVER['HTTP_USER_AGENT'] = 'Mozilla/5.0 (Macintosh) Chrome/120.0.0.0';
+        $_SERVER['HTTP_PURPOSE']    = 'preview';
+    });
+
+    afterEach(function () {
+        unset(
+            $GLOBALS['wpdb'],
+            $_SERVER['REMOTE_ADDR'],
+            $_SERVER['HTTP_USER_AGENT'],
+            $_SERVER['HTTP_PURPOSE'],
+            $_SERVER['HTTP_SEC_PURPOSE'],
+        );
+        $_GET = [];
+    });
+
+    it('logs one recorded line for a new click', function () {
+        [$handler, $cm, $con, $bd, $cis, $logger] = make_click_handler();
+        $lines = capture_log_lines($logger);
+        $hash  = TestFactory::hash('log-recorded');
+        $wpdb  = stub_tracking_url_request($cm, $hash);
+
+        $bd->shouldReceive('is_bot')->andReturn(false);
+        $con->shouldReceive('check')->andReturn(false);
+        $wpdb->shouldReceive('insert')->once()->andReturn(true);
+        Functions\expect('nocache_headers')->once();
+        Functions\expect('wp_redirect')->once()->andReturnUsing(fn () => throw new ExitException('redirect'));
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class, 'redirect');
+
+        expect_single_request_log_line($lines, 'recorded', $hash, '', 'preview', 'Mozilla/5.0 (Macintosh) Chrome/120.0.0.0');
+    });
+
+    it('logs one repeat line for a repeat click ID', function () {
+        [$handler, $cm, $con, $bd, $cis, $logger] = make_click_handler();
+        $lines = capture_log_lines($logger);
+        $hash  = TestFactory::hash('log-repeat');
+        stub_repeat_request($cm, $bd, $cis, $hash, 1699990000);
+        $con->shouldReceive('check')->andReturn(false);
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class, 'redirect');
+
+        expect_single_request_log_line($lines, 'repeat', $hash, '', 'preview', 'Mozilla/5.0 (Macintosh) Chrome/120.0.0.0');
+    });
+
+    it('logs one deduplicated line for a click inside the dedup window', function () {
+        [$handler, $cm, $con, $bd, $cis, $logger] = make_click_handler();
+        $lines = capture_log_lines($logger);
+        $hash  = TestFactory::hash('log-deduplicated');
+        $now   = 1700000000;
+        $wpdb  = stub_tracking_url_request($cm, $hash);
+
+        $bd->shouldReceive('is_bot')->andReturn(false);
+        Functions\when('time')->justReturn($now);
+        $con->shouldReceive('check')->andReturn(true);
+        Filters\expectApplied('kntnt_ad_attr_dedup_seconds')->andReturn(3600);
+        $cm->shouldReceive('parse')->andReturn([$hash => $now - 1800]);
+        $wpdb->shouldReceive('get_var')->once()->andReturn('7');
+        $wpdb->shouldNotReceive('insert');
+        $cm->shouldReceive('add')->andReturn([$hash => $now - 1800]);
+        $cm->shouldReceive('set_clicks_cookie')->once();
+        Functions\expect('nocache_headers')->once();
+        Functions\expect('wp_redirect')->once()->andReturnUsing(fn () => throw new ExitException('redirect'));
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class, 'redirect');
+
+        expect_single_request_log_line($lines, 'deduplicated', $hash, '', 'preview', 'Mozilla/5.0 (Macintosh) Chrome/120.0.0.0');
+    });
+
+    it('logs one speculative line for a prefetch', function () {
+        [$handler, $cm, $con, $bd, $cis, $logger] = make_click_handler();
+        $lines = capture_log_lines($logger);
+        $hash  = TestFactory::hash('log-speculative');
+        stub_tracking_url_request($cm, $hash);
+
+        $_SERVER['HTTP_SEC_PURPOSE'] = 'prefetch;prerender';
+        $bd->shouldReceive('is_bot')->andReturn(false);
+        apply_default_speculation_detection();
+        Functions\expect('status_header')->once()->with(503);
+        Functions\expect('nocache_headers')->once()->andReturnUsing(fn () => throw new ExitException('503'));
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class, '503');
+
+        expect_single_request_log_line($lines, 'speculative', $hash, 'prefetch;prerender', 'preview', 'Mozilla/5.0 (Macintosh) Chrome/120.0.0.0');
+    });
+
+    it('logs one bot line for a bot', function () {
+        [$handler, $cm, $con, $bd, $cis, $logger] = make_click_handler();
+        $lines = capture_log_lines($logger);
+        $hash  = TestFactory::hash('log-bot');
+        stub_tracking_url_request($cm, $hash);
+
+        $_SERVER['HTTP_USER_AGENT'] = 'Googlebot/2.1';
+        $bd->shouldReceive('is_bot')->andReturn(true);
+        Functions\expect('nocache_headers')->once();
+        Functions\expect('wp_redirect')->once()->andReturnUsing(fn () => throw new ExitException('redirect'));
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class, 'redirect');
+
+        expect_single_request_log_line($lines, 'bot', $hash, '', 'preview', 'Googlebot/2.1');
     });
 
 });
