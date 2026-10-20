@@ -206,6 +206,17 @@ set_internal_default() {
     set_option "test_internal_default" "$mode"
 }
 
+# Withhold the kntnt_ad_attr capability from every user on the plugin's
+# admin page, after WordPress has let the user open it, so that the plugin's
+# own capability check is what refuses an action (see test-helpers.php). The
+# login and its nonces stay valid.
+# Usage: withhold_capability on|off
+withhold_capability() {
+    local mode="$1"
+    [[ "$mode" == "off" ]] && mode=""
+    set_option "test_withhold_capability" "$mode"
+}
+
 # Switch the plugin's diagnostic logging (see test-helpers.php).
 # Usage: set_logging on|off
 set_logging() {

@@ -74,6 +74,21 @@ if (isset($_SERVER['HTTP_X_TEST_PLUGIN_COOKIES'])) {
     unset($plugin_cookies, $pair, $name, $value);
 }
 
+// Capability withdrawal. Every request carries the admin login (see above),
+// so a suite cannot act as a user without the plugin's capability. With the
+// string option test_withhold_capability set to "on", kntnt_ad_attr is
+// withheld from every user once the plugin's admin page has started loading
+// (its load- hook), that is after WordPress has let the user open the page.
+// The plugin's own check in the page's action handlers is then what refuses,
+// while the login and its nonces stay valid. fixtures.sh:
+// withhold_capability.
+add_filter('user_has_cap', function (array $allcaps): array {
+    if (get_option('test_withhold_capability', '') === 'on' && did_action('load-tools_page_kntnt-ad-attribution') > 0) {
+        $allcaps['kntnt_ad_attr'] = false;
+    }
+    return $allcaps;
+});
+
 /*
  * Probe adapters: a click-ID capturer and a conversion reporter that suites
  * switch on through string options (test-set-option), so no add-on plugin

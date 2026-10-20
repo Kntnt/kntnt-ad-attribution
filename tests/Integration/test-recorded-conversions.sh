@@ -9,10 +9,8 @@
 # conversion from the main view, its totals and the CSV export, and Unmark
 # restores them; that the bulk actions work; that Mark as test deletes the
 # unfinished jobs of every conversion on the flagged click and counts them;
-# and that an action without a valid nonce is refused.
-#
-# The capability check is covered by the unit tests: the Playground cookie
-# store makes every request carry the admin login (see testing-strategy.md).
+# and that an action without a valid nonce, or by a user without the
+# kntnt_ad_attr capability, is refused.
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -254,9 +252,29 @@ result=$(admin_get "$(action_url "$(conversion_row "$(conversion_list)" "$REF_B2
 assert_contains "$result" "count=2" "Unmark counts both conversions on the click"
 assert_equals "0" "$(click_is_test "$REF_B")" "Unmark clears the flag of the shared click"
 
+# --- 7. A user without the capability is refused, with a valid nonce ---
+
+REF_C=$(click_and_convert)
+ROW_C=$(conversion_row "$(conversion_list)" "$REF_C")
+
+# The admin keeps the login and the links keep their nonces; the plugin's
+# own capability check is what must refuse (see withhold_capability).
+withhold_capability on
+for action in conversion_delete conversion_mark_test; do
+    refused=$(curl -sS -w '\n%{http_code}' -b "${ADMIN_COOKIE}" "$(action_url "$ROW_C" "$action")" 2>/dev/null || true)
+    assert_equals "403" "$(echo "$refused" | tail -n 1)" "${action} without the capability is refused"
+    assert_contains "$refused" "You do not have permission to access this page." "${action} is refused by the plugin's capability check"
+done
+withhold_capability off
+
+assert_equals "1" "$(count_conversion_rows "$REF_C")" "A refused Delete keeps the conversion"
+assert_equals "0" "$(click_is_test "$REF_C")" "A refused Mark as test leaves the click alone"
+assert_equals "1" "$(count_jobs "$REF_C" pending)" "Refused actions keep the conversion's jobs"
+
 # --- Cleanup ---
 
-execute_sql "DELETE FROM wp_kntnt_ad_attr_queue WHERE conversion_ref IN ('${REF_A}', '${REF_B}', '${REF_B2}')" > /dev/null
+execute_sql "DELETE FROM wp_kntnt_ad_attr_queue WHERE conversion_ref IN ('${REF_A}', '${REF_B}', '${REF_B2}', '${REF_C}')" > /dev/null
+withhold_capability off
 reset_probes
 set_consent_state "default"
 clear_cookies

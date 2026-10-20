@@ -534,10 +534,11 @@ Two mu-plugins provide test infrastructure:
 
   Suites switch them on with `set_probe_capturers`, `set_probe_reporter` and `set_probe_recorded`, read calls with `get_probe_calls` and `get_recorded_calls`, and must call `reset_probes` at the end.
 
-  It also sets up two pieces of request handling:
+  It also sets up these pieces of request handling:
 
   - **Internal traffic is off.** Suites trigger conversions as the logged-in admin, which the plugin treats as internal traffic and does not record. A `kntnt_ad_attr_is_internal` callback at `PHP_INT_MAX` therefore returns `false`, as the documented one-liner does, unless option `test_internal_default` is `on` (`set_internal_default on|off`). A suite that turns it on must turn it off at its end.
   - **Anonymous visitors.** A request with the header `X-Test-Visitor: anonymous` is stripped of the WordPress login cookies before WordPress determines the current user. See [Playground's cookie store](#playgrounds-cookie-store).
+  - **Capability withdrawal.** With option `test_withhold_capability` set to `on` (`withhold_capability on|off`), a `user_has_cap` filter withholds `kntnt_ad_attr` from every user once the plugin's admin page has started loading (`load-tools_page_kntnt-ad-attribution`), after WordPress has let the user open the page. The plugin's own check in the action handlers is then what refuses, while the login and its nonces stay valid. A suite that turns it on must turn it off at its end.
   - **Plugin cookies.** A request with the header `X-Test-Plugin-Cookies` carries exactly the plugin cookies (`_ad_clicks`, `_aah_pending`, `_ad_last_conv`) the header names, in Cookie-header syntax, and none for the value `none`; they replace those in `$_COOKIE` before the plugin reads it. `plugin_cookies "_ad_clicks=<value>"` prints the header, and `plugin_cookies` alone prints it for a visitor without plugin cookies. See [Playground's cookie store](#playgrounds-cookie-store).
 
 ### 7.3 Bootstrap Flow
@@ -553,7 +554,7 @@ Two mu-plugins provide test infrastructure:
 
 **`helpers/assertions.sh`** provides: `assert_status`, `assert_contains`, `assert_not_contains`, `assert_equals`, `assert_greater_than`, `assert_json_field`, `print_summary`. Each assertion increments `TESTS_RUN` and optionally `TESTS_FAILED`.
 
-**`helpers/fixtures.sh`** provides: `create_tracking_url`, `create_target_page`, `simulate_click`, `get_click_cookies`, `extract_cookie_value`, `set_consent_state`, `get_click_count`, `query_db`, `query_db_rows`, `execute_sql`, `flush_rewrites`, `trigger_conversion`, `clear_cookies`, `strip_secure_flag`, `set_option`, `set_dedup_seconds`, `set_internal_default` (`on`|`off`), `trigger_conversion_without_nonce`, `plugin_cookies` (the `X-Test-Plugin-Cookies` header), the logging helpers `set_logging` (`on`|`off`), `get_log` and `clear_log`, and the probe adapter switches `set_probe_capturers`, `set_probe_reporter` (`on`|`supports_test`|`off`), `get_probe_calls` (JSON array of recorded `enqueue` calls), `reset_probe_calls`, `set_probe_recorded` (`on`|`off`), `get_recorded_calls` and `reset_probes`.
+**`helpers/fixtures.sh`** provides: `create_tracking_url`, `create_target_page`, `simulate_click`, `get_click_cookies`, `extract_cookie_value`, `set_consent_state`, `get_click_count`, `query_db`, `query_db_rows`, `execute_sql`, `flush_rewrites`, `trigger_conversion`, `clear_cookies`, `strip_secure_flag`, `set_option`, `set_dedup_seconds`, `set_internal_default` (`on`|`off`), `trigger_conversion_without_nonce`, `plugin_cookies` (the `X-Test-Plugin-Cookies` header), `withhold_capability` (`on`|`off`), the logging helpers `set_logging` (`on`|`off`), `get_log` and `clear_log`, and the probe adapter switches `set_probe_capturers`, `set_probe_reporter` (`on`|`supports_test`|`off`), `get_probe_calls` (JSON array of recorded `enqueue` calls), `reset_probe_calls`, `set_probe_recorded` (`on`|`off`), `get_recorded_calls` and `reset_probes`.
 
 ### 7.5 Integration Test Coverage
 
@@ -739,7 +740,7 @@ Uses the probe reporter, whose jobs are deferred a day so WP-Cron leaves them `p
 - Mark as test flags the attributed click, deletes the pending job and removes the click and the conversion from the main view, its totals and the CSV export; the conversion stays listed, flagged, with Unmark. Unmark restores the numbers.
 - The bulk actions with the list's `bulk-conversions` nonce mark and unmark; a forged bulk nonce gets 403.
 - A second conversion on B's click: marking it as a test counts both conversions and deletes the unfinished jobs of both; Unmark counts both and clears the shared click's flag.
-- The capability refusal is covered by the unit tests: the Playground cookie store makes every request carry the admin login.
+- With the capability withheld (`withhold_capability on`), Delete and Mark as test with valid nonces get the plugin's 403 "You do not have permission" page and change nothing: the conversion, its click's flag and its pending job stay.
 
 ---
 
