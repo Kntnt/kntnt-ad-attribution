@@ -34,6 +34,7 @@ The plugin does not hardcode integrations with any specific consent management o
 - **Platform-agnostic form support** — integrates with any form plugin via an action hook.
 - **Bot detection** — filters out known bots via User-Agent matching and `robots.txt` rules.
 - **Honest click counts** — speculative browser prefetches (`Sec-Purpose: prefetch`) are declined without being counted, and a request repeating a platform click ID already recorded for the tracking URL (reload, back/forward navigation, bookmark) is not counted again. With logging enabled, each tracking-URL request writes one diagnostic line with its outcome and request headers.
+- **Internal traffic excluded, test mode included** — clicks and conversions by logged-in staff (users with the `kntnt_ad_attr` capability) are not recorded, so checking your own ads does not skew the statistics. Append `kntnt_ad_attr_test=1` to a tracking URL to test the whole chain instead: the click and its conversion are recorded as tests, kept out of the statistics and the CSV export, and reach only reporters that support test mode. See [Testing a live setup](#testing-a-live-setup).
 - **Two redirect methods** — 302 redirect (default) or, via filter, a JavaScript redirect that serves a minimal page and navigates with JavaScript, so that client-side scripts such as consent managers can run first.
 - **Companion plugin hooks** — fires `kntnt_ad_attr_click` on every recorded click with hash, target URL, campaign data, and access to URL parameters (gclid, fbclid, etc.). Companion plugins can capture platform-specific data and implement server-side API integrations without modifying the core plugin.
 - **Query parameter forwarding** — ad platform parameters (gclid, fbclid, msclkid, etc.) appended to the tracking URL are automatically forwarded to the target page through the redirect. Target URL parameters take precedence, and the merged set is filterable.
@@ -179,7 +180,7 @@ The plugin adds **Ad Attribution** under **Tools** in the WordPress admin menu. 
 - **Summary:** Shows total clicks and total (fractional) conversions for the selected filters.
 - **Export:** Export the filtered results as a CSV file (UTF-8 with BOM; semicolon delimiter when the locale uses comma as decimal separator). The CSV includes all fields including per-click Content, Term, Id, and Group from the clicks table.
 
-**Note:** The plugin tracks clicks (requests to `/ad/<hash>`) and conversions. Requests from bots, speculative browser prefetches and repeats of an already recorded platform click ID (reloads, back/forward navigation, bookmarks) are not counted as clicks; see [Counting rules](docs/click-handling.md#counting-rules). Ad impressions are not available since they occur on the ad platform and never reach your server.
+**Note:** The plugin tracks clicks (requests to `/ad/<hash>`) and conversions. Requests from bots, speculative browser prefetches, internal traffic (logged-in users who can manage ad attribution) and repeats of an already recorded platform click ID (reloads, back/forward navigation, bookmarks) are not counted as clicks, and test clicks are left out of the statistics; see [Counting rules](docs/click-handling.md#counting-rules). Ad impressions are not available since they occur on the ad platform and never reach your server.
 
 #### Click-Time Parameter Population
 
@@ -213,11 +214,34 @@ When a conversion is triggered (see [Connecting a Form Plugin](#connecting-a-for
 
 1. Reads the `_ad_clicks` cookie and extracts all ad hashes.
 2. Filters out hashes that no longer exist as registered tracking URLs.
-3. If no valid hashes remain, exits without recording anything.
+3. If no valid hashes remain, exits without recording anything. For internal traffic (a logged-in user who can manage ad attribution), only hashes whose click was a test click count, and without any the conversion is not recorded.
 4. Per-hash deduplication (only when `kntnt_ad_attr_dedup_seconds` > 0): removes hashes that were converted recently.
 5. Applies the attribution model (default: last-click — the most recent click receives `1.0`, all others receive `0.0`). The model is filterable via `kntnt_ad_attr_attribution`.
 6. Looks up the matching click records and stores conversion rows in the database within a transaction.
 7. Writes per-hash dedup cookie (only when dedup is enabled).
+
+A conversion linked to a test click is a test conversion. It is written to the database but left out of the campaign list, its totals and the CSV export, and it reaches only conversion reporters that support test mode.
+
+#### Testing a live setup
+
+Logged-in administrators and editors (users with the `kntnt_ad_attr` capability) are internal traffic: their clicks on tracking URLs and their form submissions are not recorded at all. To test the whole chain, from ad click to reported conversion, make a *test click* instead. It is recorded like a real click but flagged as a test, and so is the conversion that follows it.
+
+1. **Choose how to test.** Logged in or not both work. A private browser window tests what a real visitor experiences; staying logged in is fine, because the test parameter overrides the internal-traffic rule.
+2. **Turn on logging** under **Tools > Ad Attribution > Logging**, so you can follow each step.
+3. **Click a test link.** Copy the tracking URL from the campaign list and append `?kntnt_ad_attr_test=1`, for example `https://example.com/ad/<hash>?kntnt_ad_attr_test=1`. To test a click-ID adapter, add the platform's parameter too, for example `&gclid=TEST-123`. The parameter is not passed on to the landing page.
+4. **Grant consent** in your cookie banner. Without consent, no cookie is set and no conversion can be attributed, exactly as for a real visitor. If you consent after landing, the plugin completes the click once you do.
+5. **Submit the form** that triggers the conversion.
+6. **Check the log.** It should show a line `Tracking URL request: outcome=recorded hash=<first 8 characters> test=1 …` for the click and a line `Test conversion recorded for hash <first 8 characters>... (click row N); passed to reporters with test support: …` for the conversion. `outcome=internal` means the test parameter was missing; `Internal conversion ignored` means the form was submitted without a test click in the cookie.
+7. **Check the queue.** The Report Queue table on the same page lists the jobs of reporters that support test mode, which should use the platform's validation mode. Reporters that do not support test mode never receive a test conversion, so they add no job.
+8. **Check the statistics.** The campaign list, its totals and the CSV export are unchanged by the test.
+
+Test clicks and test conversions stay in the database, flagged as tests, until the click retention cleanup removes them or the tracking URL is deleted permanently.
+
+If you want your own visits recorded as real ones, for example on a site where you are the only user, switch internal-traffic detection off:
+
+```php
+add_filter( 'kntnt_ad_attr_is_internal', '__return_false', PHP_INT_MAX );
+```
 
 ### User FAQ
 
@@ -240,6 +264,10 @@ The plugin is designed to keep all data on your own server — no personal data 
 **What happens with Safari's Intelligent Tracking Prevention (ITP)?**
 
 As of October 2026, [WebKit's tracking prevention documentation](https://webkit.org/tracking-prevention/) applies ITP's 7-day and 24-hour caps to cookies created in JavaScript. The `_ad_clicks` cookie is not created in JavaScript: your own server always sets it in an HTTP response, with the `HttpOnly` flag, in the click response, whichever redirect method is used, or in the REST response after deferred consent. WebKit caps cookies set in HTTP responses only in the third-party CNAME and IP-address cloaking cases it lists. Browser behavior changes, so check WebKit's page for the current rules. The limitations that do apply are listed under [Limitations](#limitations).
+
+**Why are my own clicks and form submissions not counted?**
+
+Clicks and conversions by logged-in users who can manage ad attribution (administrators and editors) are internal traffic and are not recorded. Use a test click to test your setup; see [Testing a live setup](#testing-a-live-setup).
 
 **What if a visitor clicks more than 50 ads?**
 
@@ -495,6 +523,20 @@ Controls speculative request detection. Default: `false`. The plugin registers i
 add_filter( 'kntnt_ad_attr_is_speculative', '__return_false', PHP_INT_MAX );
 ```
 
+**`kntnt_ad_attr_is_internal`** (v1.10.0)
+
+Controls internal traffic detection. Default: `false`. The plugin registers its own callback that returns `true` when the request carries a valid logged-in session for a user with the `kntnt_ad_attr` capability. It validates the logged-in cookie itself, so it also recognises form plugins that submit through the REST API without a nonce, where WordPress resets the current user. An internal request to a tracking URL is redirected like a bot's and records nothing, unless it is a test click (`kntnt_ad_attr_test=1`). An internal conversion counts only cookie entries that point at test clicks; without any, nothing is recorded, announced or reported. See [Testing a live setup](#testing-a-live-setup).
+
+```php
+// Record logged-in staff like any visitor
+add_filter( 'kntnt_ad_attr_is_internal', '__return_false', PHP_INT_MAX );
+
+// Also treat an office network as internal
+add_filter( 'kntnt_ad_attr_is_internal', function ( bool $is_internal ): bool {
+    return $is_internal || str_starts_with( $_SERVER['REMOTE_ADDR'] ?? '', '192.0.2.' );
+} );
+```
+
 **`kntnt_ad_attr_click_id_capturers`**
 
 Registers platform-specific GET parameters to capture at ad click time. Return an associative array mapping platform identifiers to GET parameter names. Default: `[]`.
@@ -518,6 +560,9 @@ Reporter definition:
 | `label` | `string` | Name for logging and admin UI. |
 | `enqueue` | `callable` | Called at conversion time. Signature: `( array $attributions, array $click_ids, array $campaigns, array $context ) → array` of items. Each item is either a structured array with `payload`, optional `label`, optional `retry_params`, and optional `not_before` keys, or a raw payload array (legacy format). |
 | `process` | `callable` | Called by queue processor. Signature: `( array $payload ) → bool`. |
+| `supports_test` | `bool` | Optional (v1.10.0). `true` if the reporter handles test conversions. A test conversion is passed only to reporters with `'supports_test' => true`, with `$context['test'] === true`, so they can use the platform's validate-only mode. Reporters without the key never receive a test conversion. |
+
+The `$context` passed to `enqueue` holds `timestamp`, `ip`, `user_agent`, `page_url` and, since v1.10.0, `test` (`true` for a test conversion, otherwise `false`).
 
 Structured item keys:
 
@@ -696,12 +741,12 @@ Parameters:
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `$attributions` | `array<string, float>` | Hash => fractional attribution value, for the recorded hashes only: each got a conversion row and has a weight above 0, passed as written. Not renormalised, so it can sum to less than 1.0 when a click row was missing. |
-| `$context` | `array` | Associative array with keys: `timestamp` (ISO 8601 UTC), `ip` (visitor IP), `user_agent` (visitor user-agent string). |
+| `$context` | `array` | Associative array with keys: `timestamp` (ISO 8601 UTC), `ip` (visitor IP), `user_agent` (visitor user-agent string), `test` (v1.10.0; `true` if any recorded attribution links to a test click). |
 
 ```php
 add_action( 'kntnt_ad_attr_conversion_recorded', function ( array $attributions, array $context ): void {
     // $attributions = [ 'a1b2c3…' => 0.7, 'd4e5f6…' => 0.3 ]
-    // $context = [ 'timestamp' => '2025-02-15T14:30:00+00:00', 'ip' => '…', 'user_agent' => '…' ]
+    // $context = [ 'timestamp' => '2025-02-15T14:30:00+00:00', 'ip' => '…', 'user_agent' => '…', 'test' => false ]
 }, 10, 2 );
 ```
 
@@ -728,6 +773,8 @@ A *conversion reporter* tells the core how to report a conversion to an external
 
 - **`enqueue`** — called synchronously at conversion time, only when at least one conversion row was written. Receives the recorded attributions, plus the click IDs and per-click campaign fields of the click each of those hashes is attributed to, and context. Returns an array of structured items (with `payload`, optional `label`, optional `retry_params`, and optional `not_before` keys) to be queued for async processing.
 - **`process`** — called asynchronously by the queue processor. Receives a single payload and performs the actual API call. Returns `true` on success, `false` on failure.
+
+A reporter may also declare `'supports_test' => true`. Test conversions (those linked to a test click, see [Testing a live setup](#testing-a-live-setup)) are passed only to such reporters, with `$context['test'] === true`, so that they can call the platform's validate-only mode instead of uploading. A reporter without the key never sees a test conversion, so existing add-ons cannot upload one by accident.
 
 ```php
 add_filter( 'kntnt_ad_attr_conversion_reporters', function ( array $reporters ): array {
@@ -850,17 +897,18 @@ Requires `zip` and `msgfmt` (GNU gettext). With `--tag`: `git`. With `--update` 
 7. `Consent` — three-state consent resolution
 8. `Bot_Detector` — User-Agent filtering
 9. `Speculation_Detector` — prefetch/prerender detection
-10. `Click_ID_Store` — platform-specific click ID storage
-11. `Queue(Settings)` — async job queue with configurable retry
-12. `Queue_Processor(Queue, Logger)` — queue job dispatcher
-13. `Click_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store, Speculation_Detector, Logger)` — click processing & redirect
-14. `Conversion_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store, Queue, Queue_Processor, Logger)` — conversion attribution
-15. `Cron(Click_ID_Store, Queue, Logger)` — scheduled cleanup tasks
-16. `Admin_Page(Queue, Queue_Processor, Settings, Logger)` — admin UI orchestration
-17. `Rest_Endpoint(Cookie_Manager, Consent)` — REST API routes
-18. `Settings_Page(Settings, Logger)` — settings page under Settings > Ad Attribution
+10. `Internal_Detector` — internal traffic detection (logged-in staff)
+11. `Click_ID_Store` — platform-specific click ID storage
+12. `Queue(Settings)` — async job queue with configurable retry
+13. `Queue_Processor(Queue, Logger)` — queue job dispatcher
+14. `Click_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store, Speculation_Detector, Logger)` — click processing & redirect
+15. `Conversion_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store, Queue, Queue_Processor, Logger)` — conversion attribution
+16. `Cron(Click_ID_Store, Queue, Logger)` — scheduled cleanup tasks
+17. `Admin_Page(Queue, Queue_Processor, Settings, Logger)` — admin UI orchestration
+18. `Rest_Endpoint(Cookie_Manager, Consent)` — REST API routes
+19. `Settings_Page(Settings, Logger)` — settings page under Settings > Ad Attribution
 
-**Data model:** Tracking URLs are stored as a custom post type `kntnt_ad_attr_url` (with meta `_hash`, `_target_post_id`, `_utm_source`, `_utm_medium`, `_utm_campaign`). Individual clicks are stored in `{prefix}kntnt_ad_attr_clicks` with per-click UTM fields. Conversions are stored in `{prefix}kntnt_ad_attr_conversions` linked to specific clicks via `click_id`, with fractional attribution values. Platform-specific click IDs are stored per click in `{prefix}kntnt_ad_attr_click_ids` with composite PK `(click_id, platform)`, where `click_id` is the click row's ID, and an index on `(platform, value)` for looking up whether a click ID was already recorded for a tracking URL; they are deleted together with their click rows. Async report jobs are stored in `{prefix}kntnt_ad_attr_queue` with auto-increment PK and status-based processing.
+**Data model:** Tracking URLs are stored as a custom post type `kntnt_ad_attr_url` (with meta `_hash`, `_target_post_id`, `_utm_source`, `_utm_medium`, `_utm_campaign`). Individual clicks are stored in `{prefix}kntnt_ad_attr_clicks` with per-click UTM fields and a test flag (`is_test`, v1.10.0); a conversion is a test if it links to a test click, and the campaign list, its totals and the CSV export leave test clicks and their conversions out. Conversions are stored in `{prefix}kntnt_ad_attr_conversions` linked to specific clicks via `click_id`, with fractional attribution values. Platform-specific click IDs are stored per click in `{prefix}kntnt_ad_attr_click_ids` with composite PK `(click_id, platform)`, where `click_id` is the click row's ID, and an index on `(platform, value)` for looking up whether a click ID was already recorded for a tracking URL; they are deleted together with their click rows. Async report jobs are stored in `{prefix}kntnt_ad_attr_queue` with auto-increment PK and status-based processing.
 
 **Lifecycle:** On activation, the plugin grants capabilities, runs migrations, registers rewrite rules, schedules cron, and creates the log directory (`wp-content/uploads/kntnt-ad-attribution/`) with `.htaccess` protection. On deactivation, it clears cron, transients, and rewrite rules but preserves all data. On uninstallation, it performs complete data removal — dropping all custom tables, deleting CPT posts, removing capabilities, clearing options (including `kntnt_ad_attr_settings`), and removing the log directory.
 
@@ -891,6 +939,7 @@ kntnt-ad-attribution/
 │   ├── Consent.php               ← Three-state consent check logic
 │   ├── Bot_Detector.php          ← User-Agent filtering, robots.txt rule
 │   ├── Speculation_Detector.php  ← Prefetch/prerender detection (Sec-Purpose, Purpose)
+│   ├── Internal_Detector.php     ← Internal traffic detection (logged-in staff)
 │   ├── Rest_Endpoint.php         ← REST API (set-cookie with rate limiting, search-posts)
 │   ├── Admin_Page.php            ← Tools page with merged view, URL CRUD, CSV export
 │   ├── Campaign_List_Table.php   ← WP_List_Table for the campaign list with bulk actions
@@ -908,7 +957,7 @@ kntnt-ad-attribution/
 │   ├── 1.5.0.php                 ← Clicks + conversions tables, drops stats
 │   ├── 1.8.0.php                 ← Per-job retry columns and index on queue table
 │   ├── 1.9.0.php                 ← Deferred processing (not_before, last_attempt_at) columns
-│   └── 1.10.0.php                ← Click-ID table keyed by click row (replaces the per-hash table)
+│   └── 1.10.0.php                ← Click-ID table keyed by click row (replaces the per-hash table), clicks.is_test
 ├── js/
 │   ├── pending-consent.js        ← Client-side: pending consent, sessionStorage, REST call
 │   └── admin.js                  ← Admin: select2, page selector, UTM field auto-fill
@@ -1039,11 +1088,13 @@ A comprehensive test strategy is documented in `docs/testing-strategy.md`, cover
 - The REST `set-cookie` endpoint has rate limiting: 10 requests per minute per IP via transient.
 - Select2 loaded from cdnjs has SRI (Subresource Integrity) hashes added via `script_loader_tag` / `style_loader_tag` filters.
 - Hash generation uses `random_bytes(32)` — the hash is an opaque identifier, not derived from UTM parameters.
-- The `kntnt_ad_attr_click` action fires for every recorded click (not for bots, speculative requests, repeats or deduplicated clicks) regardless of consent state, enabling companion plugins to capture platform-specific parameters even before consent is resolved.
+- The `kntnt_ad_attr_click` action fires for every recorded click, test clicks included (not for bots, speculative requests, internal traffic, repeats or deduplicated clicks) regardless of consent state, enabling companion plugins to capture platform-specific parameters even before consent is resolved.
 - Admin page is registered under Tools (`add_management_page`), not as a top-level menu item.
 - CSV export uses POST with its own nonce (`kntnt_ad_attr_export`) and reconstructs GET filter params from POST data for `Campaign_List_Table` compatibility.
 - The global `kntnt_ad_attribution_delete_cookies()` function (v1.7.0) is defined in `kntnt-ad-attribution.php` after `Plugin::get_instance()`. CMP plugins call it from server-side opt-out hooks to expire HttpOnly cookies. The cookie list is filterable via `kntnt_ad_attr_delete_cookies`.
 - `Conversion_Handler` requires `consent=true` before reading the `_ad_clicks` cookie (ePrivacy Art. 5(3)). Both `consent=false` and `consent=null` abort without attribution.
+- Internal traffic detection is on by default, so a logged-in administrator records no clicks or conversions. The integration tests trigger conversions as the logged-in admin, so `tests/Integration/test-helpers-plugin/test-helpers.php` switches the default off unless option `test_internal_default` is `on`.
+- Playground's server replaces each request's `Cookie` header with every cookie that earlier responses have set, so in integration tests every request carries the admin's logged-in cookie. Send `X-Test-Visitor: anonymous` to emulate a visitor without a session.
 
 ### Contributor FAQ
 

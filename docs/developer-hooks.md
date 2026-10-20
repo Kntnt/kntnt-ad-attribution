@@ -54,6 +54,27 @@ add_filter( 'kntnt_ad_attr_is_speculative', function ( bool $is_speculative ): b
 add_filter( 'kntnt_ad_attr_is_speculative', '__return_false', PHP_INT_MAX );
 ```
 
+**`kntnt_ad_attr_is_internal`** (v1.10.0)
+
+Internal traffic detection. Default: `false`. The plugin registers its own callback (`Internal_Detector::detect()`), which returns `true` when the request carries a valid WordPress logged-in session for a user with the `kntnt_ad_attr` capability (administrators and editors), and passes an earlier `true` through. It checks the current user and also validates the logged-in cookie itself (`wp_validate_auth_cookie( '', 'logged_in' )`), because WordPress resets the current user to 0 in a REST request without a nonce, which is how some form plugins submit.
+
+Internal traffic leaves no trace:
+
+- A tracking-URL request is handled like a bot: redirected with query forwarding, with no click row, click ID, cookie, transport or `kntnt_ad_attr_click`. A test click (`kntnt_ad_attr_test=1`) is the exception and is recorded as a test.
+- A conversion considers only `_ad_clicks` entries that point at test clicks. With none, the handler returns before writing anything, firing `kntnt_ad_attr_conversion_recorded` or calling reporters.
+
+See [Testing a live setup](../README.md#testing-a-live-setup) for how staff test end to end.
+
+```php
+// Record logged-in staff like any visitor (switches the default off).
+add_filter( 'kntnt_ad_attr_is_internal', '__return_false', PHP_INT_MAX );
+
+// Also treat the office network as internal.
+add_filter( 'kntnt_ad_attr_is_internal', function ( bool $is_internal ): bool {
+    return $is_internal || str_starts_with( $_SERVER['REMOTE_ADDR'] ?? '', '192.0.2.' );
+} );
+```
+
 **`kntnt_ad_attr_attribution`**
 
 Filters the attribution weights for a conversion. Default: last-click (1.0 for most recent click, 0.0 for all others). Return weights that sum to 1.0. Only hashes with a weight above 0 and a matching click row are recorded, so the weights that `kntnt_ad_attr_conversion_recorded` and the reporters receive can sum to less.
@@ -113,7 +134,7 @@ Parameters:
 |-----------|------|-------------|
 | `$merged_params` | `array<string, string>` | Merged parameters (target wins on collision). |
 | `$target_params` | `array<string, string>` | Parameters already present on the target URL. |
-| `$incoming_params` | `array<string, string>` | Sanitized parameters from the incoming request (excluding `kntnt_ad_attr_hash`). |
+| `$incoming_params` | `array<string, string>` | Sanitized parameters from the incoming request (excluding `kntnt_ad_attr_hash` and the test parameter `kntnt_ad_attr_test`, which are never forwarded). |
 
 ```php
 add_filter( 'kntnt_ad_attr_redirect_query_params', function ( array $merged, array $target, array $incoming ): array {
@@ -151,13 +172,14 @@ The captured values also drive repeat detection (v1.10.0): a request carrying a 
 
 Registers conversion reporters whose `enqueue` callbacks are called at conversion time and whose `process` callbacks are called by the queue processor. Default: `[]` (no reporters).
 
-Each reporter definition is an associative array with three keys:
+Each reporter definition is an associative array with these keys:
 
 | Key | Type | Description |
 |-----|------|-------------|
 | `label` | `string` | Name for logging and admin UI. |
 | `enqueue` | `callable` | Called at conversion time. Signature: `( array $attributions, array $click_ids, array $campaigns, array $context ) → array`. Returns array of structured items. |
 | `process` | `callable` | Called by queue processor. Signature: `( array $payload ) → bool`. Returns `true` when the job is complete (success or permanent failure — do not retry), `false` on transient failure (retry). |
+| `supports_test` | `bool` | Optional (v1.10.0). `true` declares that the reporter handles test conversions, for example with the platform's validate-only mode. A test conversion (one whose recorded attributions link to at least one test click) is passed only to reporters with `'supports_test' => true`, with `$context['test'] === true`. A reporter without the key never sees a test conversion, so an add-on unaware of test mode cannot upload one by accident. |
 
 Each item returned by `enqueue` is either a structured array or a raw payload (legacy format):
 
@@ -176,8 +198,9 @@ If an item lacks a `payload` key, the entire array is treated as the raw payload
 - `$click_ids`: `[ hash => [ platform => ['id' => click_id, 'captured_at' => unix_timestamp], … ], … ]` — the click IDs captured on the click the conversion is attributed to (the click row its conversion row links to), not the latest click on the tracking URL. `captured_at` is that click's `clicked_at`. Keyed by the hashes in `$attributions` only. A hash whose attributed click carried no ID for a platform has no entry for that platform, and a hash whose click carried none has no entry at all.
 - `$campaigns`: `[ hash => [ 'utm_source' => …, 'utm_medium' => …, 'utm_campaign' => …, 'utm_content' => …, 'utm_term' => …, 'utm_id' => …, 'utm_source_platform' => … ], … ]`. Source, medium and campaign come from the tracking URL; content, term, id and source platform come from the attributed click. Keyed by the hashes in `$attributions` only.
 
-`enqueue` is called only when at least one conversion row was written.
-- `$context`: `[ 'timestamp' => ISO-8601, 'ip' => string, 'user_agent' => string, 'page_url' => string ]`.
+- `$context`: `[ 'timestamp' => ISO-8601, 'ip' => string, 'user_agent' => string, 'page_url' => string, 'test' => bool ]`. `test` (v1.10.0) is `true` for a test conversion and `false` otherwise; only reporters with `supports_test` ever receive `true`.
+
+`enqueue` is called only when at least one conversion row was written, and for a test conversion only on reporters with `'supports_test' => true`.
 
 ```php
 add_filter( 'kntnt_ad_attr_conversion_reporters', function ( array $reporters ): array {
@@ -243,7 +266,7 @@ add_action( 'kntnt_ad_attr_admin_tab_settings', function (): void {
 
 **`kntnt_ad_attr_click`**
 
-Fires after a click on a tracking URL has been recorded but before consent handling and redirect. Fires for every recorded click regardless of consent state; it does not fire for bots, speculative requests, repeats or deduplicated clicks (see [click-handling.md](click-handling.md#counting-rules)). Companion plugins can use this to capture platform-specific URL parameters (e.g. `gclid`, `fbclid`, `msclkid`).
+Fires after a click on a tracking URL has been recorded but before consent handling and redirect. Fires for every recorded click regardless of consent state, test clicks included; it does not fire for bots, speculative requests, internal traffic, repeats or deduplicated clicks (see [click-handling.md](click-handling.md#counting-rules)). Companion plugins can use this to capture platform-specific URL parameters (e.g. `gclid`, `fbclid`, `msclkid`).
 
 Parameters:
 
@@ -305,13 +328,16 @@ Parameters:
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `$attributions` | `array<string, float>` | Hash => fractional attribution value, for the recorded hashes only: each got a conversion row and has a weight above 0, passed as written. Not renormalised, so it can sum to less than 1.0 when a click row was missing. |
-| `$context` | `array` | Associative array with keys: `timestamp` (ISO 8601 UTC), `ip` (visitor IP), `user_agent` (visitor user-agent string). |
+| `$context` | `array` | Associative array with keys: `timestamp` (ISO 8601 UTC), `ip` (visitor IP), `user_agent` (visitor user-agent string), `test` (v1.10.0; `true` if any recorded attribution links to a test click, otherwise `false`). |
 
 Note: The reporter context (passed to `enqueue` callbacks via `kntnt_ad_attr_conversion_reporters`) includes an additional `page_url` key. The action context does not.
 
 ```php
 add_action( 'kntnt_ad_attr_conversion_recorded', function ( array $attributions, array $context ): void {
     // $attributions = [ 'a1b2c3…' => 0.7, 'd4e5f6…' => 0.3 ]
-    // $context = [ 'timestamp' => '2025-02-15T14:30:00+00:00', 'ip' => '…', 'user_agent' => '…' ]
+    // $context = [ 'timestamp' => '2025-02-15T14:30:00+00:00', 'ip' => '…', 'user_agent' => '…', 'test' => false ]
+    if ( $context['test'] ) {
+        return; // A test conversion: kept out of statistics, so skip it here too.
+    }
 }, 10, 2 );
 ```

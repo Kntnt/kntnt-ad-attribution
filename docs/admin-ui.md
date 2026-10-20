@@ -97,6 +97,8 @@ LEFT JOIN {wpdb->postmeta} pm_camp
     ON pm_camp.post_id = p.ID AND pm_camp.meta_key = '_utm_campaign'
 LEFT JOIN {prefix}kntnt_ad_attr_clicks c
     ON c.hash = pm_hash.meta_value
+   AND c.clicked_at BETWEEN %s AND %s
+   AND c.is_test = 0
 LEFT JOIN {prefix}kntnt_ad_attr_conversions cv
     ON cv.click_id = c.id
 WHERE p.post_type = 'kntnt_ad_attr_url' AND p.post_status = 'publish'
@@ -107,7 +109,9 @@ ORDER BY total_clicks DESC
 LIMIT %d OFFSET %d
 ```
 
-Starting FROM posts ensures that tracking URLs with zero clicks are included in the list.
+Starting FROM posts ensures that tracking URLs with zero clicks are included in the list. The date range and the test-click exclusion sit in the clicks JOIN condition, not in WHERE, for the same reason.
+
+**Test traffic (v1.10.0)** is excluded in one place: `c.is_test = 0` on the clicks JOIN in `Campaign_List_Table::build_from_where()`, which the main view, the totals and the CSV query all share. Test clicks drop out of the JOIN, and their conversions with them, because conversions are joined through `cv.click_id = c.id`. A tracking URL that only has test clicks shows zero clicks. Flagging a click row as a test (`is_test = 1`) is therefore enough to remove the click and its conversions from all three. See [click-handling.md](click-handling.md#test-clicks).
 
 **Trash view query** uses a simplified query without the clicks/conversions joins, since trashed URLs have no active traffic. It selects directly from the posts and postmeta tables with `post_status = 'trash'`.
 

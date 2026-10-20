@@ -79,7 +79,7 @@ If `INSERT` fails with a duplicate key (race condition): display an error messag
 
 ### Individual Clicks — Custom Table
 
-Each non-bot click is recorded as an individual row. Source/Medium/Campaign are fixed per tracking URL and stored in postmeta. Content/Term/Id/Group vary per click and are stored here.
+Each click is recorded as an individual row (bots, speculative requests, internal traffic, repeats and duplicates are not; see [click-handling.md](click-handling.md#counting-rules)). Source/Medium/Campaign are fixed per tracking URL and stored in postmeta. Content/Term/Id/Group vary per click and are stored here.
 
 ```sql
 CREATE TABLE {prefix}kntnt_ad_attr_clicks (
@@ -90,11 +90,14 @@ CREATE TABLE {prefix}kntnt_ad_attr_clicks (
     utm_term            VARCHAR(255)    NULL,
     utm_id              VARCHAR(255)    NULL,
     utm_source_platform VARCHAR(255)    NULL,
+    is_test             TINYINT(1)      NOT NULL DEFAULT 0,  -- v1.10.0
     PRIMARY KEY (id),
     INDEX idx_hash (hash),
     INDEX idx_clicked_at (clicked_at)
 ) {charset}
 ```
+
+`is_test` (added by migration 1.10.0) is `1` for a [test click](click-handling.md#test-clicks) (`kntnt_ad_attr_test=1`). Conversions have no flag of their own: a conversion is a test when it links to a test click. The main view, its totals and the CSV export exclude test clicks and, through them, their conversions; test conversions reach only reporters with `supports_test` (see [conversion-handling.md](conversion-handling.md#internal-traffic-and-test-conversions)).
 
 **On click:**
 
@@ -106,6 +109,7 @@ $wpdb->insert( $clicks_table, [
     'utm_term'            => $click_term ?: null,
     'utm_id'              => $click_id_val ?: null,
     'utm_source_platform' => $click_group ?: null,
+    'is_test'             => $is_test_click ? 1 : 0,
 ] );
 ```
 

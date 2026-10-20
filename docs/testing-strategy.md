@@ -208,6 +208,7 @@ kntnt-ad-attribution/
 │       ├── test-csv-export.sh
 │       ├── test-deduplication.sh
 │       ├── test-deferred-consent.sh
+│       ├── test-internal-traffic.sh
 │       ├── test-migration.sh
 │       ├── test-query-forwarding.sh
 │       └── test-rest-api.sh
@@ -281,6 +282,14 @@ Stateless data manipulation class. Tests cover:
 
 ---
 
+#### Internal_Detector (`InternalDetectorTest.php`)
+
+- **`detect()`** — the current user with `kntnt_ad_attr` (no cookie validation needed); a valid logged-in cookie of a user with the capability when WordPress has reset the current user to 0 (`wp_validate_auth_cookie( '', 'logged_in' )` + `user_can()`); no valid cookie; a logged-in user without the capability; previous filter short-circuit.
+- **`is_internal()`** — `false` by default, returns what `kntnt_ad_attr_is_internal` decides.
+- **`register()`** — hooks `detect()` into the filter.
+
+---
+
 #### Click_ID_Store (`ClickIdStoreTest.php`)
 
 - **`store()`** — inserts one row keyed by click row ID and platform.
@@ -327,6 +336,7 @@ The most complex class. Tests cover the full click flow:
 - Speculative requests (`Sec-Purpose: prefetch`, `prefetch;prerender`, `Purpose: prefetch`): 503 via `status_header` + `nocache_headers`, no redirect, insert, click ID, cookie, transport or action; a `kntnt_ad_attr_is_speculative` callback can overrule detection. The handler gets a real `Speculation_Detector`, and `apply_default_speculation_detection()` makes the filter run its default callback, which Brain Monkey would otherwise skip.
 - Repeats (click ID already recorded on the tracking URL, via a mocked `Click_ID_Store::find_original_click()`): no insert, click ID or action, redirect with query forwarding; with consent the entry points at the original click unless a newer entry has a click row; with undetermined consent the transport carries the original click; the earliest original wins across platforms; the same value on another tracking URL is recorded.
 - Diagnostic log line (the handler gets a `Logger` spy; `capture_log_lines()` collects every level): exactly one CORE INFO line per outcome (`recorded`, `repeat`, `deduplicated`, `speculative`, `bot`) with the hash prefix and the raw `Sec-Purpose`, `Purpose` and `User-Agent` values, and without the `REMOTE_ADDR`.
+- Internal traffic and test clicks (`setup_click_request()` stubs a request with given query parameters and captures the redirect URL): an internal request redirects with query forwarding and records nothing (no insert, click ID, consent check, cookie, transport or action); a test click (`kntnt_ad_attr_test=1`) by an external or internal visitor is inserted with `is_test` 1 and the parameter is not forwarded; an ordinary click gets `is_test` 0; a test click is neither deduplicated nor resolved as a repeat of an earlier ordinary click; the request log line has outcome `internal` for an internal request and `test=1`/`test=0` on every line.
 - Postmeta backfill from UTM/MTM params, existing values not overwritten.
 - Click dedup: a duplicate (entry within the window with a matching click row) re-sends the original timestamp without inserting; an entry with no matching row is recorded as a new click.
 
@@ -345,6 +355,8 @@ The most complex class. Tests cover the full click flow:
 - `kntnt_ad_attr_conversion_recorded` action fires with attributions and context.
 - Only recorded, positive-weight attributions reach the action and reporters, with click IDs and campaigns for those hashes only; nothing fires or is enqueued when no conversion row was written.
 - Reporter enqueueing (including payload structure), no-op when no reporters.
+- `wpdb_without_test_clicks()` answers the post-write test-click lookup (`get_col`) with "none", so tests of ordinary conversions need not stub it.
+- Internal traffic and test conversions, with `make_test_mode_conversion()` (an in-memory fake of the clicks table with `is_test`, recording conversion rows, the recorded action and each reporter's `enqueue`): an internal conversion without test clicks writes, announces and reports nothing (no transaction); an internal conversion credits only the test click even when an ordinary click is more recent; a conversion after a test click is written and announced with `context['test']` true, an ordinary one with `false`; a multi-touch conversion with any test click is a test; a test conversion reaches only reporters with `'supports_test' => true`, with `context['test']` true, while an ordinary one reaches every reporter with `false`; test and ignored internal conversions are logged, ordinary ones are not.
 - Per-click reporting, with a real `Click_ID_Store` over an in-memory fake of the clicks, click-ID and postmeta tables: reporters get the click ID of the attributed click (not a later click on the same hash) with that click's `clicked_at`, no ID when the attributed click carried none, and the attributed click's per-click campaign fields.
 
 ---
@@ -429,6 +441,7 @@ The most complex class. Tests cover the full click flow:
 - `get_filter_params()` sanitises dates, validates date regex.
 - SQL includes GROUP BY for aggregation, per-click fields.
 - `get_totals()` caches result.
+- The main view, the totals and the CSV query exclude test clicks with `c.is_test = 0` in the clicks JOIN condition (not in WHERE), so their conversions drop out too.
 
 ---
 
@@ -484,6 +497,7 @@ Two mu-plugins provide test infrastructure:
   | `/test-do-action` | POST | Fire a WordPress action |
   | `/test-flush-rewrites` | POST | Flush rewrite rules |
   | `/test-trigger-conversion` | POST | Inject cookies and fire `kntnt_ad_attr_conversion` |
+  | `/test-trigger-conversion-public` | POST | The same without a permission check; called with the admin cookie and **no** nonce, like a form plugin submitting over REST (WordPress resets the current user to 0) |
   | `/test-clear-cookies` | POST | Clear plugin cookies and filter GET/POST params |
   | `/test-update-post-status` | POST | Change a post's status |
   | `/test-delete-post` | POST | Permanently delete a post |
@@ -499,8 +513,14 @@ Two mu-plugins provide test infrastructure:
   | `test_probe_capturers` | `platform=param[,platform=param…]` (e.g. `google_ads=gclid`) adds those `kntnt_ad_attr_click_id_capturers` entries. |
   | `test_probe_reporter` | `on` registers reporter `probe`; `supports_test` also sets `'supports_test' => true`. Its `enqueue` appends everything it receives (`attributions`, `click_ids`, `campaigns`, `context`) to `test_probe_calls` and returns one job per attribution with `not_before` a day ahead, so WP-Cron leaves the jobs pending; its `process` returns `true`. |
   | `test_probe_calls` | The list of recorded `enqueue` calls. |
+  | `test_probe_recorded` | `on` records every `kntnt_ad_attr_conversion_recorded` call (`attributions`, `context`) in `test_probe_recorded_calls`. |
 
-  Suites switch them on with `set_probe_capturers` and `set_probe_reporter`, read calls with `get_probe_calls`, and must call `reset_probes` at the end.
+  Suites switch them on with `set_probe_capturers`, `set_probe_reporter` and `set_probe_recorded`, read calls with `get_probe_calls` and `get_recorded_calls`, and must call `reset_probes` at the end.
+
+  It also sets up two pieces of request handling:
+
+  - **Internal traffic is off.** Suites trigger conversions as the logged-in admin, which the plugin treats as internal traffic and does not record. A `kntnt_ad_attr_is_internal` callback at `PHP_INT_MAX` therefore returns `false`, as the documented one-liner does, unless option `test_internal_default` is `on` (`set_internal_default on|off`). A suite that turns it on must turn it off at its end.
+  - **Anonymous visitors.** A request with the header `X-Test-Visitor: anonymous` is stripped of the WordPress login cookies before WordPress determines the current user. See [Playground's cookie store](#playgrounds-cookie-store).
 
 ### 7.3 Bootstrap Flow
 
@@ -515,7 +535,7 @@ Two mu-plugins provide test infrastructure:
 
 **`helpers/assertions.sh`** provides: `assert_status`, `assert_contains`, `assert_not_contains`, `assert_equals`, `assert_greater_than`, `assert_json_field`, `print_summary`. Each assertion increments `TESTS_RUN` and optionally `TESTS_FAILED`.
 
-**`helpers/fixtures.sh`** provides: `create_tracking_url`, `create_target_page`, `simulate_click`, `get_click_cookies`, `extract_cookie_value`, `set_consent_state`, `get_click_count`, `query_db`, `query_db_rows`, `execute_sql`, `flush_rewrites`, `trigger_conversion`, `clear_cookies`, `strip_secure_flag`, `set_option`, `set_dedup_seconds`, the logging helpers `set_logging` (`on`|`off`), `get_log` and `clear_log`, and the probe adapter switches `set_probe_capturers`, `set_probe_reporter` (`on`|`supports_test`|`off`), `get_probe_calls` (JSON array of recorded `enqueue` calls), `reset_probe_calls` and `reset_probes`.
+**`helpers/fixtures.sh`** provides: `create_tracking_url`, `create_target_page`, `simulate_click`, `get_click_cookies`, `extract_cookie_value`, `set_consent_state`, `get_click_count`, `query_db`, `query_db_rows`, `execute_sql`, `flush_rewrites`, `trigger_conversion`, `clear_cookies`, `strip_secure_flag`, `set_option`, `set_dedup_seconds`, `set_internal_default` (`on`|`off`), `trigger_conversion_without_nonce`, the logging helpers `set_logging` (`on`|`off`), `get_log` and `clear_log`, and the probe adapter switches `set_probe_capturers`, `set_probe_reporter` (`on`|`supports_test`|`off`), `get_probe_calls` (JSON array of recorded `enqueue` calls), `reset_probe_calls`, `set_probe_recorded` (`on`|`off`), `get_recorded_calls` and `reset_probes`.
 
 ### 7.5 Integration Test Coverage
 
@@ -672,6 +692,21 @@ Uses the probe capturer (`google_ads=gclid`) and logging (`set_logging on`, `get
 - All four tables have correct schema (columns and types), including the per-click click-ID table and its `(platform, value)` index.
 - Upgrade from v1.9.1: rebuilds the old per-hash click-ID table with a row, sets `kntnt_ad_attr_version` to `1.9.1`, makes a request, and asserts the version, the new table and that the old rows are dropped.
 - Re-running 1.10.0 keeps the new table and its rows.
+- After the re-runs, `clicks.is_test` exists exactly once (checked through `pragma_table_info`, because SQLite records a column added by `ALTER TABLE` unquoted in the `CREATE` statement), and a row inserted without it is `0`.
+
+---
+
+#### `test-internal-traffic.sh` — Internal Traffic and Test Mode
+
+Switches the internal default on (`set_internal_default on`) and uses the probe reporter and recorded-action listener. Visitor requests send `X-Test-Visitor: anonymous`; admin requests carry the logged-in cookie.
+
+- An admin's click is redirected with query forwarding and gets no click row and no `_ad_clicks` cookie; an anonymous visitor's click is recorded.
+- A nonce-less REST conversion with the admin cookie writes no conversion row, fires no recorded action and calls no reporter.
+- With the one-liner equivalent (`set_internal_default off`), the admin's click and conversion are recorded, with `context.test` false for the action and the reporter.
+- A test click (`kntnt_ad_attr_test=1`) by an anonymous visitor and by the admin each give a row with `is_test = 1`, and the parameter is absent from the redirect URL while other parameters are forwarded.
+- A conversion after the admin's test click writes a conversion row and is announced with `context.test` true; the reporter without `supports_test` is not called, the one with it receives `context.test` true.
+- The main view's totals and the CSV row count for the suite's campaign are unchanged by the test clicks and test conversions.
+- With logging enabled, both test clicks are logged as `outcome=recorded … test=1` and the test conversions as `Test conversion recorded …`, naming the reporter.
 
 ---
 
@@ -840,6 +875,14 @@ helper_name() {
 
 **Mitigation:** Always call `clear_cookies` at the start of integration tests that depend on clean cookie/GET/POST state. The `test-trigger-conversion` endpoint explicitly unsets plugin cookies before injecting new values.
 
+### Playground's cookie store
+
+Playground's server (php-wasm `PHPRequestHandler`, `@wp-playground/cli` 0.9.x) does not pass a request's own `Cookie` header to PHP. It replaces it with the contents of a server-side `HttpCookieStore`, which remembers every cookie that any response has set. Every request therefore carries every cookie seen so far, including the admin's logged-in cookie from the setup login, whatever curl sends with `-b`; a cookie sent only by curl (e.g. `-b foo=bar`) does not arrive at all.
+
+**Impact:** a test cannot make a request "without cookies". With internal-traffic detection on, every request would be internal.
+
+**Mitigation:** the test environment keeps internal-traffic detection off unless a suite switches it on, and a request that sends `X-Test-Visitor: anonymous` (custom headers do reach PHP) is stripped of the WordPress login cookies by the test-helpers mu-plugin before WordPress determines the current user. To give a request a specific `_ad_clicks` value, use `trigger_conversion` (which injects it into `$_COOKIE`) rather than `curl -b`.
+
 ### SQLite date comparison limits
 
 The WordPress SQLite compatibility plugin cannot reliably handle date comparisons beyond ~2027. For example, `clicked_at < '9999-12-31 23:59:59'` returns FALSE even for 2026 dates. Use realistic date ranges (e.g., `2020-01-01` to `2027-12-31`) in test assertions.
@@ -882,8 +925,9 @@ curl ... | grep -i '^set-cookie:' || true
 | Consent | ~5 | consent-states |
 | Bot_Detector | ~10 | bot-detection |
 | Speculation_Detector | ~9 | counting-rules |
-| Click_Handler | ~50 | click-flow, query-forwarding, deferred-consent, counting-rules |
-| Conversion_Handler | ~18 | conversion-attribution, deduplication |
+| Internal_Detector | ~8 | internal-traffic |
+| Click_Handler | ~60 | click-flow, query-forwarding, deferred-consent, counting-rules, internal-traffic |
+| Conversion_Handler | ~30 | conversion-attribution, deduplication, internal-traffic |
 | Post_Type | ~8 | activation, admin-crud |
 | Click_ID_Store | ~6 | click-ids, migration |
 | Queue | ~10 | cron-cleanup |
@@ -893,10 +937,10 @@ curl ... | grep -i '^set-cookie:' || true
 | Rest_Endpoint | ~16 | rest-api, deferred-consent |
 | Admin_Page | ~15 | admin-crud |
 | Csv_Exporter | ~7 | csv-export |
-| Campaign_List_Table | ~6 | campaign-report |
+| Campaign_List_Table | ~9 | campaign-report, csv-export, internal-traffic |
 | Utm_Options | ~3 | — |
 | Updater | ~4 | — |
 | Plugin | ~6 | activation |
 | pending-consent.js | ~29 | — |
 | admin.js | ~10 | — |
-| **Totals** | **~248 PHP + 39 JS** | **17 suites** |
+| **Totals** | **~317 PHP + 39 JS** | **18 suites** |

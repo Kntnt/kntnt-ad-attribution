@@ -11,6 +11,7 @@ Conversions are triggered via the action hook `kntnt_ad_attr_conversion` from th
 2. Validate and extract hash:timestamp pairs
 3. Filter out hashes that do not exist as published tracking URLs (CPT with post_status = publish)
 4. If no valid hashes remain → exit (no attribution)
+4b. Internal traffic (kntnt_ad_attr_is_internal): keep only entries whose exact (hash, clicked_at) click row is a test click. If none remain → log and exit before writing anything (no conversion row, no recorded action, no reporters)
 5. Per-hash deduplication (only when kntnt_ad_attr_dedup_seconds > 0):
    a. Read _ad_last_conv cookie (hash:timestamp pairs)
    b. Remove hashes whose last conversion is within the dedup window
@@ -19,10 +20,12 @@ Conversions are triggered via the action hook `kntnt_ad_attr_conversion` from th
 7. Look up click records and write conversion rows to the database (in a transaction). The hashes that got a row, each with the weight written, are the recorded attributions.
 7b. If no conversion row was written → exit (no dedup cookie, no recorded action, no reporters)
 8. Write per-hash dedup cookie for the recorded hashes (only when dedup is enabled)
-9. Trigger kntnt_ad_attr_conversion_recorded with the recorded attributions and context (timestamp, IP, user-agent)
+8b. Test flag: the conversion is a test if any linked click row has is_test = 1
+9. Trigger kntnt_ad_attr_conversion_recorded with the recorded attributions and context (timestamp, IP, user-agent, test)
 10. Look up the click IDs and per-click campaign fields of the click row each recorded hash is linked to
-11. Call registered reporters' enqueue callbacks with the recorded attributions, insert payloads into queue
+11. Call registered reporters' enqueue callbacks with the recorded attributions, insert payloads into queue. A test conversion goes only to reporters with 'supports_test' => true
 12. Schedule queue processing
+13. Log a test conversion with its click rows and the reporters it was passed to
 ```
 
 ## Deduplication
@@ -116,15 +119,28 @@ A hash gets a conversion row only when its weight is above 0 and a click row mat
 
 Everything after the write uses `$recorded`, not `$attributions`: the dedup cookie, the `kntnt_ad_attr_conversion_recorded` action, and the reporters' `enqueue` callbacks with their click ID and campaign lookups. Weights pass on as written and are not renormalised. Under a multi-touch model they can therefore sum to less than 1.0 when a click row was missing. When no row was written, the handler returns before any of these steps.
 
+## Internal Traffic and Test Conversions
+
+The test flag lives on the click row (`kntnt_ad_attr_clicks.is_test`, set for a [test click](click-handling.md#test-clicks)). A conversion has no flag of its own: it inherits the flag through the click rows it links to.
+
+**Internal traffic.** When `kntnt_ad_attr_is_internal` is true (by default, a logged-in user with `kntnt_ad_attr`, recognised by the logged-in cookie even in a REST request without a nonce), the handler keeps only the `_ad_clicks` entries whose exact `(hash, clicked_at)` row is a test click, in one query on the clicks table, before deduplication and attribution. Staff testing a form with an ordinary click in their cookie therefore record nothing; with a test click they record a test conversion credited to the test click only. If no entry remains, the handler logs `Internal conversion ignored: …` and returns before writing anything, firing the action or calling reporters.
+
+**Test conversions.** After the write, one query checks the linked click rows (`$linked_clicks`). If any recorded attribution links to a test click, the whole conversion is a test:
+
+- The conversion rows are written as usual; the main view, its totals and the CSV export leave them out because they exclude test clicks (see [admin-ui.md](admin-ui.md)).
+- `kntnt_ad_attr_conversion_recorded` receives `$context['test'] = true`. For other conversions it is `false`; the key is always present.
+- Only reporters whose definition declares `'supports_test' => true` are called, with `$context['test'] = true`, so that they can use the platform's validate-only mode. A reporter without the key never sees a test conversion. Reporters of an ordinary conversion all receive `$context['test'] = false`.
+- With logging enabled, `Test conversion recorded for hash <8 chars>... (click row N); passed to reporters with test support: <ids or none>.` is written.
+
 ## Conversion Reporting
 
-After the `kntnt_ad_attr_conversion_recorded` action fires, the handler checks for registered reporters via `apply_filters('kntnt_ad_attr_conversion_reporters', [])`. If reporters are registered:
+After the `kntnt_ad_attr_conversion_recorded` action fires, the handler checks for registered reporters via `apply_filters('kntnt_ad_attr_conversion_reporters', [])`, keeping only those with `'supports_test' => true` for a test conversion. If reporters remain:
 
 1. **Look up click IDs** — calls `Click_ID_Store::get_for_clicks( $linked_clicks )` to retrieve the platform-specific click IDs captured on the click row each recorded hash is linked to. Returns structured arrays: `[ hash => [ platform => ['id' => string, 'captured_at' => int] ] ]`, where `captured_at` is that click's `clicked_at`. A hash whose linked click carried no ID for a platform has no entry for that platform, even if a later click on the same tracking URL carried one.
 2. **Look up campaign data** — calls `get_campaign_data( $linked_clicks )` to retrieve Source/Medium/Campaign from the tracking URL's postmeta and Content/Term/Id/Group from the linked click row, for the recorded hashes only.
 
 Both lookups use the exact click the conversion was credited for, so a reporter never receives another visitor's click ID or per-click fields, provided the visitor's `_ad_clicks` entry points at the visitor's own click.
-3. **Build context** — assembles timestamp, IP, user-agent, and page URL.
+3. **Build context** — assembles timestamp, IP, user-agent, page URL and the test flag (`test`).
 4. **Call each reporter's `enqueue` callback** — passes the recorded attributions, `$click_ids`, `$campaigns`, and `$context`. Each reporter returns an array of structured items (with `payload`, optional `label`, optional `retry_params`, and optional `not_before` keys) or raw payload arrays (legacy format).
 5. **Enqueue items** — each item's payload is JSON-encoded and inserted into the `kntnt_ad_attr_queue` table with `status = 'pending'`, along with optional `label`, per-job retry parameters, and optional `not_before` timestamp for deferred processing.
 6. **Schedule processing** — calls `Queue_Processor::schedule()` to trigger a cron event.
