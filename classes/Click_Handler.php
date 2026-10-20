@@ -232,8 +232,18 @@ final class Click_Handler {
 		if ( $consent_state === true && $dedup_seconds > 0 ) {
 			$existing = $this->cookie_manager->parse();
 			if ( isset( $existing[ $hash ] ) && ( $now - $existing[ $hash ] ) < $dedup_seconds ) {
-				$this->set_cookie( $hash, $now );
-				$this->redirect( $target_url );
+
+				// Conversions link to a click row by an exact (hash, clicked_at)
+				// match with the cookie timestamp, so the entry must keep the
+				// original click's time. Re-sending it only refreshes the expiry,
+				// and the window stays anchored to the original click. An entry
+				// without a matching row (written by an older version) is not a
+				// duplicate: falling through records a new row and repoints the
+				// entry at it, which repairs the cookie.
+				if ( $this->click_row_exists( $hash, $existing[ $hash ] ) ) {
+					$this->set_cookie( $hash, $existing[ $hash ] );
+					$this->redirect( $target_url );
+				}
 			}
 		}
 
@@ -331,6 +341,33 @@ final class Click_Handler {
 		$entries = $this->cookie_manager->parse();
 		$entries = $this->cookie_manager->add( $entries, $hash, $timestamp );
 		$this->cookie_manager->set_clicks_cookie( $entries );
+	}
+
+	/**
+	 * Checks whether a click row exists for a cookie entry.
+	 *
+	 * Uses the same exact `(hash, clicked_at)` match as the conversion
+	 * lookup, so an entry this returns true for is one a conversion can
+	 * be attributed to.
+	 *
+	 * @param string $hash      The tracking URL hash.
+	 * @param int    $timestamp Unix timestamp of the cookie entry.
+	 *
+	 * @return bool True if a matching click row exists.
+	 * @since 1.10.0
+	 */
+	private function click_row_exists( string $hash, int $timestamp ): bool {
+		global $wpdb;
+
+		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
+
+		$click_id = $wpdb->get_var( $wpdb->prepare(
+			"SELECT id FROM {$clicks_table} WHERE hash = %s AND clicked_at = %s LIMIT 1",
+			$hash,
+			gmdate( 'Y-m-d H:i:s', $timestamp ),
+		) );
+
+		return (bool) $click_id;
 	}
 
 	/**

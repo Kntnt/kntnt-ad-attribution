@@ -72,6 +72,22 @@ final class Logger {
 	}
 
 	/**
+	 * Logs a warning message with a prefix.
+	 *
+	 * For anomalies the plugin recovers from but an operator should know
+	 * about, such as a conversion that could not be linked to a click.
+	 *
+	 * @param string $prefix  Source identifier (e.g. 'CORE', 'GADS').
+	 * @param string $message Log message.
+	 *
+	 * @return void
+	 * @since 1.10.0
+	 */
+	public function warning( string $prefix, string $message ): void {
+		$this->write( $prefix, 'WARNING', $message );
+	}
+
+	/**
 	 * Logs an error message with a prefix.
 	 *
 	 * @param string $prefix  Source identifier (e.g. 'CORE', 'GADS').
@@ -179,7 +195,7 @@ final class Logger {
 	 * the configurable size limit.
 	 *
 	 * @param string $prefix  Source identifier (e.g. 'CORE', 'GADS').
-	 * @param string $level   Log level (INFO or ERROR).
+	 * @param string $level   Log level (INFO, WARNING or ERROR).
 	 * @param string $message Log message.
 	 *
 	 * @return void

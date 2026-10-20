@@ -15,6 +15,7 @@ use Kntnt\Ad_Attribution\Bot_Detector;
 use Kntnt\Ad_Attribution\Click_ID_Store;
 use Kntnt\Ad_Attribution\Queue;
 use Kntnt\Ad_Attribution\Queue_Processor;
+use Kntnt\Ad_Attribution\Logger;
 use Brain\Monkey\Functions;
 use Brain\Monkey\Actions;
 use Brain\Monkey\Filters;
@@ -245,6 +246,70 @@ describe('Conversion_Handler::handle_conversion()', function () {
         $handler->handle_conversion();
 
         expect(true)->toBeTrue();
+    });
+
+    it('writes no conversion and logs one warning when no click row matches the cookie entry', function () {
+        [, $cm, $con, $bd, $cis, $q, $qp] = make_conversion_handler();
+        $logger  = Mockery::mock(Logger::class);
+        $handler = new Conversion_Handler($cm, $con, $bd, $cis, $q, $qp, $logger);
+
+        $hash  = TestFactory::hash('orphan-entry');
+        $now   = 1700000000;
+        $entry = $now - 3600;               // 2023-11-14 21:13:20 UTC
+
+        Functions\when('time')->justReturn($now);
+
+        $cm->shouldReceive('parse')->with('_ad_clicks')->once()->andReturn([$hash => $entry]);
+
+        \Patchwork\redefine(
+            'Kntnt\Ad_Attribution\Post_Type::get_valid_hashes',
+            fn (array $hashes) => $hashes,
+        );
+
+        // Capture prepared queries to prove only the exact match is tried.
+        $prepared = [];
+        $wpdb = TestFactory::wpdb();
+        $GLOBALS['wpdb'] = $wpdb;
+        $wpdb->shouldReceive('prepare')->andReturnUsing(function (...$args) use (&$prepared) {
+            $prepared[] = $args;
+            return 'SQL';
+        });
+        $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
+        $wpdb->shouldReceive('query')->with('COMMIT')->once();
+
+        // The exact lookup misses, and no other row is tried.
+        $wpdb->shouldReceive('get_var')->once()->andReturn(null);
+        $wpdb->shouldNotReceive('get_row');
+        $wpdb->shouldNotReceive('get_results');
+
+        // No conversion row is written.
+        $wpdb->shouldNotReceive('insert');
+
+        $_SERVER['REMOTE_ADDR']     = '203.0.113.9';
+        $_SERVER['HTTP_USER_AGENT'] = 'UniqueTestAgent/1.0';
+        $_SERVER['REQUEST_URI']     = '/';
+
+        // Exactly one warning naming the hash prefix and the entry timestamp,
+        // without visitor-identifying data.
+        $logged = [];
+        $logger->shouldReceive('warning')->once()->andReturnUsing(function (...$args) use (&$logged) {
+            $logged = $args;
+        });
+        $logger->shouldNotReceive('error');
+
+        $handler->handle_conversion();
+
+        expect($prepared)->toHaveCount(1);
+        expect($prepared[0][0])->toContain('wp_kntnt_ad_attr_clicks');
+        expect($prepared[0][0])->toContain('clicked_at = %s');
+        expect(array_slice($prepared[0], 1))->toBe([$hash, '2023-11-14 21:13:20']);
+
+        expect($logged[0])->toBe('CORE');
+        expect($logged[1])->toContain(substr($hash, 0, 8));
+        expect($logged[1])->toContain((string) $entry);
+        expect($logged[1])->not->toContain($hash);
+        expect($logged[1])->not->toContain('203.0.113.9');
+        expect($logged[1])->not->toContain('UniqueTestAgent');
     });
 
     it('does not deduplicate when dedup_seconds is 0 (default)', function () {

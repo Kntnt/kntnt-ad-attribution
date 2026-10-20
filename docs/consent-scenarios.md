@@ -37,10 +37,12 @@ Existing cookie is updated with the new hash.
 | | |
 |---|---|
 | **Cookies saved?** | Yes |
-| **Click recorded?** | No |
+| **Click recorded?** | No (Yes if the entry has no matching click row) |
 | **Conversion attributed?** | – |
 
-Existing cookie is updated. Consent allows cookie reading, so the server can detect the duplicate. The click is silently skipped. The dedup window is controlled by the `kntnt_ad_attr_dedup_seconds` filter.
+Consent allows cookie reading, so the server can detect the duplicate. The request is a duplicate only if a click row exists for the entry's hash and timestamp. The click is then silently skipped, and the cookie is sent again with the entry's **original** timestamp, so its expiry is refreshed while the entry keeps pointing at the original click row. The dedup window is measured from that original click, so a re-click after the window has passed is recorded as a new click. The dedup window is controlled by the `kntnt_ad_attr_dedup_seconds` filter.
+
+If no click row matches the entry (a cookie written by a version before 1.10.0, which rewrote the timestamp on duplicates), the request is handled as a new click: a click row is recorded and the entry is set to that row's timestamp. This repairs cookies already in browsers.
 
 ### Case 5 – No cookies, submits lead form
 

@@ -4,6 +4,16 @@
  * Description: REST endpoints for test setup, fixtures, and inspection.
  */
 
+// Dedup window toggle. The plugin's own override lives in the array option
+// kntnt_ad_attr_settings, which test-set-option cannot write, so suites set
+// the plain string option test_dedup_seconds instead. 0 or unset keeps the
+// plugin default. The plugin's settings override runs at PHP_INT_MAX but only
+// applies when a value is saved in settings, which tests never do.
+add_filter('kntnt_ad_attr_dedup_seconds', function ($seconds) {
+    $override = (int) get_option('test_dedup_seconds', 0);
+    return $override > 0 ? $override : $seconds;
+});
+
 add_action('rest_api_init', function () {
 
     // Create tracking URL
