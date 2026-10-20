@@ -91,7 +91,7 @@ All machine-readable names use `kntnt-ad-attr` (hyphens) / `kntnt_ad_attr` (unde
 
 **Filters (16):** `kntnt_ad_attr_has_consent`, `kntnt_ad_attr_redirect_method`, `kntnt_ad_attr_url_prefix`, `kntnt_ad_attr_cookie_lifetime`, `kntnt_ad_attr_dedup_seconds`, `kntnt_ad_attr_pending_transport`, `kntnt_ad_attr_is_bot`, `kntnt_ad_attr_attribution`, `kntnt_ad_attr_click_retention_days`, `kntnt_ad_attr_utm_options`, `kntnt_ad_attr_admin_tabs`, `kntnt_ad_attr_redirect_query_params`, `kntnt_ad_attr_click_id_capturers`, `kntnt_ad_attr_conversion_reporters`, `kntnt_ad_attr_delete_cookies`, `wp_untrash_post_status` (priority 20, for CPT only).
 
-**Actions (5):** `kntnt_ad_attr_click` (hash, target_url, campaign_data — fires for all non-bot clicks), `kntnt_ad_attr_conversion` (trigger from form plugin), `kntnt_ad_attr_conversion_recorded` (attributions, context — fires after DB write), `kntnt_ad_attr_admin_tab_{$tab}` (custom tab rendering), `kntnt_ad_attr_daily_cleanup` (cron).
+**Actions (5):** `kntnt_ad_attr_click` (hash, target_url, campaign_data — fires for all non-bot clicks), `kntnt_ad_attr_conversion` (trigger from form plugin), `kntnt_ad_attr_conversion_recorded` (attributions, context — fires only when the DB write recorded at least one conversion row; like reporters' `enqueue`, it receives only the recorded, positive-weight attributions, not renormalised), `kntnt_ad_attr_admin_tab_{$tab}` (custom tab rendering), `kntnt_ad_attr_daily_cleanup` (cron).
 
 See `docs/developer-hooks.md` for full documentation.
 
