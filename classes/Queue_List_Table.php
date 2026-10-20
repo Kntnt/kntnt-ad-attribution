@@ -98,7 +98,7 @@ final class Queue_List_Table extends \WP_List_Table {
 		$actions = [];
 
 		// Only show "Run Now" for jobs that are not already done.
-		if ( $item->status !== 'done' ) {
+		if ( $item->status !== Job_Status::Done->value ) {
 			$run_url = wp_nonce_url(
 				admin_url( "tools.php?page={$page}&queue_action=run_now&job_id={$job_id}" ),
 				"queue_run_{$job_id}",
@@ -183,25 +183,25 @@ final class Queue_List_Table extends \WP_List_Table {
 		$attempts = (int) $item->attempts;
 
 		return match ( $item->status ) {
-			'done' => esc_html( sprintf(
+			Job_Status::Done->value => esc_html( sprintf(
 				/* translators: %d: Number of attempts */
 				__( 'Success after %d attempts', 'kntnt-ad-attr' ),
 				$attempts,
 			) ),
 
-			'failed' => '<span style="color:#b32d2e">' . esc_html( sprintf(
+			Job_Status::Failed->value => '<span style="color:#b32d2e">' . esc_html( sprintf(
 				/* translators: %d: Number of attempts */
 				__( 'Failed after %d attempts', 'kntnt-ad-attr' ),
 				$attempts,
 			) ) . '</span>',
 
-			'processing' => esc_html( sprintf(
+			Job_Status::Processing->value => esc_html( sprintf(
 				/* translators: %d: Current attempt number */
 				__( 'Attempt %d running', 'kntnt-ad-attr' ),
 				$attempts + 1,
 			) ),
 
-			'pending' => $this->render_pending_status( $item, $attempts ),
+			Job_Status::Pending->value => $this->render_pending_status( $item, $attempts ),
 
 			default => esc_html( $item->status ),
 		};

@@ -145,7 +145,7 @@ final class Queue_Processor {
 		$wpdb->update(
 			$table,
 			[
-				'status'          => 'processing',
+				'status'          => Job_Status::Processing->value,
 				'last_attempt_at' => gmdate( 'Y-m-d H:i:s' ),
 			],
 			[ 'id' => $job_id ],
@@ -179,7 +179,7 @@ final class Queue_Processor {
 				$wpdb->update(
 					$table,
 					[
-						'status'        => 'failed',
+						'status'        => Job_Status::Failed->value,
 						'error_message' => 'Reporter returned false.',
 					],
 					[ 'id' => $job_id ],
@@ -198,7 +198,7 @@ final class Queue_Processor {
 				$wpdb->update(
 					$table,
 					[
-						'status'        => 'failed',
+						'status'        => Job_Status::Failed->value,
 						'error_message' => $e->getMessage(),
 					],
 					[ 'id' => $job_id ],

@@ -358,22 +358,22 @@ final class Conversion_List_Table extends WP_List_Table {
 	 * @since 1.10.0
 	 */
 	protected function column_jobs( object $item ): string {
-		$labels = [
-			/* translators: %d: Number of report jobs */
-			'pending'    => __( '%d pending', 'kntnt-ad-attr' ),
-			/* translators: %d: Number of report jobs */
-			'processing' => __( '%d processing', 'kntnt-ad-attr' ),
-			/* translators: %d: Number of report jobs */
-			'done'       => __( '%d done', 'kntnt-ad-attr' ),
-			/* translators: %d: Number of report jobs */
-			'failed'     => __( '%d failed', 'kntnt-ad-attr' ),
-		];
-
 		$parts = [];
-		foreach ( $labels as $status => $label ) {
-			if ( ! empty( $item->jobs[ $status ] ) ) {
-				$parts[] = sprintf( $label, $item->jobs[ $status ] );
+		foreach ( Job_Status::cases() as $status ) {
+			if ( empty( $item->jobs[ $status->value ] ) ) {
+				continue;
 			}
+			$label   = match ( $status ) {
+				/* translators: %d: Number of report jobs */
+				Job_Status::Pending    => __( '%d pending', 'kntnt-ad-attr' ),
+				/* translators: %d: Number of report jobs */
+				Job_Status::Processing => __( '%d processing', 'kntnt-ad-attr' ),
+				/* translators: %d: Number of report jobs */
+				Job_Status::Done       => __( '%d done', 'kntnt-ad-attr' ),
+				/* translators: %d: Number of report jobs */
+				Job_Status::Failed     => __( '%d failed', 'kntnt-ad-attr' ),
+			};
+			$parts[] = sprintf( $label, $item->jobs[ $status->value ] );
 		}
 
 		return $parts === [] ? '—' : esc_html( implode( ', ', $parts ) );

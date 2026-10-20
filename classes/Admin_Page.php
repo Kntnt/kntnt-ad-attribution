@@ -688,7 +688,7 @@ final class Admin_Page {
 				$job_id,
 			) );
 
-			$is_failed = $status === 'failed';
+			$is_failed = $status === Job_Status::Failed->value;
 			$success   = $this->queue_processor->process_single( $job_id, $is_failed );
 
 			$redirect_args['message'] = $success ? 'queue_run_ok' : 'queue_run_fail';

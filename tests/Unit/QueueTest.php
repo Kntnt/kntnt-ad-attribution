@@ -716,13 +716,13 @@ describe('Queue::delete_unfinished_for_conversions()', function () {
         [$delete_sql, $delete_args] = $prepared[0];
         expect($delete_sql)->toStartWith('DELETE FROM wp_kntnt_ad_attr_queue');
         expect($delete_sql)->toContain('conversion_ref IN (%s,%s)');
-        expect($delete_sql)->toContain("status IN ('pending', 'failed')");
-        expect($delete_args)->toBe(['ref-a', 'ref-b']);
+        expect($delete_sql)->toContain('status IN (%s, %s)');
+        expect($delete_args)->toBe(['ref-a', 'ref-b', 'pending', 'failed']);
 
         [$count_sql, $count_args] = $prepared[1];
         expect($count_sql)->toContain('conversion_ref IN (%s,%s)');
-        expect($count_sql)->toContain("status = 'processing'");
-        expect($count_args)->toBe(['ref-a', 'ref-b']);
+        expect($count_sql)->toContain('status = %s');
+        expect($count_args)->toBe(['ref-a', 'ref-b', 'processing']);
     });
 
     it('touches nothing when no conversion is given', function () {

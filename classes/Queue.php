@@ -72,7 +72,7 @@ final class Queue {
 		$wpdb->insert( $table, [
 			'reporter'           => $reporter,
 			'payload'            => wp_json_encode( $payload ),
-			'status'             => 'pending',
+			'status'             => Job_Status::Pending->value,
 			'attempts'           => 0,
 			'created_at'         => gmdate( 'Y-m-d H:i:s' ),
 			'label'              => $label !== '' ? $label : null,
@@ -215,7 +215,7 @@ final class Queue {
 				$table,
 				[
 					'attempts'        => $k,
-					'status'          => 'failed',
+					'status'          => Job_Status::Failed->value,
 					'error_message'   => $message,
 					'processed_at'    => $now,
 					'last_attempt_at' => $now,
@@ -233,7 +233,7 @@ final class Queue {
 				$table,
 				[
 					'attempts'        => $k,
-					'status'          => 'pending',
+					'status'          => Job_Status::Pending->value,
 					'error_message'   => $message,
 					'retry_after'     => $retry_at,
 					'last_attempt_at' => $now,
@@ -250,7 +250,7 @@ final class Queue {
 				$table,
 				[
 					'attempts'        => $k,
-					'status'          => 'pending',
+					'status'          => Job_Status::Pending->value,
 					'error_message'   => $message,
 					'retry_after'     => $retry_at,
 					'last_attempt_at' => $now,
@@ -304,13 +304,13 @@ final class Queue {
 		// Delete first, then count: a job dequeued in between is counted as
 		// processing rather than reported as deleted.
 		$deleted = $wpdb->query( $wpdb->prepare(
-			"DELETE FROM {$table} WHERE conversion_ref IN ({$placeholders}) AND status IN ('pending', 'failed')",
-			...$conversion_refs,
+			"DELETE FROM {$table} WHERE conversion_ref IN ({$placeholders}) AND status IN (%s, %s)",
+			...[ ...$conversion_refs, Job_Status::Pending->value, Job_Status::Failed->value ],
 		) );
 
 		$processing = $wpdb->get_var( $wpdb->prepare(
-			"SELECT COUNT(*) FROM {$table} WHERE conversion_ref IN ({$placeholders}) AND status = 'processing'",
-			...$conversion_refs,
+			"SELECT COUNT(*) FROM {$table} WHERE conversion_ref IN ({$placeholders}) AND status = %s",
+			...[ ...$conversion_refs, Job_Status::Processing->value ],
 		) );
 
 		return [

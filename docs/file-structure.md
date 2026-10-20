@@ -33,6 +33,7 @@ kntnt-ad-attribution/
 │   ├── Utm_Options.php           ← Predefined UTM source/medium options (filterable)
 │   ├── Settings_Page.php         ← Settings page under Settings > Ad Attribution
 │   ├── Cron.php                  ← Daily cleanup job, target page warnings
+│   ├── Job_Status.php            ← Queue job statuses (enum)
 │   ├── Request_Outcome.php       ← How a tracking URL request was counted (enum)
 │   ├── Conversion_Action.php     ← Conversion list actions: delete, mark/unmark as test (enum)
 │   ├── Table.php                 ← Names of the custom tables (enum, v1.10.0)
