@@ -355,6 +355,42 @@ add_action('rest_api_init', function () {
         },
         'permission_callback' => fn () => current_user_can('manage_options'),
     ]);
+
+    // Switch the plugin's diagnostic logging on or off. enable_logging lives
+    // in the array option kntnt_ad_attr_settings, which test-set-option
+    // cannot write. Body: {"enabled": "on"|"off"}.
+    register_rest_route('kntnt-ad-attribution/v1', '/test-set-logging', [
+        'methods'             => 'POST',
+        'callback'            => function (WP_REST_Request $request) {
+            $settings = get_option('kntnt_ad_attr_settings', []);
+            if (!is_array($settings)) {
+                $settings = [];
+            }
+            $settings['enable_logging'] = $request->get_param('enabled') === 'on' ? '1' : '';
+            update_option('kntnt_ad_attr_settings', $settings);
+            return new WP_REST_Response(['success' => true], 200);
+        },
+        'permission_callback' => fn () => current_user_can('manage_options'),
+    ]);
+
+    // Read (GET) or delete (DELETE) the plugin's log file.
+    register_rest_route('kntnt-ad-attribution/v1', '/test-log', [
+        [
+            'methods'             => 'GET',
+            'callback'            => fn () => new WP_REST_Response([
+                'contents' => \Kntnt\Ad_Attribution\Plugin::get_instance()->logger->get_contents(),
+            ], 200),
+            'permission_callback' => fn () => current_user_can('manage_options'),
+        ],
+        [
+            'methods'             => 'DELETE',
+            'callback'            => function () {
+                \Kntnt\Ad_Attribution\Plugin::get_instance()->logger->clear();
+                return new WP_REST_Response(['success' => true], 200);
+            },
+            'permission_callback' => fn () => current_user_can('manage_options'),
+        ],
+    ]);
 });
 
 // Pending-consent transport override. Set option `test_pending_transport`

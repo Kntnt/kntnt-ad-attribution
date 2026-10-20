@@ -38,6 +38,22 @@ Transport mechanism for undefined consent: `'cookie'` (default) or `'fragment'`.
 
 Bot detection. Default: `false`. The plugin registers its own callback with User-Agent matching. The developer can supplement or replace it.
 
+**`kntnt_ad_attr_is_speculative`** (v1.10.0)
+
+Speculative request detection. Default: `false`. The plugin registers its own callback (`Speculation_Detector::detect()`), which returns `true` when the `Sec-Purpose` request header contains `prefetch` (`prefetch`, `prefetch;prerender`, …) or the `Purpose` header equals `prefetch`, and passes an earlier `true` through. A speculative request to a tracking URL gets a 503 with no-cache headers instead of a redirect and records nothing (no click row, click ID, cookie, transport or `kntnt_ad_attr_click`), so a browser discards the prefetch and a real click arrives as a fresh request. See [click-handling.md](click-handling.md#speculative-request).
+
+The developer can supplement or overrule the default, as with `kntnt_ad_attr_is_bot`:
+
+```php
+// Add a signal, for example a CDN's prefetch header.
+add_filter( 'kntnt_ad_attr_is_speculative', function ( bool $is_speculative ): bool {
+    return $is_speculative || ( $_SERVER['HTTP_X_MOZ'] ?? '' ) === 'prefetch';
+} );
+
+// Count speculative requests as clicks again.
+add_filter( 'kntnt_ad_attr_is_speculative', '__return_false', PHP_INT_MAX );
+```
+
 **`kntnt_ad_attr_attribution`**
 
 Filters the attribution weights for a conversion. Default: last-click (1.0 for most recent click, 0.0 for all others). Return weights that sum to 1.0. Only hashes with a weight above 0 and a matching click row are recorded, so the weights that `kntnt_ad_attr_conversion_recorded` and the reporters receive can sum to less.
@@ -127,7 +143,9 @@ add_filter( 'kntnt_ad_attr_click_id_capturers', function ( array $capturers ): a
 } );
 ```
 
-The core iterates the returned array, reads each GET parameter, sanitizes it with `sanitize_text_field()`, validates length (max 255), and stores it in the `kntnt_ad_attr_click_ids` table. Click IDs are stored per click: capture happens after the click row is inserted and is keyed by that row, so each click ID belongs to exactly one click, and a click without the parameter has no ID for that platform. Capture happens before the `kntnt_ad_attr_click` action fires. Click IDs are deleted together with their click rows.
+The core iterates the returned array, reads each GET parameter, sanitizes it with `sanitize_text_field()`, validates length (max 255), and stores it in the `kntnt_ad_attr_click_ids` table. Click IDs are stored per click: they are stored after the click row is inserted and are keyed by that row, so each click ID belongs to exactly one click, and a click without the parameter has no ID for that platform. Capture happens before the `kntnt_ad_attr_click` action fires. Click IDs are deleted together with their click rows.
+
+The captured values also drive repeat detection (v1.10.0): a request carrying a click ID already recorded on a click of the same tracking URL is a repeat, which records no click row and refers to the original click instead. Without capturers there is no repeat detection. See [click-handling.md](click-handling.md#repeat).
 
 **`kntnt_ad_attr_conversion_reporters`**
 
@@ -225,7 +243,7 @@ add_action( 'kntnt_ad_attr_admin_tab_settings', function (): void {
 
 **`kntnt_ad_attr_click`**
 
-Fires after a click on a tracking URL has been logged but before consent handling and redirect. Fires for all non-bot clicks regardless of consent state. Companion plugins can use this to capture platform-specific URL parameters (e.g. `gclid`, `fbclid`, `msclkid`).
+Fires after a click on a tracking URL has been recorded but before consent handling and redirect. Fires for every recorded click regardless of consent state; it does not fire for bots, speculative requests, repeats or deduplicated clicks (see [click-handling.md](click-handling.md#counting-rules)). Companion plugins can use this to capture platform-specific URL parameters (e.g. `gclid`, `fbclid`, `msclkid`).
 
 Parameters:
 

@@ -14,17 +14,76 @@ The click handler is registered on `template_redirect` — the conventional hook
 7. If target URL not found → 404
 7b. Forward query parameters: merge incoming request params with target URL params (target wins on collision), filter via `kntnt_ad_attr_redirect_query_params`
 8. Redirect loop guard: verify that target URL does not start with /<prefix>/
-9. Bot check: if is_bot() → redirect without logging or setting cookie
+9. Bot check: if is_bot() → redirect without recording a click or setting a cookie                       [outcome: bot]
+9b. Speculative check: if is_speculative() → 503 with no-cache headers, no redirect, nothing recorded      [outcome: speculative]
 10. Check consent
-10b. Click deduplication: if consent=true and dedup_seconds>0 and hash in cookie within window and a click row matches the entry → re-send cookie with the original timestamp, redirect (skip insert)
+10a. Read platform click IDs from the request via registered kntnt_ad_attr_click_id_capturers
+10b. Repeat check: if any of them is already recorded on a click of this tracking URL → resolve to the original click, handle consent for it, redirect (skip insert)   [outcome: repeat]
+10c. Click deduplication: if consent=true and dedup_seconds>0 and hash in cookie within window and a click row matches the entry → re-send cookie with the original timestamp, redirect (skip insert)   [outcome: deduplicated]
 11. Extract per-click UTM fields (Content, Term, Id, Group) from incoming parameters
 11b. Insert click record into kntnt_ad_attr_clicks table
-11c. Capture platform-specific click IDs via registered kntnt_ad_attr_click_id_capturers filter, keyed by the inserted click row's ID (skipped if the insert failed)
+11c. Store the captured click IDs, keyed by the inserted click row's ID (skipped if the insert failed)
 11d. Populate empty postmeta fields (Source, Medium, Campaign only) from incoming UTM/MTM query parameters
 11e. Fire kntnt_ad_attr_click action (hash, target URL, campaign data) — allows companion plugins to capture platform-specific parameters (e.g. gclid)
 12. Handle consent for cookie storage → three outcomes (see Consent below)
-13. Redirect to target URL
+13. Redirect to target URL                                                                                [outcome: recorded]
 ```
+
+Every request that gets past step 8 writes one diagnostic log line, with the outcome shown in brackets, just before its response (see [Diagnostic Log Line](#diagnostic-log-line)).
+
+## Counting Rules
+
+A tracking URL counts **clicks**: requests in which a person follows the ad link. Every other request is answered without a click row, so the counts in the admin view, its totals and the CSV export need no filtering.
+
+The handler classifies each request for a published tracking URL with a valid target. The checks run in this order, and the first that matches decides:
+
+| Order | Kind | Detected by | Response | Recorded |
+|---|---|---|---|---|
+| 1 | **Bot** | `kntnt_ad_attr_is_bot` (User-Agent signatures, see [Bot Detection](#bot-detection)) | 302 redirect with query forwarding | Nothing |
+| 2 | **Speculative request** | `kntnt_ad_attr_is_speculative` (`Sec-Purpose` contains `prefetch`, or `Purpose: prefetch`) | 503, no-cache headers, no redirect | Nothing |
+| 3 | **Repeat** | A platform click ID in the request is already recorded on a click of this tracking URL | 302 redirect with query forwarding | No click row or click ID; the cookie or transport refers to the original click |
+| 4 | **Duplicate** | Click deduplication (opt-in, consent required; see [Click Deduplication](#click-deduplication)) | 302 redirect with query forwarding | No click row; the cookie entry keeps its click |
+| 5 | **Click** | None of the above | 302 redirect with query forwarding | Click row, click IDs, `kntnt_ad_attr_click`, cookie or transport per consent |
+
+Bots come first because nothing about their requests is worth recording. Speculative requests come next because declining them must not depend on consent or on what was recorded before. The repeat check precedes deduplication because it works without consent and resolves to a specific earlier click.
+
+### Click
+
+A request that none of the checks match. It inserts a click row, stores the click IDs it carries on that row, fires `kntnt_ad_attr_click` and sets the cookie or transport according to consent.
+
+### Repeat
+
+A reload, a back/forward navigation, a bookmark or a shared link reaches the tracking URL again with the platform click ID of the original ad click (for example the same `gclid`). The platform counts one click, so the plugin must too.
+
+A request is a repeat if any click ID captured through `kntnt_ad_attr_click_id_capturers` equals a click ID already recorded on a click row of the **same** tracking URL (`Click_ID_Store::find_original_click()`, which uses the `(platform, value)` index). The same click ID on another tracking URL is not a repeat.
+
+A repeat:
+
+- inserts no click row and stores no click ID;
+- does not fire `kntnt_ad_attr_click`;
+- resolves to the **original click**, the earliest click row on the tracking URL carrying one of the request's click IDs;
+- with consent granted, sets the cookie entry for the hash to whichever is more recent: the existing entry's click or the original click. The existing entry only counts if its click row exists (the invariant under [Click Deduplication](#click-deduplication)), so the entry never moves backwards in time and never points at a missing row;
+- with undetermined consent, passes the original click (hash and its `clicked_at`) through the [transport](#transport-mechanism-for-undefined-consent);
+- with consent denied, stores nothing;
+- redirects as usual, with query forwarding.
+
+**No capturers, no repeat detection.** Repeats are recognised only by platform click IDs. Without registered capturers (the default without ad-platform add-ons), or for a request without a click ID, there is nothing to compare, and the request is counted as a click unless deduplication applies.
+
+### Duplicate
+
+A second click on the same tracking URL by a visitor whose `_ad_clicks` cookie shows a click within the deduplication window. Deduplication is off by default and needs consent, because it reads the cookie. See [Click Deduplication](#click-deduplication).
+
+### Speculative request
+
+Browsers may load a link before the visitor follows it: Chrome's speculation rules prefetch or prerender likely next pages and send `Sec-Purpose: prefetch` (or `prefetch;prerender`); older prefetching sends `Purpose: prefetch`. Such a request is not a click, and the visitor may never make one.
+
+The handler declines it with a non-2xx, non-redirect, uncacheable response (503 with `nocache_headers()`) and records nothing: no click row, no click ID, no cookie, no transport and no action. Chrome treats a prefetch that ends in a non-2xx status as failed and does not use it ([Debug speculation rules](https://developer.chrome.com/docs/devtools/application/debugging-speculation-rules)). If the visitor then really clicks, the browser makes a fresh request, which is counted once. Both alternatives miscount: recording speculative requests counts clicks that never happen, and skipping them while still redirecting loses the real click whenever the browser reuses the prefetched redirect.
+
+Detection runs through the `kntnt_ad_attr_is_speculative` filter, which works like `kntnt_ad_attr_is_bot`: `Speculation_Detector` registers the default header check, and other callbacks can add signals or overrule it.
+
+### Not covered
+
+Link-preview fetchers and security scanners that use browser User-Agents and send no purpose header are counted as clicks; there is no reliable signal for them. The [diagnostic log line](#diagnostic-log-line) records the headers needed to study what remains.
 
 ## Click Deduplication
 
@@ -40,7 +99,7 @@ This prevents inflated click counts from repeated visits (e.g. page refreshes, b
 
 **Self-healing:** if the entry is within the window but no click row matches it, the request is not a duplicate. It is handled as a new click: a click row is inserted and the entry is set to that row's timestamp. This repairs cookies written by versions before 1.10.0, which rewrote the timestamp on duplicates.
 
-When consent is `false` or `null`, the cookie cannot be read, so dedup is impossible — the click is always recorded. This matches the consent-scenarios specification (Cases 7–16).
+When consent is `false` or `null`, the cookie cannot be read, so dedup is impossible — the click is always recorded, unless it is a [repeat](#repeat), which needs no cookie. This matches the consent-scenarios specification (Cases 7–16).
 
 When dedup is disabled (default `0`), the dedup check is skipped entirely.
 
@@ -52,7 +111,7 @@ If no capturers are registered (default), the filter returns `[]` and the foreac
 
 Each registered capturer maps a platform to a GET parameter. The core iterates the capturers, sanitizes the parameter value with `sanitize_text_field()`, validates it is non-empty and at most 255 characters, and stores it via `Click_ID_Store::store( $click_row_id, $platform, $value )`.
 
-Capture happens **after** the click row is inserted and is keyed by that row's ID (`$wpdb->insert_id`), so each click ID belongs to exactly one click. If a click carries no ID for a platform, that click has no ID for that platform; it does not inherit an earlier click's. If the click insert fails, nothing is captured. A conversion linked to a click reports that click's IDs, never those of a later visitor on the same tracking URL (see [conversion-handling.md](conversion-handling.md)).
+The click IDs are read from the request before anything is recorded, because a value already recorded for the tracking URL makes the request a [repeat](#repeat). They are stored **after** the click row is inserted and are keyed by that row's ID (`$wpdb->insert_id`), so each click ID belongs to exactly one click. If a click carries no ID for a platform, that click has no ID for that platform; it does not inherit an earlier click's. If the click insert fails, nothing is captured. A conversion linked to a click reports that click's IDs, never those of a later visitor on the same tracking URL (see [conversion-handling.md](conversion-handling.md)).
 
 Click ID capture happens **before** the `kntnt_ad_attr_click` action fires, so click IDs are already stored when companion plugins receive the click notification. Click ID capture occurs independently of consent — like click counting, it does not set any cookies or track individuals.
 
@@ -126,7 +185,7 @@ Query parameters (e.g. `gclid`, `fbclid`) are forwarded from the incoming reques
 
 ## Bot Detection
 
-Bots are redirected to the target URL, but the click is **not** logged and no cookie is set.
+Bots are redirected to the target URL, but the click is **not** recorded and no cookie is set.
 
 Bot detection is controlled by the filter `kntnt_ad_attr_is_bot` (default `false`). The plugin registers its own callback with User-Agent matching:
 
@@ -189,6 +248,24 @@ exit;
 **`'js'`** — JavaScript redirect via `window.location.href`. Serves a minimal 200 page that redirects via JavaScript, so that client-side scripts (for example consent managers) can run before the page navigates away.
 
 All redirect responses shall include `nocache_headers()` to prevent caching.
+
+## Diagnostic Log Line
+
+When logging is enabled (Tools → Ad Attribution → Logging), every request to a tracking URL that gets past the redirect loop guard writes exactly one line through `Logger::info( 'CORE', … )`, just before its response:
+
+```
+[2026-10-20 14:03:11+02:00][CORE][INFO] Tracking URL request: outcome=repeat hash=3f9a1c0b sec_purpose="" purpose="" user_agent="Mozilla/5.0 (Macintosh; …) Chrome/141.0.0.0 Safari/537.36"
+```
+
+| Field | Value |
+|---|---|
+| `outcome` | `recorded`, `repeat`, `deduplicated`, `speculative` or `bot` |
+| `hash` | The first 8 characters of the tracking URL's hash |
+| `sec_purpose`, `purpose`, `user_agent` | The raw `Sec-Purpose`, `Purpose` and `User-Agent` request headers, sanitized (no line breaks) and quoted; `""` when absent |
+
+The line holds no IP address. With logging disabled, nothing is written. Requests that end in a 404 (unknown or unpublished hash, missing target, redirect loop) write no line.
+
+The line exists to measure what is still counted as a click, for example link previews and scanners that look like browsers. Any further per-request fact belongs in this line as another field, so that each request still writes one line.
 
 ## Unknown Hash and Broken Target URL
 

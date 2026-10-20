@@ -33,8 +33,9 @@ The plugin does not hardcode integrations with any specific consent management o
 - **Three-state consent model** — integrates with any cookie consent plugin via a filter hook, supporting yes, no, and undefined consent states with a transport mechanism for deferred consent.
 - **Platform-agnostic form support** — integrates with any form plugin via an action hook.
 - **Bot detection** — filters out known bots via User-Agent matching and `robots.txt` rules.
+- **Honest click counts** — speculative browser prefetches (`Sec-Purpose: prefetch`) are declined without being counted, and a request repeating a platform click ID already recorded for the tracking URL (reload, back/forward navigation, bookmark) is not counted again. With logging enabled, each tracking-URL request writes one diagnostic line with its outcome and request headers.
 - **Two redirect methods** — 302 redirect (default) or, via filter, a JavaScript redirect that serves a minimal page and navigates with JavaScript, so that client-side scripts such as consent managers can run first.
-- **Companion plugin hooks** — fires `kntnt_ad_attr_click` on every non-bot click with hash, target URL, campaign data, and access to URL parameters (gclid, fbclid, etc.). Companion plugins can capture platform-specific data and implement server-side API integrations without modifying the core plugin.
+- **Companion plugin hooks** — fires `kntnt_ad_attr_click` on every recorded click with hash, target URL, campaign data, and access to URL parameters (gclid, fbclid, etc.). Companion plugins can capture platform-specific data and implement server-side API integrations without modifying the core plugin.
 - **Query parameter forwarding** — ad platform parameters (gclid, fbclid, msclkid, etc.) appended to the tracking URL are automatically forwarded to the target page through the redirect. Target URL parameters take precedence, and the merged set is filterable.
 - **Adapter infrastructure for add-ons** — a built-in adapter system lets add-on plugins or code snippets register click-ID capturers (for `gclid`, `fbclid`, `msclkid`, etc.) and conversion reporters (for Google Ads, Meta, Matomo, GA4, etc.). The core captures click IDs and processes a report queue; adapters define what to capture and where to report. If no adapters are registered, the plugin behaves identically to previous versions.
 
@@ -178,7 +179,7 @@ The plugin adds **Ad Attribution** under **Tools** in the WordPress admin menu. 
 - **Summary:** Shows total clicks and total (fractional) conversions for the selected filters.
 - **Export:** Export the filtered results as a CSV file (UTF-8 with BOM; semicolon delimiter when the locale uses comma as decimal separator). The CSV includes all fields including per-click Content, Term, Id, and Group from the clicks table.
 
-**Note:** The plugin tracks clicks (each request to `/ad/<hash>`) and conversions. Ad impressions are not available since they occur on the ad platform and never reach your server.
+**Note:** The plugin tracks clicks (requests to `/ad/<hash>`) and conversions. Requests from bots, speculative browser prefetches and repeats of an already recorded platform click ID (reloads, back/forward navigation, bookmarks) are not counted as clicks; see [Counting rules](docs/click-handling.md#counting-rules). Ad impressions are not available since they occur on the ad platform and never reach your server.
 
 #### Click-Time Parameter Population
 
@@ -485,6 +486,15 @@ add_filter( 'kntnt_ad_attr_is_bot', function ( bool $is_bot ): bool {
 } );
 ```
 
+**`kntnt_ad_attr_is_speculative`** (v1.10.0)
+
+Controls speculative request detection. Default: `false`. The plugin registers its own callback that returns `true` when the `Sec-Purpose` request header contains `prefetch` (as Chrome sends for speculation-rules prefetch and prerender) or the `Purpose` header equals `prefetch`. A speculative request gets a `503` with no-cache headers instead of a redirect, and nothing is recorded: no click, click ID, cookie or `kntnt_ad_attr_click` action. Browsers discard a prefetch that fails, so if the visitor really clicks, that click arrives as a fresh request and is counted once.
+
+```php
+// Count speculative requests as clicks again
+add_filter( 'kntnt_ad_attr_is_speculative', '__return_false', PHP_INT_MAX );
+```
+
 **`kntnt_ad_attr_click_id_capturers`**
 
 Registers platform-specific GET parameters to capture at ad click time. Return an associative array mapping platform identifiers to GET parameter names. Default: `[]`.
@@ -646,7 +656,7 @@ add_action( 'kntnt_ad_attr_admin_tab_settings', function (): void {
 
 **`kntnt_ad_attr_click`**
 
-Fires after a click on a tracking URL has been logged but before consent handling and redirect. Fires for all non-bot clicks regardless of consent state. Companion plugins can use this to capture platform-specific URL parameters (e.g. `gclid`, `fbclid`, `msclkid`).
+Fires after a click on a tracking URL has been recorded but before consent handling and redirect. Fires for every recorded click regardless of consent state; not for bots, speculative requests, repeats or deduplicated clicks. Companion plugins can use this to capture platform-specific URL parameters (e.g. `gclid`, `fbclid`, `msclkid`).
 
 Parameters:
 
@@ -839,15 +849,16 @@ Requires `zip` and `msgfmt` (GNU gettext). With `--tag`: `git`. With `--update` 
 6. `Cookie_Manager` — cookie read/write operations (stateless)
 7. `Consent` — three-state consent resolution
 8. `Bot_Detector` — User-Agent filtering
-9. `Click_ID_Store` — platform-specific click ID storage
-10. `Queue(Settings)` — async job queue with configurable retry
-11. `Queue_Processor(Queue, Logger)` — queue job dispatcher
-12. `Click_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store)` — click processing & redirect
-13. `Conversion_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store, Queue, Queue_Processor, Logger)` — conversion attribution
-14. `Cron(Click_ID_Store, Queue, Logger)` — scheduled cleanup tasks
-15. `Admin_Page(Queue, Queue_Processor, Settings, Logger)` — admin UI orchestration
-16. `Rest_Endpoint(Cookie_Manager, Consent)` — REST API routes
-17. `Settings_Page(Settings, Logger)` — settings page under Settings > Ad Attribution
+9. `Speculation_Detector` — prefetch/prerender detection
+10. `Click_ID_Store` — platform-specific click ID storage
+11. `Queue(Settings)` — async job queue with configurable retry
+12. `Queue_Processor(Queue, Logger)` — queue job dispatcher
+13. `Click_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store, Speculation_Detector, Logger)` — click processing & redirect
+14. `Conversion_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store, Queue, Queue_Processor, Logger)` — conversion attribution
+15. `Cron(Click_ID_Store, Queue, Logger)` — scheduled cleanup tasks
+16. `Admin_Page(Queue, Queue_Processor, Settings, Logger)` — admin UI orchestration
+17. `Rest_Endpoint(Cookie_Manager, Consent)` — REST API routes
+18. `Settings_Page(Settings, Logger)` — settings page under Settings > Ad Attribution
 
 **Data model:** Tracking URLs are stored as a custom post type `kntnt_ad_attr_url` (with meta `_hash`, `_target_post_id`, `_utm_source`, `_utm_medium`, `_utm_campaign`). Individual clicks are stored in `{prefix}kntnt_ad_attr_clicks` with per-click UTM fields. Conversions are stored in `{prefix}kntnt_ad_attr_conversions` linked to specific clicks via `click_id`, with fractional attribution values. Platform-specific click IDs are stored per click in `{prefix}kntnt_ad_attr_click_ids` with composite PK `(click_id, platform)`, where `click_id` is the click row's ID, and an index on `(platform, value)` for looking up whether a click ID was already recorded for a tracking URL; they are deleted together with their click rows. Async report jobs are stored in `{prefix}kntnt_ad_attr_queue` with auto-increment PK and status-based processing.
 
@@ -879,6 +890,7 @@ kntnt-ad-attribution/
 │   ├── Cookie_Manager.php        ← Cookie read/write/validate (stateless)
 │   ├── Consent.php               ← Three-state consent check logic
 │   ├── Bot_Detector.php          ← User-Agent filtering, robots.txt rule
+│   ├── Speculation_Detector.php  ← Prefetch/prerender detection (Sec-Purpose, Purpose)
 │   ├── Rest_Endpoint.php         ← REST API (set-cookie with rate limiting, search-posts)
 │   ├── Admin_Page.php            ← Tools page with merged view, URL CRUD, CSV export
 │   ├── Campaign_List_Table.php   ← WP_List_Table for the campaign list with bulk actions
@@ -1027,7 +1039,7 @@ A comprehensive test strategy is documented in `docs/testing-strategy.md`, cover
 - The REST `set-cookie` endpoint has rate limiting: 10 requests per minute per IP via transient.
 - Select2 loaded from cdnjs has SRI (Subresource Integrity) hashes added via `script_loader_tag` / `style_loader_tag` filters.
 - Hash generation uses `random_bytes(32)` — the hash is an opaque identifier, not derived from UTM parameters.
-- The `kntnt_ad_attr_click` action fires for all non-bot clicks regardless of consent state, enabling companion plugins to capture platform-specific parameters even before consent is resolved.
+- The `kntnt_ad_attr_click` action fires for every recorded click (not for bots, speculative requests, repeats or deduplicated clicks) regardless of consent state, enabling companion plugins to capture platform-specific parameters even before consent is resolved.
 - Admin page is registered under Tools (`add_management_page`), not as a top-level menu item.
 - CSV export uses POST with its own nonce (`kntnt_ad_attr_export`) and reconstructs GET filter params from POST data for `Campaign_List_Table` compatibility.
 - The global `kntnt_ad_attribution_delete_cookies()` function (v1.7.0) is defined in `kntnt-ad-attribution.php` after `Plugin::get_instance()`. CMP plugins call it from server-side opt-out hooks to expire HttpOnly cookies. The cookie list is filterable via `kntnt_ad_attr_delete_cookies`.
