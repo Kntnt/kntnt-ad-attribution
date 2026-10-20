@@ -42,6 +42,26 @@ final class Cookie_Manager {
 	private const HASH_PATTERN = '/^[a-f0-9]{64}$/';
 
 	/**
+	 * Regex fragment for one entry: `hash:timestamp`.
+	 *
+	 * A SHA-256 hash and the Unix timestamp of the click it points at. The
+	 * same syntax names a click in every cookie, the pending-consent
+	 * transport and the set-cookie REST request.
+	 *
+	 * @var string
+	 * @since 1.10.0
+	 */
+	private const ENTRY = '[a-f0-9]{64}:\d{1,10}';
+
+	/**
+	 * Regex pattern for one entry on its own.
+	 *
+	 * @var string
+	 * @since 1.10.0
+	 */
+	private const ENTRY_PATTERN = '/^' . self::ENTRY . '$/';
+
+	/**
 	 * Regex pattern for the full cookie value.
 	 *
 	 * Validates the entire `hash:timestamp[,hash:timestamp]*` format in one pass.
@@ -49,7 +69,7 @@ final class Cookie_Manager {
 	 * @var string
 	 * @since 1.0.0
 	 */
-	private const COOKIE_PATTERN = '/^[a-f0-9]{64}:\d{1,10}(,[a-f0-9]{64}:\d{1,10})*$/';
+	private const COOKIE_PATTERN = '/^' . self::ENTRY . '(,' . self::ENTRY . ')*$/';
 
 	/**
 	 * Parses a cookie into an associative array.
@@ -120,9 +140,39 @@ final class Cookie_Manager {
 	public function serialize_entries( array $entries ): string {
 		$pairs = [];
 		foreach ( $entries as $hash => $timestamp ) {
-			$pairs[] = $hash . ':' . $timestamp;
+			$pairs[] = self::format_entry( $hash, $timestamp );
 		}
 		return implode( ',', $pairs );
+	}
+
+	/**
+	 * Formats one click as an entry: `hash:timestamp`.
+	 *
+	 * @param string $hash      The SHA-256 hash.
+	 * @param int    $timestamp Unix timestamp of the click.
+	 *
+	 * @return string The entry.
+	 * @since 1.10.0
+	 */
+	public static function format_entry( string $hash, int $timestamp ): string {
+		return $hash . ':' . $timestamp;
+	}
+
+	/**
+	 * Parses one entry, `hash:timestamp`, into its hash and timestamp.
+	 *
+	 * @param string $entry The entry, e.g. an item posted to the set-cookie endpoint.
+	 *
+	 * @return array{0: string, 1: int}|null The hash and the timestamp, or null if the entry is malformed.
+	 * @since 1.10.0
+	 */
+	public static function parse_entry( string $entry ): ?array {
+		if ( ! preg_match( self::ENTRY_PATTERN, $entry ) ) {
+			return null;
+		}
+
+		[ $hash, $timestamp ] = explode( ':', $entry );
+		return [ $hash, (int) $timestamp ];
 	}
 
 	/**

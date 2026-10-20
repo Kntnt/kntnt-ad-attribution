@@ -9,6 +9,7 @@
 declare(strict_types=1);
 
 use Kntnt\Ad_Attribution\Admin_Page;
+use Kntnt\Ad_Attribution\Conversion_Store;
 use Kntnt\Ad_Attribution\Queue;
 use Kntnt\Ad_Attribution\Queue_Processor;
 use Kntnt\Ad_Attribution\Settings;
@@ -27,14 +28,16 @@ class AdminExitException extends \RuntimeException {}
 /**
  * Creates an Admin_Page instance with mocked dependencies.
  *
- * @return array{0: Admin_Page, 1: Mockery\MockInterface}
+ * @return array{0: Admin_Page, 1: Mockery\MockInterface, 2: Mockery\MockInterface, 3: Mockery\MockInterface, 4: Mockery\MockInterface}
+ *         The page, its queue, settings, logger and conversion store.
  */
 function make_admin_page(): array {
     $queue = Mockery::mock(Queue::class);
     $queue_processor = Mockery::mock(Queue_Processor::class);
     $settings = Mockery::mock(Settings::class)->shouldIgnoreMissing();
     $logger = Mockery::mock(Logger::class)->shouldIgnoreMissing();
-    return [new Admin_Page($queue, $queue_processor, $settings, $logger), $queue, $settings, $logger];
+    $conversions = Mockery::mock(Conversion_Store::class);
+    return [new Admin_Page($queue, $queue_processor, $settings, $logger, $conversions), $queue, $settings, $logger, $conversions];
 }
 
 /**
@@ -315,32 +318,29 @@ class AdminDieException extends \RuntimeException {}
  * `$_GET` must hold the request. Nonce checks pass unless `$nonce_ok` is
  * false, the capability check passes unless `$can` is false, and the
  * queue reports `$jobs`. Returns what the handler did: the nonce actions it
- * checked, the prepared SQL statements [sql, args] it ran, the conversions
- * it asked the queue to clean up, and the URL it redirected to, or the
- * exception that ended the request.
+ * checked, the writes it asked the conversion store for ([method, refs,
+ * flag]), the conversions it asked the queue to clean up, and the URL it
+ * redirected to, or the exception that ended the request.
  *
- * @param bool  $nonce_ok Whether check_admin_referer() accepts the nonce.
- * @param bool  $can      Whether the user has the kntnt_ad_attr capability.
- * @param array $jobs     What Queue::delete_unfinished_for_conversions() returns.
- * @param int   $found    How many of the conversions exist.
+ * @param bool       $nonce_ok Whether check_admin_referer() accepts the nonce.
+ * @param bool       $can      Whether the user has the kntnt_ad_attr capability.
+ * @param array      $jobs     What Queue::delete_unfinished_for_conversions() returns.
+ * @param int|null   $found    How many of the counted conversions exist; null for all of them.
+ * @param array|null $sharing  The conversions linked to the selected conversions' clicks, selected ones included; null for just the selected ones.
  *
  * @return \ArrayObject Recorded effects.
  */
-function run_conversion_action(bool $nonce_ok = true, bool $can = true, array $jobs = ['deleted' => 0, 'processing' => 0], int $found = 1): \ArrayObject {
-    [$page, $queue] = make_admin_page();
-    $did = new \ArrayObject(['nonces' => [], 'statements' => [], 'cleaned' => [], 'redirect' => null, 'ended_by' => null]);
+function run_conversion_action(bool $nonce_ok = true, bool $can = true, array $jobs = ['deleted' => 0, 'processing' => 0], ?int $found = null, ?array $sharing = null): \ArrayObject {
+    [$page, $queue, , , $conversions] = make_admin_page();
+    $did = new \ArrayObject(['nonces' => [], 'writes' => [], 'cleaned' => [], 'redirect' => null, 'ended_by' => null]);
 
-    $wpdb = TestFactory::wpdb();
-    $GLOBALS['wpdb'] = $wpdb;
-    $prepared = [];
-    $wpdb->shouldReceive('prepare')->andReturnUsing(function ($sql, ...$args) use (&$prepared) {
-        $prepared[] = [$sql, $args];
-        return count($prepared) - 1;
+    $conversions->shouldReceive('sharing_clicks')->andReturnUsing(fn (array $refs) => $sharing ?? $refs);
+    $conversions->shouldReceive('count')->andReturnUsing(fn (array $refs) => $found ?? count($refs));
+    $conversions->shouldReceive('delete')->andReturnUsing(function (array $refs) use ($did) {
+        $did['writes'] = [...$did['writes'], ['delete', $refs]];
     });
-    $wpdb->shouldReceive('get_var')->andReturn((string) $found);
-    $wpdb->shouldReceive('query')->andReturnUsing(function ($token) use (&$prepared, $did) {
-        $did['statements'] = [...$did['statements'], $prepared[$token]];
-        return 1;
+    $conversions->shouldReceive('flag_clicks_as_test')->andReturnUsing(function (array $refs, bool $is_test) use ($did) {
+        $did['writes'] = [...$did['writes'], ['flag_clicks_as_test', $refs, $is_test]];
     });
 
     $queue->shouldReceive('delete_unfinished_for_conversions')->andReturnUsing(function (array $refs) use ($did, $jobs) {
@@ -386,7 +386,6 @@ describe('Admin_Page conversion actions', function () {
 
     afterEach(function () {
         $_GET = [];
-        unset($GLOBALS['wpdb']);
     });
 
     it('deletes a conversion\'s rows and its unfinished jobs, keeping its clicks', function () {
@@ -400,11 +399,7 @@ describe('Admin_Page conversion actions', function () {
         $did = run_conversion_action(jobs: ['deleted' => 2, 'processing' => 1]);
 
         expect($did['nonces'])->toBe(['conversion_delete_8f14e45f-ceea-4e67-a1b2-c3d4e5f60718']);
-        expect($did['statements'])->toHaveCount(1);
-        [$sql, $args] = $did['statements'][0];
-        expect($sql)->toStartWith('DELETE FROM wp_kntnt_ad_attr_conversions');
-        expect($sql)->toContain('conversion_ref IN (%s)');
-        expect($args)->toBe(['8f14e45f-ceea-4e67-a1b2-c3d4e5f60718']);
+        expect($did['writes'])->toBe([['delete', ['8f14e45f-ceea-4e67-a1b2-c3d4e5f60718']]]);
         expect($did['cleaned'])->toBe([['8f14e45f-ceea-4e67-a1b2-c3d4e5f60718']]);
 
         parse_str((string) parse_url($did['redirect'], PHP_URL_QUERY), $back);
@@ -425,14 +420,31 @@ describe('Admin_Page conversion actions', function () {
         $did = run_conversion_action(jobs: ['deleted' => 1, 'processing' => 0]);
 
         expect($did['nonces'])->toBe(['conversion_mark_test_ref-1']);
-        expect($did['statements'])->toHaveCount(1);
-        [$sql, $args] = $did['statements'][0];
-        expect($sql)->toStartWith('UPDATE wp_kntnt_ad_attr_clicks SET is_test = %d');
-        expect($sql)->toContain('WHERE id IN (SELECT click_id FROM wp_kntnt_ad_attr_conversions WHERE conversion_ref IN (%s))');
-        expect($args)->toBe([1, 'ref-1']);
+        expect($did['writes'])->toBe([['flag_clicks_as_test', ['ref-1'], true]]);
         expect($did['cleaned'])->toBe([['ref-1']]);
         expect($did['redirect'])->toContain('message=conversions-marked');
         expect($did['redirect'])->toContain('jobs_deleted=1');
+    });
+
+    it('deletes the unfinished jobs of every conversion on the clicks it marks, and counts them', function () {
+        $_GET = ['action' => 'conversion_mark_test', 'conversion' => 'ref-1'];
+
+        $did = run_conversion_action(jobs: ['deleted' => 2, 'processing' => 0], sharing: ['ref-1', 'ref-2']);
+
+        // Only the marked conversion's clicks are flagged.
+        expect($did['writes'])->toBe([['flag_clicks_as_test', ['ref-1'], true]]);
+        expect($did['cleaned'])->toBe([['ref-1', 'ref-2']]);
+        expect($did['redirect'])->toContain('count=2');
+        expect($did['redirect'])->toContain('jobs_deleted=2');
+    });
+
+    it('counts every conversion on the clicks it unmarks', function () {
+        $_GET = ['action' => 'conversion_unmark_test', 'conversion' => 'ref-1'];
+
+        $did = run_conversion_action(sharing: ['ref-1', 'ref-2']);
+
+        expect($did['cleaned'])->toBe([]);
+        expect($did['redirect'])->toContain('count=2');
     });
 
     it('unmarks a conversion\'s attributed clicks without touching its jobs', function () {
@@ -441,9 +453,7 @@ describe('Admin_Page conversion actions', function () {
         $did = run_conversion_action();
 
         expect($did['nonces'])->toBe(['conversion_unmark_test_ref-1']);
-        [$sql, $args] = $did['statements'][0];
-        expect($sql)->toStartWith('UPDATE wp_kntnt_ad_attr_clicks SET is_test = %d');
-        expect($args)->toBe([0, 'ref-1']);
+        expect($did['writes'])->toBe([['flag_clicks_as_test', ['ref-1'], false]]);
         expect($did['cleaned'])->toBe([]);
         expect($did['redirect'])->toContain('message=conversions-unmarked');
     });
@@ -458,9 +468,7 @@ describe('Admin_Page conversion actions', function () {
         $did = run_conversion_action(found: 2);
 
         expect($did['nonces'])->toBe(['bulk-conversions']);
-        [$sql, $args] = $did['statements'][0];
-        expect($sql)->toContain('conversion_ref IN (%s,%s)');
-        expect($args)->toBe(['ref-1', 'ref-2']);
+        expect($did['writes'])->toBe([['delete', ['ref-1', 'ref-2']]]);
         expect($did['cleaned'])->toBe([['ref-1', 'ref-2']]);
         expect($did['redirect'])->toContain('count=2');
     });
@@ -471,7 +479,7 @@ describe('Admin_Page conversion actions', function () {
         $did = run_conversion_action(nonce_ok: false);
 
         expect($did['ended_by'])->toBeInstanceOf(AdminDieException::class);
-        expect($did['statements'])->toBe([]);
+        expect($did['writes'])->toBe([]);
         expect($did['cleaned'])->toBe([]);
         expect($did['redirect'])->toBeNull();
     })->with([
@@ -488,7 +496,7 @@ describe('Admin_Page conversion actions', function () {
         $did = run_conversion_action(can: false);
 
         expect($did['ended_by'])->toBeInstanceOf(AdminDieException::class);
-        expect($did['statements'])->toBe([]);
+        expect($did['writes'])->toBe([]);
         expect($did['cleaned'])->toBe([]);
         expect($did['redirect'])->toBeNull();
     })->with([

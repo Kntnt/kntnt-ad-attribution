@@ -58,7 +58,7 @@ final class Queue {
 	public function enqueue( string $reporter, array $payload, string $label = '', array $retry_params = [], ?int $not_before = null, ?string $conversion_ref = null ): void {
 		global $wpdb;
 
-		$table = $wpdb->prefix . 'kntnt_ad_attr_queue';
+		$table = Table::Queue->prefixed();
 
 		// Merge per-job retry params with global defaults.
 		$defaults = [
@@ -72,7 +72,7 @@ final class Queue {
 		$wpdb->insert( $table, [
 			'reporter'           => $reporter,
 			'payload'            => wp_json_encode( $payload ),
-			'status'             => 'pending',
+			'status'             => Job_Status::Pending->value,
 			'attempts'           => 0,
 			'created_at'         => gmdate( 'Y-m-d H:i:s' ),
 			'label'              => $label !== '' ? $label : null,
@@ -99,7 +99,7 @@ final class Queue {
 	public function dequeue( int $limit = 10 ): array {
 		global $wpdb;
 
-		$table = $wpdb->prefix . 'kntnt_ad_attr_queue';
+		$table = Table::Queue->prefixed();
 
 		$rows = $wpdb->get_results( $wpdb->prepare(
 			"SELECT id, reporter, payload, attempts, not_before, attempts_per_round, retry_delay, max_rounds, round_delay
@@ -152,7 +152,7 @@ final class Queue {
 	public function complete( int $id ): void {
 		global $wpdb;
 
-		$table = $wpdb->prefix . 'kntnt_ad_attr_queue';
+		$table = Table::Queue->prefixed();
 
 		$now = gmdate( 'Y-m-d H:i:s' );
 
@@ -182,7 +182,7 @@ final class Queue {
 	public function fail( int $id, string $message ): void {
 		global $wpdb;
 
-		$table = $wpdb->prefix . 'kntnt_ad_attr_queue';
+		$table = Table::Queue->prefixed();
 
 		// Fetch current job state including per-job retry parameters.
 		$job = $wpdb->get_row( $wpdb->prepare(
@@ -215,7 +215,7 @@ final class Queue {
 				$table,
 				[
 					'attempts'        => $k,
-					'status'          => 'failed',
+					'status'          => Job_Status::Failed->value,
 					'error_message'   => $message,
 					'processed_at'    => $now,
 					'last_attempt_at' => $now,
@@ -233,7 +233,7 @@ final class Queue {
 				$table,
 				[
 					'attempts'        => $k,
-					'status'          => 'pending',
+					'status'          => Job_Status::Pending->value,
 					'error_message'   => $message,
 					'retry_after'     => $retry_at,
 					'last_attempt_at' => $now,
@@ -250,7 +250,7 @@ final class Queue {
 				$table,
 				[
 					'attempts'        => $k,
-					'status'          => 'pending',
+					'status'          => Job_Status::Pending->value,
 					'error_message'   => $message,
 					'retry_after'     => $retry_at,
 					'last_attempt_at' => $now,
@@ -273,7 +273,7 @@ final class Queue {
 	public function delete( int $id ): void {
 		global $wpdb;
 
-		$table = $wpdb->prefix . 'kntnt_ad_attr_queue';
+		$table = Table::Queue->prefixed();
 		$wpdb->delete( $table, [ 'id' => $id ], [ '%d' ] );
 	}
 
@@ -298,19 +298,19 @@ final class Queue {
 			return [ 'deleted' => 0, 'processing' => 0 ];
 		}
 
-		$table        = $wpdb->prefix . 'kntnt_ad_attr_queue';
+		$table        = Table::Queue->prefixed();
 		$placeholders = implode( ',', array_fill( 0, count( $conversion_refs ), '%s' ) );
 
 		// Delete first, then count: a job dequeued in between is counted as
 		// processing rather than reported as deleted.
 		$deleted = $wpdb->query( $wpdb->prepare(
-			"DELETE FROM {$table} WHERE conversion_ref IN ({$placeholders}) AND status IN ('pending', 'failed')",
-			...$conversion_refs,
+			"DELETE FROM {$table} WHERE conversion_ref IN ({$placeholders}) AND status IN (%s, %s)",
+			...[ ...$conversion_refs, Job_Status::Pending->value, Job_Status::Failed->value ],
 		) );
 
 		$processing = $wpdb->get_var( $wpdb->prepare(
-			"SELECT COUNT(*) FROM {$table} WHERE conversion_ref IN ({$placeholders}) AND status = 'processing'",
-			...$conversion_refs,
+			"SELECT COUNT(*) FROM {$table} WHERE conversion_ref IN ({$placeholders}) AND status = %s",
+			...[ ...$conversion_refs, Job_Status::Processing->value ],
 		) );
 
 		return [
@@ -334,11 +334,11 @@ final class Queue {
 			return [];
 		}
 
-		$table        = $wpdb->prefix . 'kntnt_ad_attr_queue';
+		$table        = Table::Queue->prefixed();
 		$placeholders = implode( ',', array_fill( 0, count( $conversion_refs ), '%s' ) );
 
 		$rows = $wpdb->get_results( $wpdb->prepare(
-			"SELECT conversion_ref, status, COUNT(*) AS cnt
+			"SELECT conversion_ref, status, COUNT(*) AS job_count
 			 FROM {$table}
 			 WHERE conversion_ref IN ({$placeholders})
 			 GROUP BY conversion_ref, status",
@@ -347,7 +347,7 @@ final class Queue {
 
 		$counts = [];
 		foreach ( $rows ?: [] as $row ) {
-			$counts[ $row->conversion_ref ][ $row->status ] = (int) $row->cnt;
+			$counts[ $row->conversion_ref ][ $row->status ] = (int) $row->job_count;
 		}
 
 		return $counts;
@@ -364,7 +364,7 @@ final class Queue {
 	public function reset_retry( int $id ): void {
 		global $wpdb;
 
-		$table = $wpdb->prefix . 'kntnt_ad_attr_queue';
+		$table = Table::Queue->prefixed();
 		$wpdb->update(
 			$table,
 			[ 'retry_after' => null ],
@@ -384,7 +384,7 @@ final class Queue {
 	public function get_next_retry_time(): ?int {
 		global $wpdb;
 
-		$table = $wpdb->prefix . 'kntnt_ad_attr_queue';
+		$table = Table::Queue->prefixed();
 
 		$result = $wpdb->get_var(
 			"SELECT MIN(LEAST(
@@ -415,7 +415,7 @@ final class Queue {
 	public function get_active_jobs(): array {
 		global $wpdb;
 
-		$table = $wpdb->prefix . 'kntnt_ad_attr_queue';
+		$table = Table::Queue->prefixed();
 
 		return $wpdb->get_results(
 			"SELECT id, reporter, status, attempts, created_at, processed_at, retry_after,
@@ -440,7 +440,7 @@ final class Queue {
 	public function cleanup( int $done_days = 30, int $failed_days = 90 ): void {
 		global $wpdb;
 
-		$table = $wpdb->prefix . 'kntnt_ad_attr_queue';
+		$table = Table::Queue->prefixed();
 
 		$done_cutoff = gmdate( 'Y-m-d H:i:s', time() - ( $done_days * DAY_IN_SECONDS ) );
 		$wpdb->query( $wpdb->prepare(
@@ -464,7 +464,7 @@ final class Queue {
 	public function get_status(): array {
 		global $wpdb;
 
-		$table = $wpdb->prefix . 'kntnt_ad_attr_queue';
+		$table = Table::Queue->prefixed();
 
 		$counts = $wpdb->get_results(
 			"SELECT status, COUNT(*) AS cnt FROM {$table} GROUP BY status",

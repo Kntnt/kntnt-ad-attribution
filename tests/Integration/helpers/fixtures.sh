@@ -14,6 +14,17 @@ strip_secure_flag() {
     [[ -f "$file" ]] && perl -i -pe 's/\tTRUE\t/\tFALSE\t/g' "$file"
 }
 
+# Print the request header that gives a request exactly the given plugin
+# cookies (_ad_clicks, _aah_pending, _ad_last_conv), in Cookie-header syntax,
+# or none. Playground ignores curl's -b and sends every cookie any earlier
+# response set (see test-helpers.php), so this header is the only way to
+# control which plugin cookies a request carries.
+# Usage: curl -H "$(plugin_cookies "_ad_clicks=${value}")" …
+#        curl -H "$(plugin_cookies)" …          (a visitor without plugin cookies)
+plugin_cookies() {
+    echo "X-Test-Plugin-Cookies: ${1:-none}"
+}
+
 # Extract a named cookie value from Set-Cookie response headers.
 # URL-decodes the value (PHP auto-decodes $_COOKIE values from HTTP headers,
 # so injected values must be decoded to match the expected format).
@@ -193,6 +204,17 @@ set_internal_default() {
     local mode="$1"
     [[ "$mode" == "off" ]] && mode=""
     set_option "test_internal_default" "$mode"
+}
+
+# Withhold the kntnt_ad_attr capability from every user on the plugin's
+# admin page, after WordPress has let the user open it, so that the plugin's
+# own capability check is what refuses an action (see test-helpers.php). The
+# login and its nonces stay valid.
+# Usage: withhold_capability on|off
+withhold_capability() {
+    local mode="$1"
+    [[ "$mode" == "off" ]] && mode=""
+    set_option "test_withhold_capability" "$mode"
 }
 
 # Switch the plugin's diagnostic logging (see test-helpers.php).

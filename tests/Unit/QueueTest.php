@@ -716,13 +716,13 @@ describe('Queue::delete_unfinished_for_conversions()', function () {
         [$delete_sql, $delete_args] = $prepared[0];
         expect($delete_sql)->toStartWith('DELETE FROM wp_kntnt_ad_attr_queue');
         expect($delete_sql)->toContain('conversion_ref IN (%s,%s)');
-        expect($delete_sql)->toContain("status IN ('pending', 'failed')");
-        expect($delete_args)->toBe(['ref-a', 'ref-b']);
+        expect($delete_sql)->toContain('status IN (%s, %s)');
+        expect($delete_args)->toBe(['ref-a', 'ref-b', 'pending', 'failed']);
 
         [$count_sql, $count_args] = $prepared[1];
         expect($count_sql)->toContain('conversion_ref IN (%s,%s)');
-        expect($count_sql)->toContain("status = 'processing'");
-        expect($count_args)->toBe(['ref-a', 'ref-b']);
+        expect($count_sql)->toContain('status = %s');
+        expect($count_args)->toBe(['ref-a', 'ref-b', 'processing']);
     });
 
     it('touches nothing when no conversion is given', function () {
@@ -754,9 +754,9 @@ describe('Queue::count_jobs_for_conversions()', function () {
             return 'q';
         });
         $wpdb->shouldReceive('get_results')->once()->with('q')->andReturn([
-            (object) ['conversion_ref' => 'ref-a', 'status' => 'pending', 'cnt' => '2'],
-            (object) ['conversion_ref' => 'ref-a', 'status' => 'done', 'cnt' => '1'],
-            (object) ['conversion_ref' => 'ref-b', 'status' => 'processing', 'cnt' => '1'],
+            (object) ['conversion_ref' => 'ref-a', 'status' => 'pending', 'job_count' => '2'],
+            (object) ['conversion_ref' => 'ref-a', 'status' => 'done', 'job_count' => '1'],
+            (object) ['conversion_ref' => 'ref-b', 'status' => 'processing', 'job_count' => '1'],
         ]);
 
         $counts = (new Queue(Mockery::mock(Settings::class)))->count_jobs_for_conversions(['ref-a', 'ref-b', 'ref-c']);

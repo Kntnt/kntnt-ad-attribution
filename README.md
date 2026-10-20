@@ -180,9 +180,9 @@ The plugin adds **Ad Attribution** under **Tools** in the WordPress admin menu. 
 - **Summary:** Shows total clicks and total (fractional) conversions for the selected filters.
 - **Export:** Export the filtered results as a CSV file (UTF-8 with BOM; semicolon delimiter when the locale uses comma as decimal separator). The CSV includes all fields including per-click Content, Term, Id, and Group from the clicks table.
 - **Conversions:** Below the campaign list, the recorded conversions for clicks in the selected date range, newest first: when each converted, the tracking URL (source, medium, campaign), click time, content, term and attribution weight of each attributed click, whether it is a test, and the status of its report jobs. A conversion credited to several clicks (multi-touch) is one row. To remove a conversion that should not count, such as a test you made with a real ad click:
-  - **Mark as test** flags its clicks as test clicks, which takes the clicks and the conversion out of the campaign list, its totals and the CSV export. **Unmark as test** puts them back.
+  - **Mark as test** flags its clicks as test clicks, which takes the clicks and the conversion out of the campaign list, its totals and the CSV export. Another conversion on the same click, such as a second form submission after the same ad click, becomes a test too. **Unmark as test** puts them back.
   - **Delete** removes the conversion and keeps its clicks.
-  - Both also delete its report jobs that have not been sent (pending or failed). A job that is being sent right now is left alone, and the notice says so; jobs already sent stay. Retracting a conversion already reported to an ad platform is up to the platform's add-on.
+  - Both also delete the report jobs that have not been sent (pending or failed), for Mark as test those of every conversion it made a test. A job that is being sent right now is left alone, and the notice says so; jobs already sent stay. Retracting a conversion already reported to an ad platform is up to the platform's add-on.
 
 **Note:** The plugin tracks clicks (requests to `/ad/<hash>`) and conversions. Requests from bots, speculative browser prefetches, internal traffic (logged-in users who can manage ad attribution) and repeats of an already recorded platform click ID (reloads, back/forward navigation, bookmarks) are not counted as clicks, and test clicks are left out of the statistics; see [Counting rules](docs/click-handling.md#counting-rules). Ad impressions are not available since they occur on the ad platform and never reach your server.
 
@@ -912,7 +912,7 @@ Requires `zip` and `msgfmt` (GNU gettext). With `--tag`: `git`. With `--update` 
 14. `Click_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store, Speculation_Detector, Logger)` — click processing & redirect
 15. `Conversion_Handler(Cookie_Manager, Consent, Bot_Detector, Click_ID_Store, Queue, Queue_Processor, Logger)` — conversion attribution
 16. `Cron(Click_ID_Store, Queue, Logger)` — scheduled cleanup tasks
-17. `Admin_Page(Queue, Queue_Processor, Settings, Logger)` — admin UI orchestration
+17. `Admin_Page(Queue, Queue_Processor, Settings, Logger, Conversion_Store)` — admin UI orchestration; `Conversion_Store` holds the SQL of the conversion list's actions
 18. `Rest_Endpoint(Cookie_Manager, Consent)` — REST API routes
 19. `Settings_Page(Settings, Logger)` — settings page under Settings > Ad Attribution
 
@@ -957,6 +957,12 @@ kntnt-ad-attribution/
 │   ├── Utm_Options.php           ← Predefined UTM source/medium options (filterable)
 │   ├── Settings_Page.php         ← Settings page under Settings > Ad Attribution
 │   ├── Cron.php                  ← Daily cleanup job, target page warnings
+│   ├── Conversion_Store.php      ← SQL of the conversion list actions (count, delete, flag)
+│   ├── Click_Lookup.php          ← Exact (hash, clicked_at) click-row lookup
+│   ├── Job_Status.php            ← Queue job statuses (enum)
+│   ├── Request_Outcome.php       ← How a tracking URL request was counted (enum)
+│   ├── Conversion_Action.php     ← Conversion list actions: delete, mark/unmark as test (enum)
+│   ├── Table.php                 ← Names of the custom tables (enum)
 │   ├── Click_ID_Store.php        ← Platform-specific click ID storage
 │   ├── Queue.php                 ← Async job queue with configurable per-job retry
 │   └── Queue_Processor.php       ← Queue processing via cron
@@ -1103,7 +1109,7 @@ A comprehensive test strategy is documented in `docs/testing-strategy.md`, cover
 - The global `kntnt_ad_attribution_delete_cookies()` function (v1.7.0) is defined in `kntnt-ad-attribution.php` after `Plugin::get_instance()`. CMP plugins call it from server-side opt-out hooks to expire HttpOnly cookies. The cookie list is filterable via `kntnt_ad_attr_delete_cookies`.
 - `Conversion_Handler` requires `consent=true` before reading the `_ad_clicks` cookie (ePrivacy Art. 5(3)). Both `consent=false` and `consent=null` abort without attribution.
 - Internal traffic detection is on by default, so a logged-in administrator records no clicks or conversions. The integration tests trigger conversions as the logged-in admin, so `tests/Integration/test-helpers-plugin/test-helpers.php` switches the default off unless option `test_internal_default` is `on`.
-- Playground's server replaces each request's `Cookie` header with every cookie that earlier responses have set, so in integration tests every request carries the admin's logged-in cookie. Send `X-Test-Visitor: anonymous` to emulate a visitor without a session.
+- Playground's server replaces each request's `Cookie` header with every cookie that earlier responses have set, so in integration tests every request carries the admin's logged-in cookie. Send `X-Test-Visitor: anonymous` to emulate a visitor without a session, and `X-Test-Plugin-Cookies` (fixture `plugin_cookies`) to control which plugin cookies (`_ad_clicks`, `_aah_pending`, `_ad_last_conv`) a request carries.
 
 ### Contributor FAQ
 

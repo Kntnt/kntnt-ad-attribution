@@ -260,6 +260,7 @@ Stateless data manipulation class. Tests cover:
 - **`set_clicks_cookie()`** — cookie name `_ad_clicks`, serialization format, attributes (path, httponly, secure, samesite), lifetime filter.
 - **`set_transport_cookie()`** — cookie name `_aah_pending`, not HttpOnly, 60-second lifetime, value is the `hash:timestamp` pair.
 - **`validate_hash()`** — valid 64-char lowercase hex, wrong lengths, uppercase, non-hex characters, empty string.
+- **`format_entry()` / `parse_entry()`** — one `hash:timestamp` entry formatted and parsed; a bare hash, uppercase hex, a short hash, an 11-digit timestamp and two entries are rejected.
 
 ---
 
@@ -290,6 +291,24 @@ Stateless data manipulation class. Tests cover:
 - **`detect()`** — the current user with `kntnt_ad_attr` (no cookie validation needed); a valid logged-in cookie of a user with the capability when WordPress has reset the current user to 0 (`wp_validate_auth_cookie( '', 'logged_in' )` + `user_can()`); no valid cookie; a logged-in user without the capability; previous filter short-circuit.
 - **`is_internal()`** — `false` by default, returns what `kntnt_ad_attr_is_internal` decides.
 - **`register()`** — hooks `detect()` into the filter.
+
+---
+
+#### Click_Lookup (`ClickLookupTest.php`)
+
+- **`find()`** — one query asking for every hash–timestamp pair by exact `hash` and `clicked_at`; returns each matching row's ID and test flag by hash and timestamp; ignores a row of the same hash at another time; the oldest row wins a tie; no query for no pairs. The handler and REST tests state which click rows exist through `TestFactory::clickRows()` / `everyClickRecorded()` (a Patchwork redefinition of `find()`), except `RestEndpointTest`, whose fake `$wpdb` answers the real query.
+
+---
+
+#### Conversion_Store (`ConversionStoreTest.php`)
+
+- **`count()`**, **`sharing_clicks()`**, **`delete()`**, **`flag_clicks_as_test()`** — the exact SQL and arguments: `COUNT(DISTINCT conversion_ref)`, the conversions on the same `click_id`s, `DELETE` on conversions only, `UPDATE clicks SET is_test = 1/0 WHERE id IN (SELECT click_id …)`; nothing is queried without references.
+
+---
+
+#### Table (`TableTest.php`)
+
+- **`prefixed()`** — every table name gets the site's table prefix.
 
 ---
 
@@ -337,7 +356,8 @@ The most complex class. Tests cover the full click flow:
 - Query parameter forwarding and collision handling.
 - Redirect loop guard.
 - `kntnt_ad_attr_click` action fires for every recorded click, before consent check.
-- Click ID capturer integration: stored on the inserted click row's ID, nothing stored when the insert fails, value length validation.
+- Click ID capturer integration: stored on the inserted click row's ID, value length validation.
+- Failed click insert: no click ID, cookie entry, transport cookie, fragment or `kntnt_ad_attr_click`; one CORE ERROR line with outcome `failed`; redirect as usual.
 - Speculative requests (`Sec-Purpose: prefetch`, `prefetch;prerender`, `Purpose: prefetch`): 503 via `status_header` + `nocache_headers`, no redirect, insert, click ID, cookie, transport or action; a `kntnt_ad_attr_is_speculative` callback can overrule detection. The handler gets a real `Speculation_Detector`, and `apply_default_speculation_detection()` makes the filter run its default callback, which Brain Monkey would otherwise skip.
 - Repeats (click ID already recorded on the tracking URL, via a mocked `Click_ID_Store::find_original_click()`): no insert, click ID or action, redirect with query forwarding; with consent the entry points at the original click unless a newer entry has a click row; with undetermined consent the transport carries the original click; the earliest original wins across platforms; the same value on another tracking URL is recorded.
 - Diagnostic log line (the handler gets a `Logger` spy; `capture_log_lines()` collects every level): exactly one CORE INFO line per outcome (`recorded`, `repeat`, `deduplicated`, `speculative`, `bot`) with the hash prefix and the raw `Sec-Purpose`, `Purpose` and `User-Agent` values, and without the `REMOTE_ADDR`.
@@ -410,7 +430,7 @@ The most complex class. Tests cover the full click flow:
 - **Nonce verification** — invalid/missing nonce rejected.
 - **Tab extensibility** — `kntnt_ad_attr_admin_tabs` filter, custom tab dispatch via action.
 - **SRI attributes** — integrity/crossorigin on Select2, other handles unchanged.
-- **Conversion actions** — `run_conversion_action()` drives `add_screen_options()` with a request in `$_GET`, a fake `$wpdb` and `wp_safe_redirect`/`wp_die` throwing, and records nonces checked, statements run, conversions passed to the queue and the redirect. Delete runs one `DELETE … conversion_ref IN (…)` on conversions only and cleans up the jobs; Mark/Unmark run one `UPDATE clicks SET is_test = 1/0 WHERE id IN (SELECT click_id …)`, and only Mark cleans up jobs; a bulk action checks `bulk-conversions` and drops malformed and duplicate references; every row and bulk action is refused, with nothing written, without a valid nonce or without `kntnt_ad_attr`.
+- **Conversion actions** — `run_conversion_action()` drives `add_screen_options()` with a request in `$_GET`, a `Conversion_Store` mock and `wp_safe_redirect`/`wp_die` throwing, and records nonces checked, the store writes asked for, conversions passed to the queue and the redirect. Delete deletes the selected conversions and cleans up their jobs; Mark/Unmark flag the selected conversions' clicks (`true`/`false`), and only Mark cleans up jobs; Mark cleans up, and Mark and Unmark count, every conversion on the flagged clicks (`Conversion_Store::sharing_clicks()`); a bulk action checks `bulk-conversions` and drops malformed and duplicate references; every row and bulk action is refused, with nothing written, without a valid nonce or without `kntnt_ad_attr`.
 - **Conversions section** — rendered on the main view; the notice reports conversions and deleted jobs, with a warning for processing jobs left alone.
 
 ---
@@ -533,10 +553,12 @@ Two mu-plugins provide test infrastructure:
 
   Suites switch them on with `set_probe_capturers`, `set_probe_reporter` and `set_probe_recorded`, read calls with `get_probe_calls` and `get_recorded_calls`, and must call `reset_probes` at the end.
 
-  It also sets up two pieces of request handling:
+  It also sets up these pieces of request handling:
 
   - **Internal traffic is off.** Suites trigger conversions as the logged-in admin, which the plugin treats as internal traffic and does not record. A `kntnt_ad_attr_is_internal` callback at `PHP_INT_MAX` therefore returns `false`, as the documented one-liner does, unless option `test_internal_default` is `on` (`set_internal_default on|off`). A suite that turns it on must turn it off at its end.
   - **Anonymous visitors.** A request with the header `X-Test-Visitor: anonymous` is stripped of the WordPress login cookies before WordPress determines the current user. See [Playground's cookie store](#playgrounds-cookie-store).
+  - **Capability withdrawal.** With option `test_withhold_capability` set to `on` (`withhold_capability on|off`), a `user_has_cap` filter withholds `kntnt_ad_attr` from every user once the plugin's admin page has started loading (`load-tools_page_kntnt-ad-attribution`), after WordPress has let the user open the page. The plugin's own check in the action handlers is then what refuses, while the login and its nonces stay valid. A suite that turns it on must turn it off at its end.
+  - **Plugin cookies.** A request with the header `X-Test-Plugin-Cookies` carries exactly the plugin cookies (`_ad_clicks`, `_aah_pending`, `_ad_last_conv`) the header names, in Cookie-header syntax, and none for the value `none`; they replace those in `$_COOKIE` before the plugin reads it. `plugin_cookies "_ad_clicks=<value>"` prints the header, and `plugin_cookies` alone prints it for a visitor without plugin cookies. See [Playground's cookie store](#playgrounds-cookie-store).
 
 ### 7.3 Bootstrap Flow
 
@@ -551,7 +573,7 @@ Two mu-plugins provide test infrastructure:
 
 **`helpers/assertions.sh`** provides: `assert_status`, `assert_contains`, `assert_not_contains`, `assert_equals`, `assert_greater_than`, `assert_json_field`, `print_summary`. Each assertion increments `TESTS_RUN` and optionally `TESTS_FAILED`.
 
-**`helpers/fixtures.sh`** provides: `create_tracking_url`, `create_target_page`, `simulate_click`, `get_click_cookies`, `extract_cookie_value`, `set_consent_state`, `get_click_count`, `query_db`, `query_db_rows`, `execute_sql`, `flush_rewrites`, `trigger_conversion`, `clear_cookies`, `strip_secure_flag`, `set_option`, `set_dedup_seconds`, `set_internal_default` (`on`|`off`), `trigger_conversion_without_nonce`, the logging helpers `set_logging` (`on`|`off`), `get_log` and `clear_log`, and the probe adapter switches `set_probe_capturers`, `set_probe_reporter` (`on`|`supports_test`|`off`), `get_probe_calls` (JSON array of recorded `enqueue` calls), `reset_probe_calls`, `set_probe_recorded` (`on`|`off`), `get_recorded_calls` and `reset_probes`.
+**`helpers/fixtures.sh`** provides: `create_tracking_url`, `create_target_page`, `simulate_click`, `get_click_cookies`, `extract_cookie_value`, `set_consent_state`, `get_click_count`, `query_db`, `query_db_rows`, `execute_sql`, `flush_rewrites`, `trigger_conversion`, `clear_cookies`, `strip_secure_flag`, `set_option`, `set_dedup_seconds`, `set_internal_default` (`on`|`off`), `trigger_conversion_without_nonce`, `plugin_cookies` (the `X-Test-Plugin-Cookies` header), `withhold_capability` (`on`|`off`), the logging helpers `set_logging` (`on`|`off`), `get_log` and `clear_log`, and the probe adapter switches `set_probe_capturers`, `set_probe_reporter` (`on`|`supports_test`|`off`), `get_probe_calls` (JSON array of recorded `enqueue` calls), `reset_probe_calls`, `set_probe_recorded` (`on`|`off`), `get_recorded_calls` and `reset_probes`.
 
 ### 7.5 Integration Test Coverage
 
@@ -613,8 +635,8 @@ Each test script sources `helpers/assertions.sh` and `helpers/fixtures.sh`, crea
 #### `test-deduplication.sh` — Conversion and Click Deduplication
 
 - With dedup disabled (default `0`), repeated conversions for the same hash are all recorded.
-- With dedup enabled (`set_dedup_seconds`, backed by the `test_dedup_seconds` option in the test-helpers mu-plugin) and consent granted: a re-click within the window re-sends the cookie with the original timestamp and records no second click row; a later conversion records exactly one conversion row, linked to the original click row.
-- A cookie entry within the window that no click row matches is recorded as a new click, and the entry is repointed at that row.
+- With dedup enabled (`set_dedup_seconds`, backed by the `test_dedup_seconds` option in the test-helpers mu-plugin) and consent granted: a first click by a visitor without plugin cookies records a click row; a re-click within the window carrying that visitor's cookie (`plugin_cookies`) re-sends the cookie with the original timestamp and records no second click row; a later conversion records exactly one conversion row, linked to the original click row.
+- A cookie entry within the window that no click row matches is recorded as a new click, and the entry is repointed at that row. The cookie also holds an entry for another hash, which the response keeps, so the test shows the plugin read the cookie.
 
 ---
 
@@ -633,7 +655,8 @@ Runs once with the `cookie` transport and once with the `fragment` transport, se
 
 Uses the probe capturer (`google_ads=gclid`) and logging (`set_logging on`, `get_log`, `clear_log`).
 
-- Two requests with `gclid=RRR` give one click row and one click-ID row. The repeat redirects with its query parameters, and its `_ad_clicks` entry carries the original click's timestamp.
+- Every request carries exactly the plugin cookies the test gives it (`plugin_cookies`), none unless stated.
+- Two requests with `gclid=RRR` give one click row and one click-ID row. The repeat, by a visitor without an entry for the hash, redirects with its query parameters and gets an `_ad_clicks` entry with the original click's timestamp.
 - A request with `Sec-Purpose: prefetch` gets 503, no redirect, no `_ad_clicks` cookie and no click row; a normal request after it gives one click row. `Purpose: prefetch` also gets 503.
 - With logging enabled, each request writes exactly one `Tracking URL request:` line, with the outcome (`recorded`, `repeat`, `speculative`, `bot`, `deduplicated`), the hash prefix and the `Sec-Purpose`, `Purpose` and `User-Agent` values, and no IP address. With logging disabled, nothing is written.
 - The suite switches logging off, clears the log, and resets the probes, the dedup window and the consent state.
@@ -681,7 +704,7 @@ Uses the probe capturer (`google_ads=gclid`) and logging (`set_logging on`, `get
 
 - Old clicks deleted (> retention window).
 - Recent clicks preserved.
-- Orphaned conversions (missing parent click) deleted.
+- (The click IDs and conversions of deleted clicks, orphaned conversions included, are covered by `test-click-ids.sh`.)
 - Tracking URL drafted when target post deleted.
 
 ---
@@ -735,7 +758,8 @@ Uses the probe reporter, whose jobs are deferred a day so WP-Cron leaves them `p
 - Delete with a forged or missing nonce gets 403 and changes nothing. Delete removes the conversion's rows and its `pending` and `failed` jobs, keeps the click rows, its `done` and `processing` jobs and the other conversion's jobs, lowers the main view's conversions by one, returns to the same date range, and the notice reports the deleted jobs and the processing job left alone.
 - Mark as test flags the attributed click, deletes the pending job and removes the click and the conversion from the main view, its totals and the CSV export; the conversion stays listed, flagged, with Unmark. Unmark restores the numbers.
 - The bulk actions with the list's `bulk-conversions` nonce mark and unmark; a forged bulk nonce gets 403.
-- The capability refusal is covered by the unit tests: the Playground cookie store makes every request carry the admin login.
+- A second conversion on B's click: marking it as a test counts both conversions and deletes the unfinished jobs of both; Unmark counts both and clears the shared click's flag.
+- With the capability withheld (`withhold_capability on`), Delete and Mark as test with valid nonces get the plugin's 403 "You do not have permission" page and change nothing: the conversion, its click's flag and its pending job stay.
 
 ---
 
@@ -743,9 +767,9 @@ Uses the probe reporter, whose jobs are deferred a day so WP-Cron leaves them `p
 
 Uses the probe capturer (`google_ads=gclid`) and probe reporter.
 
-- Visitor A clicks with `gclid=AAA&utm_term=kwA`, visitor B with `gclid=BBB&utm_term=kwB`; A converts. The reporter receives `AAA` with A's `clicked_at` and `kwA`.
+- Visitor A clicks with `gclid=AAA&utm_term=kwA`, visitor B with `gclid=BBB&utm_term=kwB`, each without plugin cookies (`plugin_cookies`); A's cookie holds only A's click. A converts. The reporter receives `AAA` with A's `clicked_at` and `kwA`.
 - A click without `gclid` converts with no click ID for the hash.
-- Retention cleanup, the daily orphan sweep and permanent deletion of a tracking URL (via the admin trash view's nonce link) leave no click-ID rows for deleted clicks.
+- Every path that deletes click rows leaves no click-ID or conversion rows for them: retention cleanup of an expired click, the daily cleanup of the clicks of a deleted tracking URL, the daily orphan sweep after a click row is deleted by other means, and permanent deletion of a tracking URL (via the admin trash view's nonce link).
 
 ---
 
@@ -908,9 +932,9 @@ helper_name() {
 
 Playground's server (php-wasm `PHPRequestHandler`, `@wp-playground/cli` 0.9.x) does not pass a request's own `Cookie` header to PHP. It replaces it with the contents of a server-side `HttpCookieStore`, which remembers every cookie that any response has set. Every request therefore carries every cookie seen so far, including the admin's logged-in cookie from the setup login, whatever curl sends with `-b`; a cookie sent only by curl (e.g. `-b foo=bar`) does not arrive at all.
 
-**Impact:** a test cannot make a request "without cookies". With internal-traffic detection on, every request would be internal.
+**Impact:** a test cannot make a request "without cookies". With internal-traffic detection on, every request would be internal. A later "visitor" also carries the `_ad_clicks` and `_aah_pending` that earlier visitors' responses set.
 
-**Mitigation:** the test environment keeps internal-traffic detection off unless a suite switches it on, and a request that sends `X-Test-Visitor: anonymous` (custom headers do reach PHP) is stripped of the WordPress login cookies by the test-helpers mu-plugin before WordPress determines the current user. To give a request a specific `_ad_clicks` value, use `trigger_conversion` (which injects it into `$_COOKIE`) rather than `curl -b`.
+**Mitigation:** the test environment keeps internal-traffic detection off unless a suite switches it on, and a request that sends `X-Test-Visitor: anonymous` (custom headers do reach PHP) is stripped of the WordPress login cookies by the test-helpers mu-plugin before WordPress determines the current user. To control which plugin cookies a tracking-URL request carries, send `X-Test-Plugin-Cookies` (fixture `plugin_cookies`): the mu-plugin replaces `_ad_clicks`, `_aah_pending` and `_ad_last_conv` in `$_COOKIE` with the ones the header names, or none. A conversion takes its `_ad_clicks` value from `trigger_conversion`, which injects it into `$_COOKIE`. Never use `curl -b` for plugin cookies.
 
 ### SQLite date comparison limits
 
@@ -922,7 +946,7 @@ Playground swaps its PHP runtime after 400 requests, and the new runtime loses t
 
 ### Multi-table DELETE in SQLite
 
-The SQLite translator accepts MySQL's multi-table `DELETE x FROM a x JOIN b … WHERE …` (with `INNER` or `LEFT JOIN`) and reports success, but deletes nothing. Code paths that must be verified in Playground use single-table deletes with subqueries instead: `DELETE FROM a WHERE col IN (SELECT …)` or `DELETE FROM a WHERE NOT EXISTS (SELECT 1 FROM b WHERE b.id = a.col)`. Both are valid MySQL.
+The SQLite translator accepts MySQL's multi-table `DELETE x FROM a x JOIN b … WHERE …` (with `INNER` or `LEFT JOIN`) and reports success, but deletes nothing. The same goes for a single-table `DELETE` whose subquery contains a `JOIN`. The plugin's deletes therefore use single-table deletes with JOIN-free subqueries: `DELETE FROM a WHERE col IN (SELECT …)` or `DELETE FROM a WHERE NOT EXISTS (SELECT 1 FROM b WHERE b.id = a.col)`, nesting a further `IN (SELECT …)` where a join would be needed. Both are valid MySQL.
 
 ### Cookie Secure flag over HTTP
 
@@ -959,6 +983,9 @@ curl ... | grep -i '^set-cookie:' || true
 | Conversion_Handler | ~33 | conversion-attribution, deduplication, internal-traffic, recorded-conversions |
 | Post_Type | ~8 | activation, admin-crud |
 | Click_ID_Store | ~6 | click-ids, migration |
+| Click_Lookup | ~5 | click-ids, conversion-attribution, deduplication, deferred-consent, rest-api |
+| Conversion_Store | ~6 | recorded-conversions |
+| Table | ~1 | all |
 | Queue | ~14 | cron-cleanup, recorded-conversions |
 | Queue_Processor | ~8 | conversion-attribution |
 | Cron | ~12 | cron-cleanup |
@@ -973,4 +1000,4 @@ curl ... | grep -i '^set-cookie:' || true
 | Plugin | ~6 | activation |
 | pending-consent.js | ~29 | — |
 | admin.js | ~10 | — |
-| **Totals** | **~352 PHP + 39 JS** | **19 suites** |
+| **Totals** | **~375 PHP + 39 JS** | **19 suites** |

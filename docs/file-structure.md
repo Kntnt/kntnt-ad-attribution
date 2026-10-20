@@ -33,6 +33,12 @@ kntnt-ad-attribution/
 │   ├── Utm_Options.php           ← Predefined UTM source/medium options (filterable)
 │   ├── Settings_Page.php         ← Settings page under Settings > Ad Attribution
 │   ├── Cron.php                  ← Daily cleanup job, target page warnings
+│   ├── Conversion_Store.php      ← SQL of the conversion list actions (count, delete, flag)
+│   ├── Click_Lookup.php          ← Exact (hash, clicked_at) click-row lookup (v1.10.0)
+│   ├── Job_Status.php            ← Queue job statuses (enum)
+│   ├── Request_Outcome.php       ← How a tracking URL request was counted (enum)
+│   ├── Conversion_Action.php     ← Conversion list actions: delete, mark/unmark as test (enum)
+│   ├── Table.php                 ← Names of the custom tables (enum, v1.10.0)
 │   ├── Click_ID_Store.php        ← Platform-specific click ID storage (v1.2.0)
 │   ├── Queue.php                 ← Async job queue with configurable per-job retry (v1.2.0)
 │   └── Queue_Processor.php       ← Queue processing via cron (v1.2.0)

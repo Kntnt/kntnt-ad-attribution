@@ -267,13 +267,12 @@ describe('Conversion_List_Table rendering', function () {
 
     it('links to the other pages with its own query argument, dropping action notices', function () {
         $_GET['conversions_paged'] = '2';
-        $_SERVER['HTTP_HOST']      = 'example.com';
         $_SERVER['REQUEST_URI']    = '/wp-admin/tools.php?page=kntnt-ad-attribution&paged=4&message=conversions-deleted&count=1';
 
-        Functions\when('set_url_scheme')->returnArg(1);
+        // Without a URL, remove_query_arg() works on the current request URI.
         Functions\when('wp_removable_query_args')->justReturn(['message']);
-        Functions\when('remove_query_arg')->alias(function (array $keys, string $url) {
-            [$base, $query] = explode('?', $url, 2);
+        Functions\when('remove_query_arg')->alias(function (array $keys, string|false $url = false) {
+            [$base, $query] = explode('?', $url === false ? $_SERVER['REQUEST_URI'] : $url, 2);
             parse_str($query, $args);
             return $base . '?' . http_build_query(array_diff_key($args, array_flip($keys)));
         });
@@ -289,12 +288,12 @@ describe('Conversion_List_Table rendering', function () {
 
         expect($html)->toContain('45 conversions');
         expect($html)->toContain('2 of 3');
-        expect($html)->toContain('http://example.com/wp-admin/tools.php?page=kntnt-ad-attribution&paged=4&conversions_paged=1');
-        expect($html)->toContain('http://example.com/wp-admin/tools.php?page=kntnt-ad-attribution&paged=4&conversions_paged=3');
+        expect($html)->toContain('/wp-admin/tools.php?page=kntnt-ad-attribution&paged=4&conversions_paged=1"');
+        expect($html)->toContain('/wp-admin/tools.php?page=kntnt-ad-attribution&paged=4&conversions_paged=3"');
         expect($html)->not->toContain('message=');
         expect($html)->not->toContain('count=');
 
-        unset($_SERVER['HTTP_HOST'], $_SERVER['REQUEST_URI']);
+        unset($_SERVER['REQUEST_URI']);
     });
 
 });

@@ -146,8 +146,8 @@ final class Conversion_List_Table extends WP_List_Table {
 	public function prepare_items(): void {
 		global $wpdb;
 
-		$conv_table   = $wpdb->prefix . 'kntnt_ad_attr_conversions';
-		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
+		$conv_table   = Table::Conversions->prefixed();
+		$clicks_table = Table::Clicks->prefixed();
 
 		$from_where = "FROM {$conv_table} cv
 			INNER JOIN {$clicks_table} c ON c.id = cv.click_id
@@ -197,7 +197,7 @@ final class Conversion_List_Table extends WP_List_Table {
 				'conversion_ref' => $ref,
 				'converted_at'   => $row->converted_at,
 				'attributions'   => $rows,
-				'is_test'        => array_filter( $rows, fn ( object $r ) => (int) $r->is_test === 1 ) !== [],
+				'is_test'        => array_filter( $rows, fn ( object $attribution ) => (int) $attribution->is_test === 1 ) !== [],
 				'jobs'           => $jobs[ $ref ] ?? [],
 			];
 		}, $page );
@@ -221,18 +221,15 @@ final class Conversion_List_Table extends WP_List_Table {
 	/**
 	 * Returns the bulk actions.
 	 *
-	 * The slugs differ from the tracking URLs' `trash`, `restore` and
-	 * `delete`, which Admin_Page routes to the tracking-URL handlers.
-	 *
 	 * @return array<string, string> Action slug => label.
 	 * @since 1.10.0
 	 */
 	protected function get_bulk_actions(): array {
-		return [
-			'conversion_mark_test'   => __( 'Mark as test', 'kntnt-ad-attr' ),
-			'conversion_unmark_test' => __( 'Unmark as test', 'kntnt-ad-attr' ),
-			'conversion_delete'      => __( 'Delete', 'kntnt-ad-attr' ),
-		];
+		$actions = [];
+		foreach ( [ Conversion_Action::Mark_As_Test, Conversion_Action::Unmark_As_Test, Conversion_Action::Delete ] as $action ) {
+			$actions[ $action->value ] = $action->label();
+		}
+		return $actions;
 	}
 
 	/**
@@ -266,12 +263,12 @@ final class Conversion_List_Table extends WP_List_Table {
 			return '';
 		}
 
-		$flag_action = $item->is_test ? 'conversion_unmark_test' : 'conversion_mark_test';
-		$flag_label  = $item->is_test ? __( 'Unmark as test', 'kntnt-ad-attr' ) : __( 'Mark as test', 'kntnt-ad-attr' );
+		$flag_action = $item->is_test ? Conversion_Action::Unmark_As_Test : Conversion_Action::Mark_As_Test;
+		$delete      = Conversion_Action::Delete;
 
 		return $this->row_actions( [
-			'mark_test' => sprintf( '<a href="%s">%s</a>', esc_url( $this->action_url( $flag_action, $item->conversion_ref ) ), esc_html( $flag_label ) ),
-			'delete'    => sprintf( '<a href="%s" class="submitdelete">%s</a>', esc_url( $this->action_url( 'conversion_delete', $item->conversion_ref ) ), esc_html__( 'Delete', 'kntnt-ad-attr' ) ),
+			'mark_test' => sprintf( '<a href="%s">%s</a>', esc_url( $this->action_url( $flag_action, $item->conversion_ref ) ), esc_html( $flag_action->label() ) ),
+			'delete'    => sprintf( '<a href="%s" class="submitdelete">%s</a>', esc_url( $this->action_url( $delete, $item->conversion_ref ) ), esc_html( $delete->label() ) ),
 		] );
 	}
 
@@ -361,22 +358,22 @@ final class Conversion_List_Table extends WP_List_Table {
 	 * @since 1.10.0
 	 */
 	protected function column_jobs( object $item ): string {
-		$labels = [
-			/* translators: %d: Number of report jobs */
-			'pending'    => __( '%d pending', 'kntnt-ad-attr' ),
-			/* translators: %d: Number of report jobs */
-			'processing' => __( '%d processing', 'kntnt-ad-attr' ),
-			/* translators: %d: Number of report jobs */
-			'done'       => __( '%d done', 'kntnt-ad-attr' ),
-			/* translators: %d: Number of report jobs */
-			'failed'     => __( '%d failed', 'kntnt-ad-attr' ),
-		];
-
 		$parts = [];
-		foreach ( $labels as $status => $label ) {
-			if ( ! empty( $item->jobs[ $status ] ) ) {
-				$parts[] = sprintf( $label, $item->jobs[ $status ] );
+		foreach ( Job_Status::cases() as $status ) {
+			if ( empty( $item->jobs[ $status->value ] ) ) {
+				continue;
 			}
+			$label   = match ( $status ) {
+				/* translators: %d: Number of report jobs */
+				Job_Status::Pending    => __( '%d pending', 'kntnt-ad-attr' ),
+				/* translators: %d: Number of report jobs */
+				Job_Status::Processing => __( '%d processing', 'kntnt-ad-attr' ),
+				/* translators: %d: Number of report jobs */
+				Job_Status::Done       => __( '%d done', 'kntnt-ad-attr' ),
+				/* translators: %d: Number of report jobs */
+				Job_Status::Failed     => __( '%d failed', 'kntnt-ad-attr' ),
+			};
+			$parts[] = sprintf( $label, $item->jobs[ $status->value ] );
 		}
 
 		return $parts === [] ? '—' : esc_html( implode( ', ', $parts ) );
@@ -407,12 +404,9 @@ final class Conversion_List_Table extends WP_List_Table {
 		) ) . '</span>';
 
 		if ( $total_pages > 1 ) {
-			// Built as WP_List_Table::pagination() builds it; every link is
-			// escaped with esc_url() on output.
-			$current_url = remove_query_arg(
-				[ ...wp_removable_query_args(), 'count', 'jobs_deleted', 'jobs_processing' ],
-				set_url_scheme( 'http://' . ( $_SERVER['HTTP_HOST'] ?? '' ) . ( $_SERVER['REQUEST_URI'] ?? '' ) ),
-			);
+			// The current request's URL, as WordPress builds it without a URL
+			// argument; every link is escaped with esc_url() on output.
+			$current_url = remove_query_arg( [ ...wp_removable_query_args(), 'count', 'jobs_deleted', 'jobs_processing' ] );
 
 			$link = fn ( int $page, string $label, string $arrow ): string => sprintf(
 				'<a class="button" href="%s"><span class="screen-reader-text">%s</span><span aria-hidden="true">%s</span></a>',
@@ -453,23 +447,23 @@ final class Conversion_List_Table extends WP_List_Table {
 	/**
 	 * Builds the URL of a row action for one conversion, nonce included.
 	 *
-	 * @param string $action Action slug, e.g. `conversion_delete`.
-	 * @param string $ref    Conversion reference.
+	 * @param Conversion_Action $action The action.
+	 * @param string            $ref    Conversion reference.
 	 *
 	 * @return string Unescaped URL.
 	 * @since 1.10.0
 	 */
-	private function action_url( string $action, string $ref ): string {
+	private function action_url( Conversion_Action $action, string $ref ): string {
 		return wp_nonce_url(
 			admin_url( sprintf(
 				'tools.php?page=%s&action=%s&conversion=%s&date_start=%s&date_end=%s',
 				Plugin::get_slug(),
-				$action,
+				$action->value,
 				rawurlencode( $ref ),
 				$this->date_start,
 				$this->date_end,
 			) ),
-			"{$action}_{$ref}",
+			"{$action->value}_{$ref}",
 		);
 	}
 
@@ -513,8 +507,8 @@ final class Conversion_List_Table extends WP_List_Table {
 	private function fetch_attributions( array $refs ): array {
 		global $wpdb;
 
-		$conv_table   = $wpdb->prefix . 'kntnt_ad_attr_conversions';
-		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
+		$conv_table   = Table::Conversions->prefixed();
+		$clicks_table = Table::Clicks->prefixed();
 		$placeholders = implode( ',', array_fill( 0, count( $refs ), '%s' ) );
 
 		// The tracking URL is found by its hash; LEFT JOINs keep conversions

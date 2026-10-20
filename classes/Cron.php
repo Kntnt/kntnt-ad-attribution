@@ -118,16 +118,19 @@ final class Cron {
 		/** @var int $days Number of days to retain click records. */
 		$days = (int) apply_filters( 'kntnt_ad_attr_click_retention_days', 365 );
 
-		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
-		$conv_table   = $wpdb->prefix . 'kntnt_ad_attr_conversions';
+		$clicks_table = Table::Clicks->prefixed();
+		$conv_table   = Table::Conversions->prefixed();
 		$cutoff       = gmdate( 'Y-m-d H:i:s', time() - ( $days * DAY_IN_SECONDS ) );
 
-		// Delete conversions linked to expired clicks first.
+		// Delete conversions linked to expired clicks first. Subqueries
+		// rather than multi-table DELETE … JOIN here and below: both work in
+		// MySQL, but the SQLite translator used by WordPress Playground
+		// silently deletes nothing for the latter, so the integration tests
+		// could not verify it.
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery
 		$wpdb->query( $wpdb->prepare(
-			"DELETE cv FROM {$conv_table} cv
-			 INNER JOIN {$clicks_table} c ON c.id = cv.click_id
-			 WHERE c.clicked_at < %s",
+			"DELETE FROM {$conv_table}
+			 WHERE click_id IN (SELECT id FROM {$clicks_table} WHERE clicked_at < %s)",
 			$cutoff,
 		) );
 
@@ -157,14 +160,15 @@ final class Cron {
 	private function cleanup_conversions(): void {
 		global $wpdb;
 
-		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
-		$conv_table   = $wpdb->prefix . 'kntnt_ad_attr_conversions';
+		$clicks_table = Table::Clicks->prefixed();
+		$conv_table   = Table::Conversions->prefixed();
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery
 		$deleted = $wpdb->query(
-			"DELETE cv FROM {$conv_table} cv
-			 LEFT JOIN {$clicks_table} c ON c.id = cv.click_id
-			 WHERE c.id IS NULL",
+			"DELETE FROM {$conv_table}
+			 WHERE NOT EXISTS (
+			     SELECT 1 FROM {$clicks_table} c WHERE c.id = {$conv_table}.click_id
+			 )",
 		);
 
 		if ( $deleted > 0 ) {
@@ -184,30 +188,36 @@ final class Cron {
 	private function delete_orphaned_clicks(): void {
 		global $wpdb;
 
-		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
-		$conv_table   = $wpdb->prefix . 'kntnt_ad_attr_conversions';
+		$clicks_table = Table::Clicks->prefixed();
+		$conv_table   = Table::Conversions->prefixed();
+
+		// A click is orphaned when no tracking URL post carries its hash.
+		// Correlated on the clicks table, as a condition for both deletes.
+		// Nested subqueries rather than any JOIN; see cleanup_clicks(). The
+		// SQLite translator also deletes nothing for a DELETE whose subquery
+		// contains a JOIN.
+		$has_no_tracking_url = "NOT EXISTS (
+			 SELECT 1 FROM {$wpdb->postmeta} pm
+			 WHERE pm.meta_key = '_hash'
+			   AND pm.meta_value = {$clicks_table}.hash
+			   AND pm.post_id IN (SELECT ID FROM {$wpdb->posts} WHERE post_type = %s)
+		 )";
 
 		// Delete conversions linked to orphaned clicks first.
-		// phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 		$wpdb->query(
 			$wpdb->prepare(
-				"DELETE cv FROM {$conv_table} cv
-				 INNER JOIN {$clicks_table} c ON c.id = cv.click_id
-				 LEFT JOIN {$wpdb->postmeta} pm ON pm.meta_key = '_hash' AND pm.meta_value = c.hash
-				 LEFT JOIN {$wpdb->posts} p ON p.ID = pm.post_id AND p.post_type = %s
-				 WHERE p.ID IS NULL",
+				"DELETE FROM {$conv_table}
+				 WHERE click_id IN (SELECT id FROM {$clicks_table} WHERE {$has_no_tracking_url})",
 				Post_Type::SLUG,
 			),
 		);
 
 		// Delete orphaned click records.
-		// phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 		$deleted = $wpdb->query(
 			$wpdb->prepare(
-				"DELETE c FROM {$clicks_table} c
-				 LEFT JOIN {$wpdb->postmeta} pm ON pm.meta_key = '_hash' AND pm.meta_value = c.hash
-				 LEFT JOIN {$wpdb->posts} p ON p.ID = pm.post_id AND p.post_type = %s
-				 WHERE p.ID IS NULL",
+				"DELETE FROM {$clicks_table} WHERE {$has_no_tracking_url}",
 				Post_Type::SLUG,
 			),
 		);

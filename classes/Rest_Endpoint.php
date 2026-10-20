@@ -34,17 +34,6 @@ final class Rest_Endpoint {
 	private const NAMESPACE = 'kntnt-ad-attribution/v1';
 
 	/**
-	 * Regex pattern for one posted click: `<hash>:<timestamp>`.
-	 *
-	 * Same syntax as a single `_ad_clicks` entry. Captures the SHA-256 hash
-	 * and the click's Unix timestamp.
-	 *
-	 * @var string
-	 * @since 1.10.0
-	 */
-	private const CLICK_PATTERN = '/^([a-f0-9]{64}):(\d{1,10})$/';
-
-	/**
 	 * Cookie manager for reading/writing the _ad_clicks cookie.
 	 *
 	 * @var Cookie_Manager
@@ -334,7 +323,8 @@ final class Rest_Endpoint {
 	/**
 	 * Parses posted `<hash>:<timestamp>` items into hash–timestamp tuples.
 	 *
-	 * Items that are not strings or do not match CLICK_PATTERN are dropped.
+	 * Items that are not strings or not well-formed entries
+	 * (Cookie_Manager::parse_entry()) are dropped.
 	 * Exact duplicates are collapsed.
 	 *
 	 * @param array<mixed> $items Raw items from the request.
@@ -345,8 +335,9 @@ final class Rest_Endpoint {
 	private function parse_clicks( array $items ): array {
 		$clicks = [];
 		foreach ( $items as $item ) {
-			if ( is_string( $item ) && preg_match( self::CLICK_PATTERN, $item, $match ) ) {
-				$clicks[ $item ] = [ $match[1], (int) $match[2] ];
+			$click = is_string( $item ) ? Cookie_Manager::parse_entry( $item ) : null;
+			if ( $click !== null ) {
+				$clicks[ $item ] = $click;
 			}
 		}
 		return array_values( $clicks );
@@ -365,30 +356,11 @@ final class Rest_Endpoint {
 	 * @since 1.10.0
 	 */
 	private function find_recorded_clicks( array $clicks ): array {
-		global $wpdb;
-		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
-
-		$conditions = implode( ' OR ', array_fill( 0, count( $clicks ), '(hash = %s AND clicked_at = %s)' ) );
-		$args       = [];
-		foreach ( $clicks as [ $hash, $timestamp ] ) {
-			$args[] = $hash;
-			$args[] = gmdate( 'Y-m-d H:i:s', $timestamp );
-		}
-
-		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-		$rows = $wpdb->get_results( $wpdb->prepare(
-			"SELECT hash, clicked_at FROM {$clicks_table} WHERE {$conditions}",
-			...$args,
-		) );
-
-		$found = [];
-		foreach ( $rows as $row ) {
-			$found[ $row->hash . ' ' . $row->clicked_at ] = true;
-		}
+		$click_rows = Click_Lookup::find( $clicks );
 
 		$recorded = [];
 		foreach ( $clicks as [ $hash, $timestamp ] ) {
-			if ( isset( $found[ $hash . ' ' . gmdate( 'Y-m-d H:i:s', $timestamp ) ] ) ) {
+			if ( isset( $click_rows[ $hash ][ $timestamp ] ) ) {
 				$recorded[ $hash ] = max( $recorded[ $hash ] ?? 0, $timestamp );
 			}
 		}

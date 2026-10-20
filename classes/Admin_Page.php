@@ -25,15 +25,6 @@ namespace Kntnt\Ad_Attribution;
 final class Admin_Page {
 
 	/**
-	 * Actions of the conversion list, as row action (`conversion=<ref>`) or
-	 * bulk action (`conversion[]`).
-	 *
-	 * @var string[]
-	 * @since 1.10.0
-	 */
-	private const CONVERSION_ACTIONS = [ 'conversion_delete', 'conversion_mark_test', 'conversion_unmark_test' ];
-
-	/**
 	 * Queue for displaying status information in the admin UI.
 	 *
 	 * @var Queue
@@ -66,6 +57,14 @@ final class Admin_Page {
 	private readonly Logger $logger;
 
 	/**
+	 * Data access for the actions on recorded conversions.
+	 *
+	 * @var Conversion_Store
+	 * @since 1.10.0
+	 */
+	private readonly Conversion_Store $conversions;
+
+	/**
 	 * The hook suffix returned by add_management_page().
 	 *
 	 * Used for targeting admin_enqueue_scripts and load-{$hook_suffix}.
@@ -81,15 +80,18 @@ final class Admin_Page {
 	 * @param Queue           $queue           Async job queue for status display.
 	 * @param Queue_Processor $queue_processor Queue processor for single-job actions.
 	 * @param Settings        $settings        Plugin settings for logging config.
-	 * @param Logger          $logger          Logger for log file management.
+	 * @param Logger           $logger          Logger for log file management.
+	 * @param Conversion_Store $conversions     Data access for the conversion actions.
 	 *
 	 * @since 1.2.0
+	 * @since 1.10.0 Takes a Conversion_Store.
 	 */
-	public function __construct( Queue $queue, Queue_Processor $queue_processor, Settings $settings, Logger $logger ) {
+	public function __construct( Queue $queue, Queue_Processor $queue_processor, Settings $settings, Logger $logger, Conversion_Store $conversions ) {
 		$this->queue           = $queue;
 		$this->queue_processor = $queue_processor;
 		$this->settings        = $settings;
 		$this->logger          = $logger;
+		$this->conversions     = $conversions;
 	}
 
 	/**
@@ -548,11 +550,11 @@ final class Admin_Page {
 		// and those it left alone because they were being sent.
 		$conversion_notices = [
 			/* translators: %d: Number of conversions */
-			'conversions-deleted'  => __( '%d conversion(s) deleted.', 'kntnt-ad-attr' ),
+			Conversion_Action::Delete->message()         => __( '%d conversion(s) deleted.', 'kntnt-ad-attr' ),
 			/* translators: %d: Number of conversions */
-			'conversions-marked'   => __( '%d conversion(s) marked as test.', 'kntnt-ad-attr' ),
+			Conversion_Action::Mark_As_Test->message()   => __( '%d conversion(s) marked as test.', 'kntnt-ad-attr' ),
 			/* translators: %d: Number of conversions */
-			'conversions-unmarked' => __( '%d conversion(s) no longer marked as test.', 'kntnt-ad-attr' ),
+			Conversion_Action::Unmark_As_Test->message() => __( '%d conversion(s) no longer marked as test.', 'kntnt-ad-attr' ),
 		];
 
 		if ( isset( $conversion_notices[ $message ] ) ) {
@@ -646,8 +648,9 @@ final class Admin_Page {
 		// Conversion row and bulk actions. Routed before the tracking-URL
 		// actions; their slugs and their selection (conversion[], not
 		// post[]) never match those.
-		if ( in_array( $action, self::CONVERSION_ACTIONS, true ) ) {
-			$this->handle_conversion_action( $action );
+		$conversion_action = Conversion_Action::tryFrom( $action );
+		if ( $conversion_action !== null ) {
+			$this->handle_conversion_action( $conversion_action );
 			return;
 		}
 
@@ -690,13 +693,13 @@ final class Admin_Page {
 
 			// Determine if this is a failed job (one-shot) or pending (normal retry).
 			global $wpdb;
-			$table  = $wpdb->prefix . 'kntnt_ad_attr_queue';
+			$table  = Table::Queue->prefixed();
 			$status = $wpdb->get_var( $wpdb->prepare(
 				"SELECT status FROM {$table} WHERE id = %d",
 				$job_id,
 			) );
 
-			$is_failed = $status === 'failed';
+			$is_failed = $status === Job_Status::Failed->value;
 			$success   = $this->queue_processor->process_single( $job_id, $is_failed );
 
 			$redirect_args['message'] = $success ? 'queue_run_ok' : 'queue_run_fail';
@@ -716,17 +719,19 @@ final class Admin_Page {
 	 * Delete removes the conversions' rows and keeps their clicks. Mark as
 	 * test flags the conversions' attributed click rows as test clicks,
 	 * which removes the clicks and the conversions from the statistics;
-	 * Unmark clears the flag again. Delete and Mark as test also delete the
+	 * Unmark clears the flag again. The flag lives on the click, so Mark and
+	 * Unmark affect every conversion linked to those clicks, and the notice
+	 * counts them all. Delete and Mark as test also delete the affected
 	 * conversions' report jobs that have not reached the platform (pending
 	 * or failed); processing jobs are left alone and reported, done jobs
 	 * are untouched. Unmark leaves the jobs as they are.
 	 *
-	 * @param string $action One of self::CONVERSION_ACTIONS.
+	 * @param Conversion_Action $action The action.
 	 *
 	 * @return void
 	 * @since 1.10.0
 	 */
-	private function handle_conversion_action( string $action ): void {
+	private function handle_conversion_action( Conversion_Action $action ): void {
 		$selection = wp_unslash( $_GET['conversion'] ?? '' );
 
 		// A row action's nonce is bound to its action and conversion; a bulk
@@ -736,7 +741,7 @@ final class Admin_Page {
 			$refs = $selection;
 		} else {
 			$ref = sanitize_text_field( (string) $selection );
-			check_admin_referer( "{$action}_{$ref}" );
+			check_admin_referer( "{$action->value}_{$ref}" );
 			$refs = [ $ref ];
 		}
 
@@ -747,26 +752,28 @@ final class Admin_Page {
 		$jobs  = [ 'deleted' => 0, 'processing' => 0 ];
 
 		if ( $refs !== [] ) {
-			$count = $this->count_conversions( $refs );
+
+			// Flagging a click flags every conversion linked to it, so those
+			// are the conversions Mark and Unmark affect. Mark must delete
+			// their unfinished jobs too, or a reporter without test support
+			// could still upload a conversion that is now a test.
+			$affected = $action === Conversion_Action::Delete ? $refs : $this->conversions->sharing_clicks( $refs );
+			$count    = $this->conversions->count( $affected );
 
 			match ( $action ) {
-				'conversion_delete'      => $this->delete_conversions( $refs ),
-				'conversion_mark_test'   => $this->flag_conversions_as_test( $refs, true ),
-				'conversion_unmark_test' => $this->flag_conversions_as_test( $refs, false ),
+				Conversion_Action::Delete         => $this->conversions->delete( $refs ),
+				Conversion_Action::Mark_As_Test   => $this->conversions->flag_clicks_as_test( $refs, true ),
+				Conversion_Action::Unmark_As_Test => $this->conversions->flag_clicks_as_test( $refs, false ),
 			};
 
-			if ( $action !== 'conversion_unmark_test' ) {
-				$jobs = $this->queue->delete_unfinished_for_conversions( $refs );
+			if ( $action !== Conversion_Action::Unmark_As_Test ) {
+				$jobs = $this->queue->delete_unfinished_for_conversions( $affected );
 			}
 		}
 
 		$redirect_args = [
 			'page'            => Plugin::get_slug(),
-			'message'         => match ( $action ) {
-				'conversion_delete'      => 'conversions-deleted',
-				'conversion_mark_test'   => 'conversions-marked',
-				'conversion_unmark_test' => 'conversions-unmarked',
-			},
+			'message'         => $action->message(),
 			'count'           => $count,
 			'jobs_deleted'    => $jobs['deleted'],
 			'jobs_processing' => $jobs['processing'],
@@ -802,79 +809,6 @@ final class Admin_Page {
 		);
 
 		return array_values( array_unique( $valid ) );
-	}
-
-	/**
-	 * Counts how many of the given conversions exist.
-	 *
-	 * @param string[] $refs Conversion references.
-	 *
-	 * @return int Number of distinct conversions found.
-	 * @since 1.10.0
-	 */
-	private function count_conversions( array $refs ): int {
-		global $wpdb;
-
-		$conv_table   = $wpdb->prefix . 'kntnt_ad_attr_conversions';
-		$placeholders = implode( ',', array_fill( 0, count( $refs ), '%s' ) );
-
-		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-		return (int) $wpdb->get_var( $wpdb->prepare(
-			"SELECT COUNT(DISTINCT conversion_ref) FROM {$conv_table} WHERE conversion_ref IN ({$placeholders})",
-			...$refs,
-		) );
-	}
-
-	/**
-	 * Deletes the rows of the given conversions. Their clicks stay.
-	 *
-	 * @param string[] $refs Conversion references.
-	 *
-	 * @return void
-	 * @since 1.10.0
-	 */
-	private function delete_conversions( array $refs ): void {
-		global $wpdb;
-
-		$conv_table   = $wpdb->prefix . 'kntnt_ad_attr_conversions';
-		$placeholders = implode( ',', array_fill( 0, count( $refs ), '%s' ) );
-
-		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-		$wpdb->query( $wpdb->prepare(
-			"DELETE FROM {$conv_table} WHERE conversion_ref IN ({$placeholders})",
-			...$refs,
-		) );
-	}
-
-	/**
-	 * Sets or clears the test flag on the attributed clicks of the given conversions.
-	 *
-	 * The flag lives on the click row, and the main view excludes test
-	 * clicks together with their conversions (Campaign_List_Table), so
-	 * this also flags any other conversion linked to the same click.
-	 *
-	 * @param string[] $refs    Conversion references.
-	 * @param bool     $is_test True to mark as test, false to unmark.
-	 *
-	 * @return void
-	 * @since 1.10.0
-	 */
-	private function flag_conversions_as_test( array $refs, bool $is_test ): void {
-		global $wpdb;
-
-		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
-		$conv_table   = $wpdb->prefix . 'kntnt_ad_attr_conversions';
-		$placeholders = implode( ',', array_fill( 0, count( $refs ), '%s' ) );
-
-		// A subquery rather than a multi-table UPDATE … JOIN, so the same
-		// statement runs in the SQLite translator used by WordPress
-		// Playground, where the integration tests exercise it.
-		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-		$wpdb->query( $wpdb->prepare(
-			"UPDATE {$clicks_table} SET is_test = %d WHERE id IN (SELECT click_id FROM {$conv_table} WHERE conversion_ref IN ({$placeholders}))",
-			$is_test ? 1 : 0,
-			...$refs,
-		) );
 	}
 
 	/**
@@ -1023,22 +957,21 @@ final class Admin_Page {
 
 		$hash = get_post_meta( $post_id, '_hash', true );
 		if ( $hash ) {
-			$clicks_table    = $wpdb->prefix . 'kntnt_ad_attr_clicks';
-			$conv_table      = $wpdb->prefix . 'kntnt_ad_attr_conversions';
-			$click_ids_table = $wpdb->prefix . 'kntnt_ad_attr_click_ids';
+			$clicks_table    = Table::Clicks->prefixed();
+			$conv_table      = Table::Conversions->prefixed();
+			$click_ids_table = Table::Click_Ids->prefixed();
 
-			// Delete conversions linked to this hash's clicks first.
+			// Delete conversions linked to this hash's clicks first. Subqueries
+			// rather than multi-table DELETE … JOIN, which the SQLite
+			// translator used by WordPress Playground silently ignores.
 			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
 			$wpdb->query( $wpdb->prepare(
-				"DELETE cv FROM {$conv_table} cv
-				 INNER JOIN {$clicks_table} c ON c.id = cv.click_id
-				 WHERE c.hash = %s",
+				"DELETE FROM {$conv_table}
+				 WHERE click_id IN (SELECT id FROM {$clicks_table} WHERE hash = %s)",
 				$hash,
 			) );
 
-			// Click IDs live exactly as long as their click row. A subquery
-			// rather than a multi-table DELETE … JOIN, which the SQLite
-			// translator used by WordPress Playground silently ignores.
+			// Click IDs live exactly as long as their click row.
 			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
 			$wpdb->query( $wpdb->prepare(
 				"DELETE FROM {$click_ids_table}

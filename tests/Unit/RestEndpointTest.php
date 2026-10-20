@@ -33,7 +33,7 @@ function make_rest_endpoint(): array {
  * `clicked_at` both appear among the prepared arguments, so the tests state
  * which click rows exist rather than how the endpoint queries them.
  *
- * @param array<int, array{hash: string, clicked_at: string}> $rows Click rows.
+ * @param array<int, array{hash: string, clicked_at: string}> $rows Click rows. Each gets an ID (its position plus one) and is no test click.
  *
  * @return Mockery\MockInterface The installed wpdb mock.
  */
@@ -52,7 +52,11 @@ function fake_clicks_table(array $rows): Mockery\MockInterface {
                 fn (array $row) => in_array($row['hash'], $prepared['args'], true)
                     && in_array($row['clicked_at'], $prepared['args'], true),
             );
-            return array_map(fn (array $row) => (object) $row, array_values($hits));
+            return array_map(
+                fn (int $index, array $row) => (object) ($row + ['id' => $index + 1, 'is_test' => 0]),
+                array_keys($hits),
+                array_values($hits),
+            );
         },
     );
 

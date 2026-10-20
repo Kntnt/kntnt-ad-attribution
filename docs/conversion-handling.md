@@ -60,12 +60,18 @@ The `kntnt_ad_attr_attribution` filter receives `$attributions` (hash => fractio
 
 ## Database Write
 
-The handler looks up the click record whose hash and `clicked_at` exactly match each cookie entry, then inserts conversion rows. The write is wrapped in a transaction.
+The handler looks up the click record whose hash and `clicked_at` exactly match each credited cookie entry, in one query through `Click_Lookup::find()`, then inserts conversion rows. The write is wrapped in a transaction. `Click_Lookup::find()` is the plugin's one exact click-row lookup: the click handler's deduplication and repeat checks, the internal-traffic restriction to test clicks and the REST `set-cookie` endpoint use it too.
 
 The match is exact on purpose, with no fallback to the nearest earlier click row: the clicks table is shared by everyone who clicks the tracking URL, so the nearest earlier row is often another visitor's click. The click handler keeps the matching row in place by never writing an `_ad_clicks` entry without one (see [Click Deduplication](click-handling.md#click-deduplication)). If an entry still has no matching row, for example a cookie written by a version before 1.10.0, that hash is skipped and one warning is written through `Logger` (prefix `CORE`) with the first eight characters of the hash and the entry's timestamp. The IP address and user agent are not logged.
 
 ```php
 $conversion_ref = wp_generate_uuid4();
+
+// Hash => timestamp => ['id' => click row ID, 'is_test' => bool], one query:
+// SELECT id, hash, clicked_at, is_test FROM {clicks}
+// WHERE (hash = %s AND clicked_at = %s) OR … ORDER BY id
+$credited   = array_intersect_key( $entries, array_filter( $attributions, fn ( $value ) => $value > 0 ) );
+$click_rows = Click_Lookup::find( array_map( null, array_keys( $credited ), $credited ) );
 
 $wpdb->query( 'START TRANSACTION' );
 
@@ -76,18 +82,14 @@ foreach ( $attributions as $hash => $value ) {
         continue;
     }
 
-    $click_id = $wpdb->get_var( $wpdb->prepare(
-        "SELECT id FROM {$clicks_table} WHERE hash = %s AND clicked_at = %s LIMIT 1",
-        $hash,
-        gmdate( 'Y-m-d H:i:s', $valid_entries[ $hash ] ),
-    ) );
+    $click_id = $click_rows[ $hash ][ $entries[ $hash ] ]['id'] ?? null;
 
     if ( ! $click_id ) {
         $this->logger?->warning( 'CORE', sprintf(
             'Conversion not recorded for hash %s...: no click row matches cookie timestamp %d (%s UTC).',
-            substr( $hash, 0, 8 ),
-            $valid_entries[ $hash ],
-            gmdate( 'Y-m-d H:i:s', $valid_entries[ $hash ] ),
+            substr( $hash, 0, Logger::HASH_PREFIX_LENGTH ),
+            $entries[ $hash ],
+            gmdate( 'Y-m-d H:i:s', $entries[ $hash ] ),
         ) );
         continue;
     }

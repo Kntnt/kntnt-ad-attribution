@@ -341,7 +341,8 @@ describe('Click_Handler::handle_click()', function () {
                 expect($data['utm_id'])->toBe('camp-123');
                 expect($data['utm_source_platform'])->toBe('google');
                 return true;
-            });
+            })
+            ->andReturn(1);
 
         Functions\when('get_post_meta')->justReturn('existing');
         $cm->shouldReceive('parse')->andReturn([]);
@@ -385,7 +386,8 @@ describe('Click_Handler::handle_click()', function () {
                 expect($data['utm_content'])->toBe('mtm-text');
                 expect($data['utm_term'])->toBe('mtm-kw');
                 return true;
-            });
+            })
+            ->andReturn(1);
 
         Functions\when('get_post_meta')->justReturn('existing');
         $cm->shouldReceive('parse')->andReturn([]);
@@ -425,7 +427,8 @@ describe('Click_Handler::handle_click()', function () {
             ->withArgs(function ($table, $data) {
                 expect(mb_strlen($data['utm_content']))->toBe(255);
                 return true;
-            });
+            })
+            ->andReturn(1);
 
         Functions\when('get_post_meta')->justReturn('existing');
         $cm->shouldReceive('parse')->andReturn([]);
@@ -662,46 +665,64 @@ describe('Click_Handler::handle_click()', function () {
         expect(fn () => $handler->handle_click())->toThrow(ExitException::class);
     });
 
-    it('stores no click ID when the click row could not be inserted', function () {
-        [$handler, $cm, $con, $bd, $cis] = make_click_handler();
-        $hash = TestFactory::hash('click-id-insert-failed');
+    it('writes no cookie entry, click ID or action and logs the failure when the click row could not be inserted', function () {
+        [$handler, $cm, $con, $bd, $cis, $logger] = make_click_handler();
+        $lines = capture_log_lines($logger);
+        $hash  = TestFactory::hash('click-id-insert-failed');
 
         $_GET['gclid'] = 'abc123';
 
-        Functions\expect('get_query_var')->once()->andReturn($hash);
-        $cm->shouldReceive('validate_hash')->andReturn(true);
-
-        $wpdb = TestFactory::wpdb();
-        $row  = (object) ['ID' => 10, 'target_post_id' => '20'];
-        $wpdb->shouldReceive('prepare')->andReturn('SQL');
-        $wpdb->shouldReceive('get_row')->once()->andReturn($row);
-        $GLOBALS['wpdb'] = $wpdb;
-
-        Functions\expect('get_permalink')->once()->andReturn('https://example.com/');
-        Functions\when('wp_parse_url')->alias(fn ($url, $comp) => parse_url($url, $comp));
-        Functions\when('wp_parse_str')->alias(function ($str, &$result) { parse_str($str, $result); });
-        Functions\when('add_query_arg')->alias(fn ($args, $url) => $url);
+        $wpdb = stub_tracking_url_request($cm, $hash);
         $bd->shouldReceive('is_bot')->andReturn(false);
         $con->shouldReceive('check')->andReturn(true);
         Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
         $wpdb->shouldReceive('insert')->once()->andReturn(false);
-        Functions\when('get_post_meta')->justReturn('existing');
 
         Filters\expectApplied('kntnt_ad_attr_click_id_capturers')
             ->andReturn(['google' => 'gclid']);
         $cis->shouldReceive('find_original_click')->andReturn(null);
 
-        // Without a click row there is nothing to attach the click ID to.
+        // Without a click row, nothing may point at one: no click ID, no
+        // cookie entry, no click announced.
         $cis->shouldNotReceive('store');
+        $cm->shouldNotReceive('set_clicks_cookie');
+        Actions\expectDone('kntnt_ad_attr_click')->never();
 
-        $cm->shouldReceive('parse')->andReturn([]);
-        $cm->shouldReceive('add')->andReturn([$hash => time()]);
-        $cm->shouldReceive('set_clicks_cookie')->once();
         Functions\expect('nocache_headers')->once();
-        Functions\expect('wp_redirect')->once()->andReturnUsing(fn () => throw new ExitException());
+        Functions\expect('wp_redirect')->once()->andReturnUsing(fn () => throw new ExitException('redirect'));
 
-        expect(fn () => $handler->handle_click())->toThrow(ExitException::class);
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class, 'redirect');
+
+        expect($lines)->toHaveCount(1);
+        expect($lines[0])
+            ->toStartWith('[CORE][error] ')
+            ->toContain('outcome=failed')
+            ->toContain('hash=' . substr($hash, 0, 8));
     });
+
+    it('hands an undetermined-consent visitor no pending click when the click row could not be inserted', function (string $transport) {
+        [$handler, $cm, $con, $bd, $cis] = make_click_handler();
+        $hash = TestFactory::hash('pending-insert-failed');
+
+        $wpdb = stub_tracking_url_request($cm, $hash, 'https://example.com/landing/');
+        $bd->shouldReceive('is_bot')->andReturn(false);
+        $con->shouldReceive('check')->andReturn(null);
+        Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
+        $wpdb->shouldReceive('insert')->once()->andReturn(false);
+        Filters\expectApplied('kntnt_ad_attr_pending_transport')->andReturn($transport);
+
+        $cm->shouldNotReceive('set_transport_cookie');
+
+        $redirect = new \ArrayObject();
+        Functions\expect('nocache_headers')->once();
+        Functions\expect('wp_redirect')->once()->andReturnUsing(function ($url) use ($redirect) {
+            $redirect['url'] = $url;
+            throw new ExitException('redirect');
+        });
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class, 'redirect');
+        expect($redirect['url'])->toBe('https://example.com/landing/');
+    })->with(['cookie', 'fragment']);
 
     it('ignores click ID values longer than 255 chars', function () {
         [$handler, $cm, $con, $bd, $cis] = make_click_handler();
@@ -972,14 +993,9 @@ describe('Click_Handler::handle_click()', function () {
         Functions\expect('get_query_var')->once()->andReturn($hash);
         $cm->shouldReceive('validate_hash')->andReturn(true);
 
-        // Capture every prepared query so the click-row lookup can be inspected.
-        $prepared = [];
         $wpdb = TestFactory::wpdb();
         $row  = (object) ['ID' => 10, 'target_post_id' => '20'];
-        $wpdb->shouldReceive('prepare')->andReturnUsing(function (...$args) use (&$prepared) {
-            $prepared[] = $args;
-            return 'SQL';
-        });
+        $wpdb->shouldReceive('prepare')->andReturn('SQL');
         $wpdb->shouldReceive('get_row')->once()->andReturn($row);
         $GLOBALS['wpdb'] = $wpdb;
 
@@ -997,8 +1013,13 @@ describe('Click_Handler::handle_click()', function () {
         // The visitor's entry for the hash is 30 minutes old (inside the window).
         $cm->shouldReceive('parse')->andReturn([$hash => $original]);
 
-        // A click row exists for exactly (hash, original timestamp).
-        $wpdb->shouldReceive('get_var')->once()->andReturn('7');
+        // A click row exists for exactly (hash, original timestamp); record
+        // what the handler asks about.
+        $asked = new \ArrayObject();
+        \Patchwork\redefine('Kntnt\Ad_Attribution\Click_Lookup::find', function (array $clicks) use ($asked, $hash, $original): array {
+            $asked[] = $clicks;
+            return $clicks === [[$hash, $original]] ? [$hash => [$original => ['id' => 7, 'is_test' => false]]] : [];
+        });
 
         // Dedup hit — DB insert should NOT happen.
         $wpdb->shouldNotReceive('insert');
@@ -1012,11 +1033,8 @@ describe('Click_Handler::handle_click()', function () {
 
         expect(fn () => $handler->handle_click())->toThrow(ExitException::class);
 
-        // The existence check matches the hash and the entry's timestamp exactly.
-        $lookup = array_values(array_filter($prepared, fn ($args) => str_contains($args[0], 'clicked_at')));
-        expect($lookup)->toHaveCount(1);
-        expect($lookup[0][0])->toContain('wp_kntnt_ad_attr_clicks');
-        expect(array_slice($lookup[0], 1))->toBe([$hash, '2023-11-14 21:43:20']);
+        // The existence check asks about the hash and the entry's timestamp exactly.
+        expect($asked->getArrayCopy())->toBe([[[$hash, $original]]]);
     });
 
     it('records a new click and sets the entry to the new row time when no click row matches the entry', function () {
@@ -1048,7 +1066,7 @@ describe('Click_Handler::handle_click()', function () {
         $cm->shouldReceive('parse')->andReturn([$hash => $original]);
 
         // No click row for the entry (e.g. a cookie rewritten by an older version).
-        $wpdb->shouldReceive('get_var')->once()->andReturn(null);
+        TestFactory::clickRows([]);
 
         // Handled as a new click: a row is inserted at the current time …
         $wpdb->shouldReceive('insert')
@@ -1360,10 +1378,7 @@ describe('Click_Handler::handle_click() repeat click IDs', function () {
         $cm->shouldReceive('parse')->andReturn([$hash => $newer]);
 
         // The newer entry's click row exists, so the entry can be trusted.
-        $wpdb->shouldReceive('prepare')
-            ->with(Mockery::pattern('/clicked_at = %s/'), $hash, '2023-11-14 20:26:40')
-            ->andReturn('SQL');
-        $wpdb->shouldReceive('get_var')->once()->andReturn('9');
+        TestFactory::clickRows([['hash' => $hash, 'timestamp' => $newer, 'id' => 9]]);
 
         $cm->shouldReceive('add')->once()->with([$hash => $newer], $hash, $newer)->andReturn([$hash => $newer]);
         $cm->shouldReceive('set_clicks_cookie')->once()->with([$hash => $newer]);
@@ -1445,7 +1460,7 @@ describe('Click_Handler::handle_click() repeat click IDs', function () {
         $cm->shouldReceive('parse')->andReturn([$hash => $newer]);
 
         // Every entry the plugin writes must point at a click row (#2).
-        $wpdb->shouldReceive('get_var')->once()->andReturn(null);
+        TestFactory::clickRows([]);
 
         $cm->shouldReceive('add')->once()->with([$hash => $newer], $hash, $original)->andReturn([$hash => $original]);
         $cm->shouldReceive('set_clicks_cookie')->once()->with([$hash => $original]);
@@ -1578,7 +1593,7 @@ describe('Click_Handler::handle_click() diagnostic log line', function () {
         $con->shouldReceive('check')->andReturn(true);
         Filters\expectApplied('kntnt_ad_attr_dedup_seconds')->andReturn(3600);
         $cm->shouldReceive('parse')->andReturn([$hash => $now - 1800]);
-        $wpdb->shouldReceive('get_var')->once()->andReturn('7');
+        TestFactory::clickRows([['hash' => $hash, 'timestamp' => $now - 1800, 'id' => 7]]);
         $wpdb->shouldNotReceive('insert');
         $cm->shouldReceive('add')->andReturn([$hash => $now - 1800]);
         $cm->shouldReceive('set_clicks_cookie')->once();
@@ -1762,7 +1777,7 @@ describe('Click_Handler::handle_click() internal traffic and test clicks', funct
         // An ordinary click on the same hash ten minutes ago, with its row.
         $con->shouldReceive('check')->andReturn(true);
         $cm->shouldReceive('parse')->andReturn([$hash => $now - 600]);
-        $wpdb->shouldReceive('get_var')->andReturn('5');
+        TestFactory::clickRows([['hash' => $hash, 'timestamp' => $now - 600, 'id' => 5]]);
 
         $inserted = null;
         $wpdb->shouldReceive('insert')->once()->andReturnUsing(function ($table, $data) use (&$inserted) {

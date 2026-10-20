@@ -15,14 +15,40 @@
 (function () {
     'use strict';
 
-    // The key name predates the pair format; it is kept so that bare hashes
-    // stored by the previous script are found and discarded on read.
+    /**
+     * sessionStorage key of the pending clicks, a JSON array of pairs.
+     *
+     * The key name predates the pair format; it is kept so that bare hashes
+     * stored by the previous script are found and discarded on read.
+     *
+     * @type {string}
+     * @since 1.0.0
+     */
     const STORAGE_KEY_CLICKS = 'kntnt_ad_attr_hashes';
+
+    /**
+     * sessionStorage key of the number of failed set-cookie requests.
+     *
+     * @type {string}
+     * @since 1.0.0
+     */
     const STORAGE_KEY_RETRIES = 'kntnt_ad_attr_retries';
+
+    /**
+     * Number of failed set-cookie requests after which the clicks are dropped.
+     *
+     * @type {number}
+     * @since 1.0.0
+     */
     const MAX_RETRIES = 3;
 
-    // One click: a SHA-256 hash and the Unix timestamp of its click row,
-    // the same syntax as an _ad_clicks cookie entry.
+    /**
+     * One click: a SHA-256 hash and the Unix timestamp of its click row, the
+     * same syntax as an _ad_clicks cookie entry.
+     *
+     * @type {RegExp}
+     * @since 1.10.0
+     */
     const CLICK_PATTERN = /^[a-f0-9]{64}:\d{1,10}$/;
 
     // Define the default consent function if the site hasn't provided one.

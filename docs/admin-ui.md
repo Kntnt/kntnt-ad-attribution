@@ -182,18 +182,20 @@ Below the CSV export button (publish view only), the admin page lists the record
 | Action | Effect on conversion rows | Effect on clicks | Effect on report jobs |
 |--------|---------------------------|------------------|-----------------------|
 | Delete (`conversion_delete`) | Deleted | Kept | `pending` and `failed` deleted |
-| Mark as test (`conversion_mark_test`) | Kept | Attributed click rows get `is_test = 1` | `pending` and `failed` deleted |
+| Mark as test (`conversion_mark_test`) | Kept | Attributed click rows get `is_test = 1` | `pending` and `failed` deleted, also those of every other conversion on those clicks |
 | Unmark as test (`conversion_unmark_test`) | Kept | Attributed click rows get `is_test = 0` | Untouched |
 
 - **Statistics.** Delete lowers the main view's conversions by the conversion's weight. Mark as test removes the attributed clicks and, through them, the conversion from the main view, its totals and the CSV export: the exclusion is the single `c.is_test = 0` condition described above. Unmark restores them.
-- **Shared clicks.** The test flag lives on the click row, so marking a conversion as a test also takes any other conversion linked to the same click out of the statistics, for example a second form submission by the same visitor after the same ad click, and unmarking puts it back. Such a conversion is then listed with Unmark too. Its report jobs are not deleted; mark it itself to delete them.
+- **Shared clicks.** The test flag lives on the click row, so marking a conversion as a test also makes any other conversion linked to the same click a test and takes it out of the statistics, for example a second form submission by the same visitor after the same ad click; unmarking puts it back. Such a conversion is then listed with Unmark too. Mark as test therefore deletes the unfinished report jobs of every conversion on the flagged clicks, so that a reporter without test support cannot upload any of them, and the notice counts all of them. Only the marked conversions' clicks are flagged: another click of such a conversion keeps its flag.
 - **Report jobs.** A job knows its conversion through `queue.conversion_ref` (see [architecture.md](architecture.md#report-queue--custom-table)). `pending` and `failed` jobs have not reached the platform and are deleted. A `processing` job may be talking to the platform right now; it is left alone and the notice says so. `done` jobs have already been sent and stay, shown in the Report Jobs column; retracting a conversion at the platform is up to the reporter's add-on. Jobs created before 1.10.0 have no reference and are never touched. Unmark does not recreate deleted jobs.
+
+**Data access.** `Admin_Page` checks the nonce and the capability, runs the action and redirects with the notice; the SQL below lives in `Conversion_Store` (`count()`, `sharing_clicks()`, `delete()`, `flag_clicks_as_test()`) and `Queue::delete_unfinished_for_conversions()`.
 
 **Routing.** Row actions are GET links `tools.php?page=kntnt-ad-attribution&action=<action>&conversion=<ref>&date_start=…&date_end=…&_wpnonce=…`. Bulk actions submit the list's own GET form, with `action`/`action2` from the bulk select and `conversion[]`. `Admin_Page::handle_form_submission()` routes the three action slugs to `handle_conversion_action()` **before** the tracking-URL actions; neither the slugs nor `conversion[]` overlap with the tracking URLs' `trash`/`restore`/`delete` and `post[]`.
 
 **Security.** Each request needs a valid nonce (row action: `{action}_{ref}`, e.g. `conversion_delete_<ref>`; bulk action: `bulk-conversions`, emitted by `WP_List_Table`) checked with `check_admin_referer()`, and the `kntnt_ad_attr` capability checked with `Plugin::authorize()`. A failed nonce ends in WordPress's 403 "link expired" page, a missing capability in a 403 `wp_die()`. References are kept only if they are up to 36 letters, digits and hyphens; all SQL is prepared.
 
-**Notice.** The handler redirects back to the page (with the same date range) with `message=conversions-deleted|conversions-marked|conversions-unmarked`, `count` (conversions found), `jobs_deleted` and `jobs_processing`. The success notice reads e.g. "1 conversion(s) deleted. 2 unfinished report job(s) deleted."; when `jobs_processing` is above zero, a warning adds "N report job(s) still processing were left untouched. They may still reach the ad platform."
+**Notice.** The handler redirects back to the page (with the same date range) with `message=conversions-deleted|conversions-marked|conversions-unmarked`, `count` (conversions affected: for Delete the selected conversions found, for Mark and Unmark every conversion on the flagged clicks), `jobs_deleted` and `jobs_processing`. The success notice reads e.g. "1 conversion(s) deleted. 2 unfinished report job(s) deleted."; when `jobs_processing` is above zero, a warning adds "N report job(s) still processing were left untouched. They may still reach the ad platform."
 
 ### SQL (Conversions)
 
@@ -221,7 +223,7 @@ WHERE cv.conversion_ref IN (%s, …)
 ORDER BY cv.fractional_conversion DESC, c.clicked_at DESC
 
 -- Report jobs per status (Queue::count_jobs_for_conversions)
-SELECT conversion_ref, status, COUNT(*) AS cnt
+SELECT conversion_ref, status, COUNT(*) AS job_count
 FROM {prefix}kntnt_ad_attr_queue
 WHERE conversion_ref IN (%s, …)
 GROUP BY conversion_ref, status
@@ -232,6 +234,10 @@ DELETE FROM {prefix}kntnt_ad_attr_conversions WHERE conversion_ref IN (%s, …)
 -- Mark as test (1) / Unmark (0)
 UPDATE {prefix}kntnt_ad_attr_clicks SET is_test = %d
 WHERE id IN (SELECT click_id FROM {prefix}kntnt_ad_attr_conversions WHERE conversion_ref IN (%s, …))
+
+-- Conversions Mark and Unmark affect: every conversion on the selected conversions' clicks
+SELECT DISTINCT conversion_ref FROM {prefix}kntnt_ad_attr_conversions
+WHERE click_id IN (SELECT click_id FROM {prefix}kntnt_ad_attr_conversions WHERE conversion_ref IN (%s, …))
 
 -- Unfinished jobs (Queue::delete_unfinished_for_conversions), then the processing count
 DELETE FROM {prefix}kntnt_ad_attr_queue WHERE conversion_ref IN (%s, …) AND status IN ('pending', 'failed')

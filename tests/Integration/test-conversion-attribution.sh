@@ -68,12 +68,12 @@ ad_clicks_b=$(extract_cookie_value "$cookies_b" "_ad_clicks")
 
 sleep 1
 
-# Click C, sending B's cookie to accumulate entries. Use raw curl with
-# the cookie value directly (avoids Secure flag issues with cookie jars).
+# Click C, sending B's cookie to accumulate entries. Playground ignores
+# curl's -b, so the cookie goes in the test header (see plugin_cookies).
 HEADERS_C=$(curl -sS -D - -o /dev/null \
     -A "Mozilla/5.0 Chrome/120" \
     --max-redirs 0 \
-    -b "_ad_clicks=${ad_clicks_b}" \
+    -H "$(plugin_cookies "_ad_clicks=${ad_clicks_b}")" \
     "${WP_BASE_URL}/ad/${HASH_C}/" 2>/dev/null || true)
 ad_clicks_bc=$(extract_cookie_value "$HEADERS_C" "_ad_clicks")
 

@@ -235,7 +235,7 @@ final class Plugin {
 		$this->click_handler        = new Click_Handler( $this->cookie_manager, $this->consent, $this->bot_detector, $this->click_id_store, $this->speculation_detector, $this->logger );
 		$this->conversion_handler   = new Conversion_Handler( $this->cookie_manager, $this->consent, $this->bot_detector, $this->click_id_store, $this->queue, $this->queue_processor, $this->logger );
 		$this->cron                 = new Cron( $this->click_id_store, $this->queue, $this->logger );
-		$this->admin_page           = new Admin_Page( $this->queue, $this->queue_processor, $this->settings, $this->logger );
+		$this->admin_page           = new Admin_Page( $this->queue, $this->queue_processor, $this->settings, $this->logger, new Conversion_Store() );
 		$this->rest_endpoint        = new Rest_Endpoint( $this->cookie_manager, $this->consent );
 		$this->settings_page        = new Settings_Page( $this->settings, $this->logger );
 
