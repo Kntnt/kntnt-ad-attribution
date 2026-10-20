@@ -40,6 +40,17 @@ final class Logger {
 	private const FILE_NAME = 'kntnt-ad-attribution.log';
 
 	/**
+	 * Number of leading characters of a tracking URL hash written to the log.
+	 *
+	 * Enough to tell tracking URLs apart, without writing the full
+	 * identifier to a file.
+	 *
+	 * @var int
+	 * @since 1.10.0
+	 */
+	public const HASH_PREFIX_LENGTH = 8;
+
+	/**
 	 * Settings instance for checking enable_logging and file size limits.
 	 *
 	 * @var Settings

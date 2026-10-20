@@ -39,17 +39,6 @@ final class Click_Handler {
 	public const TEST_PARAM = 'kntnt_ad_attr_test';
 
 	/**
-	 * Number of leading hash characters written to the diagnostic log.
-	 *
-	 * Enough to tell tracking URLs apart, without writing the full
-	 * identifier to a file.
-	 *
-	 * @var int
-	 * @since 1.10.0
-	 */
-	private const LOG_HASH_PREFIX_LENGTH = 8;
-
-	/**
 	 * Cookie manager for reading/writing tracking cookies.
 	 *
 	 * @var Cookie_Manager
@@ -466,7 +455,7 @@ final class Click_Handler {
 	private function log_request( Request_Outcome $outcome, string $hash, bool $is_test ): void {
 		$fields = [
 			'outcome'     => $outcome->value,
-			'hash'        => substr( $hash, 0, self::LOG_HASH_PREFIX_LENGTH ),
+			'hash'        => substr( $hash, 0, Logger::HASH_PREFIX_LENGTH ),
 			'test'        => $is_test ? '1' : '0',
 			'sec_purpose' => self::quote_header( 'HTTP_SEC_PURPOSE' ),
 			'purpose'     => self::quote_header( 'HTTP_PURPOSE' ),

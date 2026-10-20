@@ -244,7 +244,7 @@ final class Conversion_Handler {
 			if ( ! $click_id ) {
 				$this->logger?->warning( 'CORE', sprintf(
 					'Conversion not recorded for hash %s...: no click row matches cookie timestamp %d (%s UTC).',
-					substr( $hash, 0, 8 ),
+					substr( $hash, 0, Logger::HASH_PREFIX_LENGTH ),
 					$valid_entries[ $hash ],
 					gmdate( 'Y-m-d H:i:s', $valid_entries[ $hash ] ),
 				) );
@@ -361,7 +361,7 @@ final class Conversion_Handler {
 			$this->logger?->info( 'CORE', sprintf(
 				'Test conversion recorded for %s; passed to reporters with test support: %s.',
 				implode( ', ', array_map(
-					fn ( $hash, $click_row_id ) => sprintf( 'hash %s... (click row %d)', substr( $hash, 0, 8 ), $click_row_id ),
+					fn ( $hash, $click_row_id ) => sprintf( 'hash %s... (click row %d)', substr( $hash, 0, Logger::HASH_PREFIX_LENGTH ), $click_row_id ),
 					array_keys( $linked_clicks ),
 					$linked_clicks,
 				) ),
