@@ -25,6 +25,15 @@ namespace Kntnt\Ad_Attribution;
 final class Admin_Page {
 
 	/**
+	 * Actions of the conversion list, as row action (`conversion=<ref>`) or
+	 * bulk action (`conversion[]`).
+	 *
+	 * @var string[]
+	 * @since 1.10.0
+	 */
+	private const CONVERSION_ACTIONS = [ 'conversion_delete', 'conversion_mark_test', 'conversion_unmark_test' ];
+
+	/**
 	 * Queue for displaying status information in the admin UI.
 	 *
 	 * @var Queue
@@ -372,7 +381,42 @@ final class Admin_Page {
 
 			submit_button( __( 'Export CSV', 'kntnt-ad-attr' ), 'secondary', 'export_csv', false );
 			echo '</form>';
+
+			$this->render_conversions( $params['date_start'], $params['date_end'] );
 		}
+	}
+
+	/**
+	 * Renders the list of recorded conversions for the main view's date range.
+	 *
+	 * The list has its own GET form, so its bulk actions and nonce never mix
+	 * with the tracking URLs' form above it. The date range is carried along
+	 * so an action returns to the same view.
+	 *
+	 * @param string $date_start First day of the range (Y-m-d).
+	 * @param string $date_end   Last day of the range (Y-m-d).
+	 *
+	 * @return void
+	 * @since 1.10.0
+	 */
+	private function render_conversions( string $date_start, string $date_end ): void {
+		$table = new Conversion_List_Table( $this->queue, $date_start, $date_end );
+		$table->prepare_items();
+
+		echo '<div class="kntnt-ad-attr-conversions-section" style="margin-top:2em;padding-top:1.5em;border-top:1px solid #c3c4c7">';
+		echo '<h3>' . esc_html__( 'Conversions', 'kntnt-ad-attr' ) . '</h3>';
+		echo '<p class="description">'
+			. esc_html__( 'Conversions of clicks in the date range above, newest first. Mark as test removes a conversion and its clicks from the statistics; Delete removes the conversion and keeps its clicks. Both delete its report jobs that have not been sent.', 'kntnt-ad-attr' )
+			. '</p>';
+
+		echo '<form method="get" class="kntnt-ad-attr-conversions">';
+		echo '<input type="hidden" name="page" value="' . esc_attr( Plugin::get_slug() ) . '">';
+		echo '<input type="hidden" name="date_start" value="' . esc_attr( $date_start ) . '">';
+		echo '<input type="hidden" name="date_end" value="' . esc_attr( $date_end ) . '">';
+		$table->display();
+		echo '</form>';
+
+		echo '</div>';
 	}
 
 	/**
@@ -500,6 +544,40 @@ final class Admin_Page {
 			'bulk-deleted'  => __( '%d tracking URL(s) permanently deleted.', 'kntnt-ad-attr' ),
 		];
 
+		// Conversion action notices, with the report jobs the action deleted
+		// and those it left alone because they were being sent.
+		$conversion_notices = [
+			/* translators: %d: Number of conversions */
+			'conversions-deleted'  => __( '%d conversion(s) deleted.', 'kntnt-ad-attr' ),
+			/* translators: %d: Number of conversions */
+			'conversions-marked'   => __( '%d conversion(s) marked as test.', 'kntnt-ad-attr' ),
+			/* translators: %d: Number of conversions */
+			'conversions-unmarked' => __( '%d conversion(s) no longer marked as test.', 'kntnt-ad-attr' ),
+		];
+
+		if ( isset( $conversion_notices[ $message ] ) ) {
+			$jobs_deleted    = (int) ( $_GET['jobs_deleted'] ?? 0 );
+			$jobs_processing = (int) ( $_GET['jobs_processing'] ?? 0 );
+
+			$text = sprintf( $conversion_notices[ $message ], (int) ( $_GET['count'] ?? 0 ) );
+			if ( $jobs_deleted > 0 ) {
+				/* translators: %d: Number of report jobs */
+				$text .= ' ' . sprintf( __( '%d unfinished report job(s) deleted.', 'kntnt-ad-attr' ), $jobs_deleted );
+			}
+
+			printf( '<div class="notice notice-success is-dismissible"><p>%s</p></div>', esc_html( $text ) );
+
+			if ( $jobs_processing > 0 ) {
+				printf(
+					'<div class="notice notice-warning is-dismissible"><p>%s</p></div>',
+					/* translators: %d: Number of report jobs */
+					esc_html( sprintf( __( '%d report job(s) still processing were left untouched. They may still reach the ad platform.', 'kntnt-ad-attr' ), $jobs_processing ) ),
+				);
+			}
+
+			return;
+		}
+
 		if ( isset( $bulk_notices[ $message ] ) ) {
 			$count = (int) ( $_GET['count'] ?? 0 );
 			printf(
@@ -565,6 +643,14 @@ final class Admin_Page {
 			$action = sanitize_text_field( wp_unslash( $_GET['action2'] ?? '' ) );
 		}
 
+		// Conversion row and bulk actions. Routed before the tracking-URL
+		// actions; their slugs and their selection (conversion[], not
+		// post[]) never match those.
+		if ( in_array( $action, self::CONVERSION_ACTIONS, true ) ) {
+			$this->handle_conversion_action( $action );
+			return;
+		}
+
 		// Bulk action: post[] is an array.
 		if ( in_array( $action, [ 'trash', 'restore', 'delete' ], true ) && is_array( $_GET['post'] ?? null ) ) {
 			$this->handle_bulk_action( $action );
@@ -622,6 +708,173 @@ final class Admin_Page {
 
 		wp_safe_redirect( add_query_arg( $redirect_args, admin_url( 'tools.php' ) ) );
 		exit;
+	}
+
+	/**
+	 * Handles a row or bulk action on recorded conversions.
+	 *
+	 * Delete removes the conversions' rows and keeps their clicks. Mark as
+	 * test flags the conversions' attributed click rows as test clicks,
+	 * which removes the clicks and the conversions from the statistics;
+	 * Unmark clears the flag again. Delete and Mark as test also delete the
+	 * conversions' report jobs that have not reached the platform (pending
+	 * or failed); processing jobs are left alone and reported, done jobs
+	 * are untouched. Unmark leaves the jobs as they are.
+	 *
+	 * @param string $action One of self::CONVERSION_ACTIONS.
+	 *
+	 * @return void
+	 * @since 1.10.0
+	 */
+	private function handle_conversion_action( string $action ): void {
+		$selection = wp_unslash( $_GET['conversion'] ?? '' );
+
+		// A row action's nonce is bound to its action and conversion; a bulk
+		// action uses the list's bulk nonce, emitted by WP_List_Table.
+		if ( is_array( $selection ) ) {
+			check_admin_referer( 'bulk-conversions' );
+			$refs = $selection;
+		} else {
+			$ref = sanitize_text_field( (string) $selection );
+			check_admin_referer( "{$action}_{$ref}" );
+			$refs = [ $ref ];
+		}
+
+		Plugin::authorize();
+
+		$refs  = $this->valid_conversion_refs( $refs );
+		$count = 0;
+		$jobs  = [ 'deleted' => 0, 'processing' => 0 ];
+
+		if ( $refs !== [] ) {
+			$count = $this->count_conversions( $refs );
+
+			match ( $action ) {
+				'conversion_delete'      => $this->delete_conversions( $refs ),
+				'conversion_mark_test'   => $this->flag_conversions_as_test( $refs, true ),
+				'conversion_unmark_test' => $this->flag_conversions_as_test( $refs, false ),
+			};
+
+			if ( $action !== 'conversion_unmark_test' ) {
+				$jobs = $this->queue->delete_unfinished_for_conversions( $refs );
+			}
+		}
+
+		$redirect_args = [
+			'page'            => Plugin::get_slug(),
+			'message'         => match ( $action ) {
+				'conversion_delete'      => 'conversions-deleted',
+				'conversion_mark_test'   => 'conversions-marked',
+				'conversion_unmark_test' => 'conversions-unmarked',
+			},
+			'count'           => $count,
+			'jobs_deleted'    => $jobs['deleted'],
+			'jobs_processing' => $jobs['processing'],
+		];
+
+		// Return to the date range the action was taken in.
+		foreach ( [ 'date_start', 'date_end' ] as $key ) {
+			$date = sanitize_text_field( wp_unslash( $_GET[ $key ] ?? '' ) );
+			if ( preg_match( '/^\d{4}-\d{2}-\d{2}$/', $date ) ) {
+				$redirect_args[ $key ] = $date;
+			}
+		}
+
+		wp_safe_redirect( add_query_arg( $redirect_args, admin_url( 'tools.php' ) ) );
+		exit;
+	}
+
+	/**
+	 * Keeps the well-formed, distinct conversion references of a request.
+	 *
+	 * A reference is a UUID, or a row ID for a conversion recorded before
+	 * 1.10.0: up to 36 letters, digits and hyphens.
+	 *
+	 * @param array $refs References from the request.
+	 *
+	 * @return string[] Valid references.
+	 * @since 1.10.0
+	 */
+	private function valid_conversion_refs( array $refs ): array {
+		$valid = array_filter(
+			$refs,
+			fn ( $ref ) => is_string( $ref ) && preg_match( '/^[A-Za-z0-9-]{1,36}$/', $ref ) === 1,
+		);
+
+		return array_values( array_unique( $valid ) );
+	}
+
+	/**
+	 * Counts how many of the given conversions exist.
+	 *
+	 * @param string[] $refs Conversion references.
+	 *
+	 * @return int Number of distinct conversions found.
+	 * @since 1.10.0
+	 */
+	private function count_conversions( array $refs ): int {
+		global $wpdb;
+
+		$conv_table   = $wpdb->prefix . 'kntnt_ad_attr_conversions';
+		$placeholders = implode( ',', array_fill( 0, count( $refs ), '%s' ) );
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+		return (int) $wpdb->get_var( $wpdb->prepare(
+			"SELECT COUNT(DISTINCT conversion_ref) FROM {$conv_table} WHERE conversion_ref IN ({$placeholders})",
+			...$refs,
+		) );
+	}
+
+	/**
+	 * Deletes the rows of the given conversions. Their clicks stay.
+	 *
+	 * @param string[] $refs Conversion references.
+	 *
+	 * @return void
+	 * @since 1.10.0
+	 */
+	private function delete_conversions( array $refs ): void {
+		global $wpdb;
+
+		$conv_table   = $wpdb->prefix . 'kntnt_ad_attr_conversions';
+		$placeholders = implode( ',', array_fill( 0, count( $refs ), '%s' ) );
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+		$wpdb->query( $wpdb->prepare(
+			"DELETE FROM {$conv_table} WHERE conversion_ref IN ({$placeholders})",
+			...$refs,
+		) );
+	}
+
+	/**
+	 * Sets or clears the test flag on the attributed clicks of the given conversions.
+	 *
+	 * The flag lives on the click row, and the main view excludes test
+	 * clicks together with their conversions (Campaign_List_Table), so
+	 * this also flags any other conversion linked to the same click.
+	 *
+	 * @param string[] $refs    Conversion references.
+	 * @param bool     $is_test True to mark as test, false to unmark.
+	 *
+	 * @return void
+	 * @since 1.10.0
+	 */
+	private function flag_conversions_as_test( array $refs, bool $is_test ): void {
+		global $wpdb;
+
+		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
+		$conv_table   = $wpdb->prefix . 'kntnt_ad_attr_conversions';
+		$placeholders = implode( ',', array_fill( 0, count( $refs ), '%s' ) );
+
+		// A subquery rather than a multi-table UPDATE … JOIN, so the same
+		// statement runs in the SQLite translator used by WordPress
+		// Playground, where the integration tests exercise it.
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+		$wpdb->query( $wpdb->prepare(
+			"UPDATE {$clicks_table} SET is_test = %d WHERE id IN (SELECT click_id FROM {$conv_table} WHERE conversion_ref IN ({$placeholders}))",
+			$is_test ? 1 : 0,
+			...$refs,
+		) );
 	}
 
 	/**

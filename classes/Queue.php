@@ -278,6 +278,82 @@ final class Queue {
 	}
 
 	/**
+	 * Deletes the unfinished report jobs of the given conversions.
+	 *
+	 * Pending and failed jobs have not reached the platform, so they go.
+	 * A processing job may be talking to the platform right now and is left
+	 * alone, but counted so the caller can say so. Done jobs have already
+	 * been sent and stay. Jobs without a conversion reference are never
+	 * matched.
+	 *
+	 * @param string[] $conversion_refs References of the conversions (see Conversion_Handler).
+	 *
+	 * @return array{deleted: int, processing: int} Jobs deleted, and jobs left alone because they are processing.
+	 * @since 1.10.0
+	 */
+	public function delete_unfinished_for_conversions( array $conversion_refs ): array {
+		global $wpdb;
+
+		if ( $conversion_refs === [] ) {
+			return [ 'deleted' => 0, 'processing' => 0 ];
+		}
+
+		$table        = $wpdb->prefix . 'kntnt_ad_attr_queue';
+		$placeholders = implode( ',', array_fill( 0, count( $conversion_refs ), '%s' ) );
+
+		// Delete first, then count: a job dequeued in between is counted as
+		// processing rather than reported as deleted.
+		$deleted = $wpdb->query( $wpdb->prepare(
+			"DELETE FROM {$table} WHERE conversion_ref IN ({$placeholders}) AND status IN ('pending', 'failed')",
+			...$conversion_refs,
+		) );
+
+		$processing = $wpdb->get_var( $wpdb->prepare(
+			"SELECT COUNT(*) FROM {$table} WHERE conversion_ref IN ({$placeholders}) AND status = 'processing'",
+			...$conversion_refs,
+		) );
+
+		return [
+			'deleted'    => (int) $deleted,
+			'processing' => (int) $processing,
+		];
+	}
+
+	/**
+	 * Counts the report jobs of the given conversions per status.
+	 *
+	 * @param string[] $conversion_refs References of the conversions (see Conversion_Handler).
+	 *
+	 * @return array<string, array<string, int>> Conversion reference => status => number of jobs. Conversions without jobs are absent.
+	 * @since 1.10.0
+	 */
+	public function count_jobs_for_conversions( array $conversion_refs ): array {
+		global $wpdb;
+
+		if ( $conversion_refs === [] ) {
+			return [];
+		}
+
+		$table        = $wpdb->prefix . 'kntnt_ad_attr_queue';
+		$placeholders = implode( ',', array_fill( 0, count( $conversion_refs ), '%s' ) );
+
+		$rows = $wpdb->get_results( $wpdb->prepare(
+			"SELECT conversion_ref, status, COUNT(*) AS cnt
+			 FROM {$table}
+			 WHERE conversion_ref IN ({$placeholders})
+			 GROUP BY conversion_ref, status",
+			...$conversion_refs,
+		) );
+
+		$counts = [];
+		foreach ( $rows ?: [] as $row ) {
+			$counts[ $row->conversion_ref ][ $row->status ] = (int) $row->cnt;
+		}
+
+		return $counts;
+	}
+
+	/**
 	 * Clears the retry_after timestamp for a job, making it immediately eligible.
 	 *
 	 * @param int $id Job ID.
