@@ -167,6 +167,35 @@ reset_probes() {
     reset_probe_calls
 }
 
+# Switch the plugin's diagnostic logging (see test-helpers.php).
+# Usage: set_logging on|off
+set_logging() {
+    curl -sf "${WP_BASE_URL}/?rest_route=/kntnt-ad-attribution/v1/test-set-logging" \
+        -X POST \
+        -H "Content-Type: application/json" \
+        -H "X-WP-Nonce: ${WP_NONCE}" \
+        -b "${ADMIN_COOKIE}" \
+        -d "$(jq -n --arg enabled "$1" '{enabled: $enabled}')" > /dev/null
+}
+
+# Print the plugin's log file ("" if there is none).
+# Usage: get_log
+get_log() {
+    curl -sf "${WP_BASE_URL}/?rest_route=/kntnt-ad-attribution/v1/test-log" \
+        -H "X-WP-Nonce: ${WP_NONCE}" \
+        -b "${ADMIN_COOKIE}" \
+        | jq -r '.contents'
+}
+
+# Delete the plugin's log file.
+# Usage: clear_log
+clear_log() {
+    curl -sf "${WP_BASE_URL}/?rest_route=/kntnt-ad-attribution/v1/test-log" \
+        -X DELETE \
+        -H "X-WP-Nonce: ${WP_NONCE}" \
+        -b "${ADMIN_COOKIE}" > /dev/null
+}
+
 # Query a single row from the database.
 # Usage: query_db "SELECT ..."
 # Returns: JSON object
