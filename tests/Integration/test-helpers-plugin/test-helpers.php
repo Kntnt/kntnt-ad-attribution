@@ -26,6 +26,33 @@ add_filter('kntnt_ad_attr_dedup_seconds', function ($seconds) {
     return $override > 0 ? $override : $seconds;
 });
 
+// Internal traffic. Suites trigger conversions as the logged-in admin
+// (test-trigger-conversion), which the plugin treats as internal traffic and
+// does not record. The default detection is therefore switched off for the
+// whole test environment, as a site does with the documented one-liner
+// add_filter('kntnt_ad_attr_is_internal', '__return_false', PHP_INT_MAX).
+// Suites that test internal traffic set the string option
+// test_internal_default to "on" (set_internal_default) and reset it at their
+// end.
+add_filter('kntnt_ad_attr_is_internal', function ($is_internal) {
+    return get_option('test_internal_default', '') === 'on' ? $is_internal : false;
+}, PHP_INT_MAX);
+
+// Anonymous visitors. Playground's server does not pass a request's own
+// Cookie header to PHP: it replaces it with every cookie that any earlier
+// response has set (php-wasm's HttpCookieStore), so every request carries the
+// admin's logged-in cookie from the setup login, whatever curl sends. A
+// request with the header "X-Test-Visitor: anonymous" is stripped of the
+// WordPress login cookies here, before WordPress determines the current user,
+// so it arrives like a browser that has never logged in.
+if (($_SERVER['HTTP_X_TEST_VISITOR'] ?? '') === 'anonymous') {
+    foreach (array_keys($_COOKIE) as $name) {
+        if (str_starts_with($name, 'wordpress_') && $name !== 'wordpress_test_cookie') {
+            unset($_COOKIE[$name]);
+        }
+    }
+}
+
 /*
  * Probe adapters: a click-ID capturer and a conversion reporter that suites
  * switch on through string options (test-set-option), so no add-on plugin
@@ -40,7 +67,23 @@ add_filter('kntnt_ad_attr_dedup_seconds', function ($seconds) {
  *   test_probe_calls      List of everything probe's enqueue received, one
  *                         entry per call: attributions, click_ids,
  *                         campaigns, context.
+ *   test_probe_recorded   "on" records every kntnt_ad_attr_conversion_recorded
+ *                         call (attributions, context) in
+ *                         test_probe_recorded_calls (set_probe_recorded,
+ *                         get_recorded_calls).
  */
+
+add_action('kntnt_ad_attr_conversion_recorded', function (array $attributions, array $context): void {
+    if (get_option('test_probe_recorded', '') !== 'on') {
+        return;
+    }
+    $calls = get_option('test_probe_recorded_calls', []);
+    if (!is_array($calls)) {
+        $calls = [];
+    }
+    $calls[] = ['attributions' => $attributions, 'context' => $context];
+    update_option('test_probe_recorded_calls', $calls, false);
+}, 10, 2);
 
 add_filter('kntnt_ad_attr_click_id_capturers', function (array $capturers): array {
     $spec = (string) get_option('test_probe_capturers', '');
@@ -283,43 +326,55 @@ add_action('rest_api_init', function () {
     ]);
 
     // Trigger conversion with custom cookies (sets $_COOKIE before firing action)
+    $trigger_conversion = function (WP_REST_Request $request) {
+        $ad_clicks = $request->get_param('ad_clicks');
+        $last_conv = $request->get_param('last_conv');
+
+        // Reset cookie superglobals to prevent WASM PHP state leakage
+        // between requests (Playground reuses the PHP process).
+        unset($_COOKIE['_ad_clicks'], $_COOKIE['_ad_last_conv']);
+
+        // Inject cookies into $_COOKIE so conversion handler reads them.
+        if ($ad_clicks !== null && $ad_clicks !== '') {
+            $_COOKIE['_ad_clicks'] = $ad_clicks;
+        }
+        if ($last_conv !== null) {
+            $_COOKIE['_ad_last_conv'] = $last_conv;
+        }
+
+        // Set a browser-like User-Agent so Bot_Detector doesn't reject
+        // the conversion (curl's default UA matches the bot signature list).
+        $_SERVER['HTTP_USER_AGENT'] = 'Mozilla/5.0 IntegrationTest';
+
+        // Capture any Set-Cookie headers from the conversion handler.
+        $headers_before = headers_list();
+        do_action('kntnt_ad_attr_conversion');
+        $headers_after = headers_list();
+
+        // Find new Set-Cookie headers.
+        $new_cookies = array_diff($headers_after, $headers_before);
+        $cookie_headers = array_values(array_filter($new_cookies, fn ($h) => str_starts_with($h, 'Set-Cookie:')));
+
+        return new WP_REST_Response([
+            'success'    => true,
+            'set_cookies' => $cookie_headers,
+        ], 200);
+    };
+
     register_rest_route('kntnt-ad-attribution/v1', '/test-trigger-conversion', [
         'methods'             => 'POST',
-        'callback'            => function (WP_REST_Request $request) {
-            $ad_clicks = $request->get_param('ad_clicks');
-            $last_conv = $request->get_param('last_conv');
-
-            // Reset cookie superglobals to prevent WASM PHP state leakage
-            // between requests (Playground reuses the PHP process).
-            unset($_COOKIE['_ad_clicks'], $_COOKIE['_ad_last_conv']);
-
-            // Inject cookies into $_COOKIE so conversion handler reads them.
-            if ($ad_clicks !== null && $ad_clicks !== '') {
-                $_COOKIE['_ad_clicks'] = $ad_clicks;
-            }
-            if ($last_conv !== null) {
-                $_COOKIE['_ad_last_conv'] = $last_conv;
-            }
-
-            // Set a browser-like User-Agent so Bot_Detector doesn't reject
-            // the conversion (curl's default UA matches the bot signature list).
-            $_SERVER['HTTP_USER_AGENT'] = 'Mozilla/5.0 IntegrationTest';
-
-            // Capture any Set-Cookie headers from the conversion handler.
-            $headers_before = headers_list();
-            do_action('kntnt_ad_attr_conversion');
-            $headers_after = headers_list();
-
-            // Find new Set-Cookie headers.
-            $new_cookies = array_diff($headers_after, $headers_before);
-            $cookie_headers = array_values(array_filter($new_cookies, fn ($h) => str_starts_with($h, 'Set-Cookie:')));
-
-            return new WP_REST_Response([
-                'success'    => true,
-                'set_cookies' => $cookie_headers,
-            ], 200);
-        },
+        'callback'            => $trigger_conversion,
         'permission_callback' => fn () => current_user_can('manage_options'),
+    ]);
+
+    // The same trigger without a permission check, called without a nonce.
+    // It reproduces a form plugin that submits through the REST API without
+    // a nonce: WordPress then resets the current user to 0 even when the
+    // request carries a logged-in cookie.
+    register_rest_route('kntnt-ad-attribution/v1', '/test-trigger-conversion-public', [
+        'methods'             => 'POST',
+        'callback'            => $trigger_conversion,
+        'permission_callback' => '__return_true',
     ]);
 
     // Clear plugin state from WASM PHP's persistent superglobals.
