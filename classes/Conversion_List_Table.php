@@ -404,12 +404,9 @@ final class Conversion_List_Table extends WP_List_Table {
 		) ) . '</span>';
 
 		if ( $total_pages > 1 ) {
-			// Built as WP_List_Table::pagination() builds it; every link is
-			// escaped with esc_url() on output.
-			$current_url = remove_query_arg(
-				[ ...wp_removable_query_args(), 'count', 'jobs_deleted', 'jobs_processing' ],
-				set_url_scheme( 'http://' . ( $_SERVER['HTTP_HOST'] ?? '' ) . ( $_SERVER['REQUEST_URI'] ?? '' ) ),
-			);
+			// The current request's URL, as WordPress builds it without a URL
+			// argument; every link is escaped with esc_url() on output.
+			$current_url = remove_query_arg( [ ...wp_removable_query_args(), 'count', 'jobs_deleted', 'jobs_processing' ] );
 
 			$link = fn ( int $page, string $label, string $arrow ): string => sprintf(
 				'<a class="button" href="%s"><span class="screen-reader-text">%s</span><span aria-hidden="true">%s</span></a>',

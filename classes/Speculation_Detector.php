@@ -67,8 +67,8 @@ final class Speculation_Detector {
 		// Sec-Purpose is a token list: `prefetch` alone, or with parameters
 		// such as `prefetch;prerender` or `prefetch;anonymous-client-ip`.
 		// The older Purpose header carries the bare token.
-		$sec_purpose = strtolower( (string) ( $_SERVER['HTTP_SEC_PURPOSE'] ?? '' ) );
-		$purpose     = strtolower( trim( (string) ( $_SERVER['HTTP_PURPOSE'] ?? '' ) ) );
+		$sec_purpose = strtolower( sanitize_text_field( wp_unslash( (string) ( $_SERVER['HTTP_SEC_PURPOSE'] ?? '' ) ) ) );
+		$purpose     = strtolower( sanitize_text_field( wp_unslash( (string) ( $_SERVER['HTTP_PURPOSE'] ?? '' ) ) ) );
 
 		return str_contains( $sec_purpose, 'prefetch' ) || $purpose === 'prefetch';
 	}
