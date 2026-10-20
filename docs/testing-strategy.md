@@ -411,7 +411,7 @@ The most complex class. Tests cover the full click flow:
 - **Nonce verification** — invalid/missing nonce rejected.
 - **Tab extensibility** — `kntnt_ad_attr_admin_tabs` filter, custom tab dispatch via action.
 - **SRI attributes** — integrity/crossorigin on Select2, other handles unchanged.
-- **Conversion actions** — `run_conversion_action()` drives `add_screen_options()` with a request in `$_GET`, a fake `$wpdb` and `wp_safe_redirect`/`wp_die` throwing, and records nonces checked, statements run, conversions passed to the queue and the redirect. Delete runs one `DELETE … conversion_ref IN (…)` on conversions only and cleans up the jobs; Mark/Unmark run one `UPDATE clicks SET is_test = 1/0 WHERE id IN (SELECT click_id …)`, and only Mark cleans up jobs; a bulk action checks `bulk-conversions` and drops malformed and duplicate references; every row and bulk action is refused, with nothing written, without a valid nonce or without `kntnt_ad_attr`.
+- **Conversion actions** — `run_conversion_action()` drives `add_screen_options()` with a request in `$_GET`, a fake `$wpdb` and `wp_safe_redirect`/`wp_die` throwing, and records nonces checked, statements run, conversions passed to the queue and the redirect. Delete runs one `DELETE … conversion_ref IN (…)` on conversions only and cleans up the jobs; Mark/Unmark run one `UPDATE clicks SET is_test = 1/0 WHERE id IN (SELECT click_id …)`, and only Mark cleans up jobs; Mark cleans up, and Mark and Unmark count, every conversion on the flagged clicks (from a `get_col` of the conversions sharing those clicks); a bulk action checks `bulk-conversions` and drops malformed and duplicate references; every row and bulk action is refused, with nothing written, without a valid nonce or without `kntnt_ad_attr`.
 - **Conversions section** — rendered on the main view; the notice reports conversions and deleted jobs, with a warning for processing jobs left alone.
 
 ---
@@ -738,6 +738,7 @@ Uses the probe reporter, whose jobs are deferred a day so WP-Cron leaves them `p
 - Delete with a forged or missing nonce gets 403 and changes nothing. Delete removes the conversion's rows and its `pending` and `failed` jobs, keeps the click rows, its `done` and `processing` jobs and the other conversion's jobs, lowers the main view's conversions by one, returns to the same date range, and the notice reports the deleted jobs and the processing job left alone.
 - Mark as test flags the attributed click, deletes the pending job and removes the click and the conversion from the main view, its totals and the CSV export; the conversion stays listed, flagged, with Unmark. Unmark restores the numbers.
 - The bulk actions with the list's `bulk-conversions` nonce mark and unmark; a forged bulk nonce gets 403.
+- A second conversion on B's click: marking it as a test counts both conversions and deletes the unfinished jobs of both; Unmark counts both and clears the shared click's flag.
 - The capability refusal is covered by the unit tests: the Playground cookie store makes every request carry the admin login.
 
 ---

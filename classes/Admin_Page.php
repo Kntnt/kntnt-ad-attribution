@@ -716,7 +716,9 @@ final class Admin_Page {
 	 * Delete removes the conversions' rows and keeps their clicks. Mark as
 	 * test flags the conversions' attributed click rows as test clicks,
 	 * which removes the clicks and the conversions from the statistics;
-	 * Unmark clears the flag again. Delete and Mark as test also delete the
+	 * Unmark clears the flag again. The flag lives on the click, so Mark and
+	 * Unmark affect every conversion linked to those clicks, and the notice
+	 * counts them all. Delete and Mark as test also delete the affected
 	 * conversions' report jobs that have not reached the platform (pending
 	 * or failed); processing jobs are left alone and reported, done jobs
 	 * are untouched. Unmark leaves the jobs as they are.
@@ -747,7 +749,13 @@ final class Admin_Page {
 		$jobs  = [ 'deleted' => 0, 'processing' => 0 ];
 
 		if ( $refs !== [] ) {
-			$count = $this->count_conversions( $refs );
+
+			// Flagging a click flags every conversion linked to it, so those
+			// are the conversions Mark and Unmark affect. Mark must delete
+			// their unfinished jobs too, or a reporter without test support
+			// could still upload a conversion that is now a test.
+			$affected = $action === 'conversion_delete' ? $refs : $this->conversions_sharing_clicks( $refs );
+			$count    = $this->count_conversions( $affected );
 
 			match ( $action ) {
 				'conversion_delete'      => $this->delete_conversions( $refs ),
@@ -756,7 +764,7 @@ final class Admin_Page {
 			};
 
 			if ( $action !== 'conversion_unmark_test' ) {
-				$jobs = $this->queue->delete_unfinished_for_conversions( $refs );
+				$jobs = $this->queue->delete_unfinished_for_conversions( $affected );
 			}
 		}
 
@@ -821,6 +829,29 @@ final class Admin_Page {
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
 		return (int) $wpdb->get_var( $wpdb->prepare(
 			"SELECT COUNT(DISTINCT conversion_ref) FROM {$conv_table} WHERE conversion_ref IN ({$placeholders})",
+			...$refs,
+		) );
+	}
+
+	/**
+	 * Returns the conversions linked to any attributed click of the given conversions.
+	 *
+	 * The given conversions are included, as far as they exist.
+	 *
+	 * @param string[] $refs Conversion references.
+	 *
+	 * @return string[] References of the conversions sharing those clicks.
+	 * @since 1.10.0
+	 */
+	private function conversions_sharing_clicks( array $refs ): array {
+		global $wpdb;
+
+		$conv_table   = $wpdb->prefix . 'kntnt_ad_attr_conversions';
+		$placeholders = implode( ',', array_fill( 0, count( $refs ), '%s' ) );
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+		return $wpdb->get_col( $wpdb->prepare(
+			"SELECT DISTINCT conversion_ref FROM {$conv_table} WHERE click_id IN (SELECT click_id FROM {$conv_table} WHERE conversion_ref IN ({$placeholders}))",
 			...$refs,
 		) );
 	}

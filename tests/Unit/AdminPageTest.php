@@ -319,14 +319,15 @@ class AdminDieException extends \RuntimeException {}
  * it asked the queue to clean up, and the URL it redirected to, or the
  * exception that ended the request.
  *
- * @param bool  $nonce_ok Whether check_admin_referer() accepts the nonce.
- * @param bool  $can      Whether the user has the kntnt_ad_attr capability.
- * @param array $jobs     What Queue::delete_unfinished_for_conversions() returns.
- * @param int   $found    How many of the conversions exist.
+ * @param bool       $nonce_ok Whether check_admin_referer() accepts the nonce.
+ * @param bool       $can      Whether the user has the kntnt_ad_attr capability.
+ * @param array      $jobs     What Queue::delete_unfinished_for_conversions() returns.
+ * @param int|null   $found    How many of the conversions exist; null for all that the count query asks for.
+ * @param array|null $sharing  The conversions linked to the selected conversions' clicks, selected ones included; null for just the selected ones.
  *
  * @return \ArrayObject Recorded effects.
  */
-function run_conversion_action(bool $nonce_ok = true, bool $can = true, array $jobs = ['deleted' => 0, 'processing' => 0], int $found = 1): \ArrayObject {
+function run_conversion_action(bool $nonce_ok = true, bool $can = true, array $jobs = ['deleted' => 0, 'processing' => 0], ?int $found = null, ?array $sharing = null): \ArrayObject {
     [$page, $queue] = make_admin_page();
     $did = new \ArrayObject(['nonces' => [], 'statements' => [], 'cleaned' => [], 'redirect' => null, 'ended_by' => null]);
 
@@ -337,7 +338,12 @@ function run_conversion_action(bool $nonce_ok = true, bool $can = true, array $j
         $prepared[] = [$sql, $args];
         return count($prepared) - 1;
     });
-    $wpdb->shouldReceive('get_var')->andReturn((string) $found);
+    $wpdb->shouldReceive('get_var')->andReturnUsing(function ($token) use (&$prepared, $found) {
+        return (string) ($found ?? count($prepared[$token][1]));
+    });
+    $wpdb->shouldReceive('get_col')->andReturnUsing(function ($token) use (&$prepared, $sharing) {
+        return $sharing ?? $prepared[$token][1];
+    });
     $wpdb->shouldReceive('query')->andReturnUsing(function ($token) use (&$prepared, $did) {
         $did['statements'] = [...$did['statements'], $prepared[$token]];
         return 1;
@@ -433,6 +439,25 @@ describe('Admin_Page conversion actions', function () {
         expect($did['cleaned'])->toBe([['ref-1']]);
         expect($did['redirect'])->toContain('message=conversions-marked');
         expect($did['redirect'])->toContain('jobs_deleted=1');
+    });
+
+    it('deletes the unfinished jobs of every conversion on the clicks it marks, and counts them', function () {
+        $_GET = ['action' => 'conversion_mark_test', 'conversion' => 'ref-1'];
+
+        $did = run_conversion_action(jobs: ['deleted' => 2, 'processing' => 0], sharing: ['ref-1', 'ref-2']);
+
+        expect($did['cleaned'])->toBe([['ref-1', 'ref-2']]);
+        expect($did['redirect'])->toContain('count=2');
+        expect($did['redirect'])->toContain('jobs_deleted=2');
+    });
+
+    it('counts every conversion on the clicks it unmarks', function () {
+        $_GET = ['action' => 'conversion_unmark_test', 'conversion' => 'ref-1'];
+
+        $did = run_conversion_action(sharing: ['ref-1', 'ref-2']);
+
+        expect($did['cleaned'])->toBe([]);
+        expect($did['redirect'])->toContain('count=2');
     });
 
     it('unmarks a conversion\'s attributed clicks without touching its jobs', function () {

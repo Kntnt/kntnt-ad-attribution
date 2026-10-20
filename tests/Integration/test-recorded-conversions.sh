@@ -7,8 +7,9 @@
 # keeps its clicks and its done and processing jobs, and lowers the main
 # view's conversion count by one; that Mark as test removes the click and the
 # conversion from the main view, its totals and the CSV export, and Unmark
-# restores them; that the bulk actions work; and that an action without a
-# valid nonce is refused.
+# restores them; that the bulk actions work; that Mark as test deletes the
+# unfinished jobs of every conversion on the flagged click and counts them;
+# and that an action without a valid nonce is refused.
 #
 # The capability check is covered by the unit tests: the Playground cookie
 # store makes every request carry the admin login (see testing-strategy.md).
@@ -228,9 +229,34 @@ result=$(admin_get "${BULK_URL/conversion_mark_test/conversion_unmark_test}&_wpn
 assert_contains "$result" "message=conversions-unmarked" "Bulk Unmark redirects with its notice"
 assert_equals "0" "$(click_is_test "$REF_B")" "Bulk Unmark clears the flag"
 
+# --- 6. Mark as test covers every conversion on the flagged clicks ---
+
+# A second conversion by B's visitor after the same click, and an unfinished
+# job for B again (Mark as test deleted B's first one above).
+B_CLICKED_AT=$(query_db "SELECT c.clicked_at FROM wp_kntnt_ad_attr_clicks c JOIN wp_kntnt_ad_attr_conversions cv ON cv.click_id = c.id WHERE cv.conversion_ref = '${REF_B}'" | jq -r '.clicked_at')
+B_ENTRY="${HASH}:$(jq -rn --arg d "$B_CLICKED_AT" '$d | sub(" "; "T") + "Z" | fromdate')"
+clear_cookies
+trigger_conversion "$B_ENTRY" > /dev/null
+REF_B2=$(query_db "SELECT conversion_ref FROM wp_kntnt_ad_attr_conversions WHERE conversion_ref NOT IN ('${REF_A}', '${REF_B}') AND click_id = (SELECT click_id FROM wp_kntnt_ad_attr_conversions WHERE conversion_ref = '${REF_B}') LIMIT 1" | jq -r '.conversion_ref')
+execute_sql "INSERT INTO wp_kntnt_ad_attr_queue (reporter, payload, status, created_at, conversion_ref) VALUES ('probe', '{}', 'failed', '2026-01-01 00:00:00', '${REF_B}')" > /dev/null
+assert_equals "1" "$(count_jobs "$REF_B2" pending)" "The second conversion on B's click has a pending job"
+
+ROW_B2=$(conversion_row "$(conversion_list)" "$REF_B2")
+result=$(admin_get "$(action_url "$ROW_B2" conversion_mark_test)")
+assert_contains "$result" "count=2" "Mark as test counts both conversions on the click"
+assert_contains "$result" "jobs_deleted=2" "Mark as test reports the unfinished jobs of both conversions"
+assert_equals "0" "$(count_jobs "$REF_B2" pending)" "Mark as test removes the marked conversion's pending job"
+assert_equals "0" "$(count_jobs "$REF_B" failed)" "Mark as test removes the failed job of the other conversion on the click"
+notice_html=$(curl -sf -b "${ADMIN_COOKIE}" "${result#* }")
+assert_contains "$notice_html" "2 conversion(s) marked as test. 2 unfinished report job(s) deleted." "The notice counts both conversions and their jobs"
+
+result=$(admin_get "$(action_url "$(conversion_row "$(conversion_list)" "$REF_B2")" conversion_unmark_test)")
+assert_contains "$result" "count=2" "Unmark counts both conversions on the click"
+assert_equals "0" "$(click_is_test "$REF_B")" "Unmark clears the flag of the shared click"
+
 # --- Cleanup ---
 
-execute_sql "DELETE FROM wp_kntnt_ad_attr_queue WHERE conversion_ref IN ('${REF_A}', '${REF_B}')" > /dev/null
+execute_sql "DELETE FROM wp_kntnt_ad_attr_queue WHERE conversion_ref IN ('${REF_A}', '${REF_B}', '${REF_B2}')" > /dev/null
 reset_probes
 set_consent_state "default"
 clear_cookies
