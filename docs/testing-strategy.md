@@ -325,6 +325,7 @@ The most complex class. Tests cover the full click flow:
 - Database transaction with INSERT per attributed hash, rollback on error.
 - `_ad_last_conv` cookie set after success.
 - `kntnt_ad_attr_conversion_recorded` action fires with attributions and context.
+- Only recorded, positive-weight attributions reach the action and reporters, with click IDs and campaigns for those hashes only; nothing fires or is enqueued when no conversion row was written.
 - Reporter enqueueing (including payload structure), no-op when no reporters.
 
 ---

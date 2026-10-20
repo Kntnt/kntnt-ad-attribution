@@ -545,7 +545,7 @@ add_filter( 'kntnt_ad_attr_redirect_query_params', function ( array $merged, arr
 
 **`kntnt_ad_attr_attribution`**
 
-Filters the attribution weights for a conversion. Receives an associative array of hash => fractional value (default: 1.0 for the most recent click, 0.0 for all others) and an array of click data with timestamps. Must return an array where values sum to 1.0.
+Filters the attribution weights for a conversion. Receives an associative array of hash => fractional value (default: 1.0 for the most recent click, 0.0 for all others) and an array of click data with timestamps. Return weights that sum to 1.0. Only hashes with a weight above 0 and a matching click row are recorded, so the weights that `kntnt_ad_attr_conversion_recorded` and the reporters receive can sum to less.
 
 ```php
 // Example: time-weighted multi-click attribution.
@@ -679,13 +679,13 @@ do_action( 'kntnt_ad_attr_conversion' );
 
 **`kntnt_ad_attr_conversion_recorded`**
 
-Fires after a conversion has been successfully recorded. Receives the array of attributed hashes with their fractional values and a context array with metadata.
+Fires after a conversion has been successfully recorded, and only when at least one conversion row was written. Receives the recorded attributions and a context array with metadata.
 
 Parameters:
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `$attributions` | `array<string, float>` | Hash => fractional attribution value (sums to 1.0). |
+| `$attributions` | `array<string, float>` | Hash => fractional attribution value, for the recorded hashes only: each got a conversion row and has a weight above 0, passed as written. Not renormalised, so it can sum to less than 1.0 when a click row was missing. |
 | `$context` | `array` | Associative array with keys: `timestamp` (ISO 8601 UTC), `ip` (visitor IP), `user_agent` (visitor user-agent string). |
 
 ```php
@@ -716,7 +716,7 @@ The core handles sanitization, validation, and storage. Click IDs are stored in 
 
 A *conversion reporter* tells the core how to report a conversion to an external service. Each reporter defines two callbacks:
 
-- **`enqueue`** — called synchronously at conversion time. Receives attribution data, click IDs, campaign data, and context. Returns an array of structured items (with `payload`, optional `label`, optional `retry_params`, and optional `not_before` keys) to be queued for async processing.
+- **`enqueue`** — called synchronously at conversion time, only when at least one conversion row was written. Receives the recorded attributions, plus click IDs and campaign data for those hashes only, and context. Returns an array of structured items (with `payload`, optional `label`, optional `retry_params`, and optional `not_before` keys) to be queued for async processing.
 - **`process`** — called asynchronously by the queue processor. Receives a single payload and performs the actual API call. Returns `true` on success, `false` on failure.
 
 ```php
