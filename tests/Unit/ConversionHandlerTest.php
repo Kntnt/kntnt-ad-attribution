@@ -82,8 +82,8 @@ function setup_conversion_path(): array {
     $wpdb->shouldReceive('query')->with('COMMIT')->once();
 
     // Click lookups — only hash2 gets attribution (last-click default).
-    $wpdb->shouldReceive('prepare')->andReturn('SQL');
-    $wpdb->shouldReceive('get_var')->andReturn('42');
+    $wpdb->shouldReceive('prepare')->andReturn('SQL')->byDefault();
+    $wpdb->shouldReceive('get_var')->andReturn('42')->byDefault();
     $wpdb->shouldReceive('insert')->once()->andReturn(true);
 
     // $_SERVER for context.
@@ -930,6 +930,240 @@ describe('Conversion_Handler::handle_conversion()', function () {
         $handler->handle_conversion();
 
         expect(true)->toBeTrue();
+    });
+
+});
+
+// ─── Recorded attributions ───
+
+describe('Conversion_Handler::handle_conversion() recorded attributions', function () {
+
+    afterEach(function () {
+        unset($GLOBALS['wpdb']);
+        $_COOKIE = [];
+        unset($_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], $_SERVER['REQUEST_URI']);
+    });
+
+    it('passes only the last-click hash with weight 1.0 to the recorded action', function () {
+        [$handler, , , , , , , , , $hash2] = setup_conversion_path();
+
+        $received = null;
+        Actions\expectDone('kntnt_ad_attr_conversion_recorded')
+            ->once()
+            ->whenHappen(function ($attributions) use (&$received) {
+                $received = $attributions;
+            });
+
+        $handler->handle_conversion();
+
+        expect($received)->toBe([$hash2 => 1.0]);
+    });
+
+    it('passes only the last-click hash with weight 1.0 to reporters', function () {
+        [$handler, , , , $cis, $q, $qp, $wpdb, , $hash2] = setup_conversion_path();
+
+        $wpdb->shouldReceive('get_results')->andReturn([]);
+        Functions\when('home_url')->alias(fn ($path) => 'https://example.com' . $path);
+        $cis->shouldReceive('get_for_hashes')->andReturn([]);
+        $qp->shouldReceive('schedule')->once();
+
+        $received = null;
+        Filters\expectApplied('kntnt_ad_attr_conversion_reporters')
+            ->once()
+            ->andReturn([
+                'probe' => [
+                    'enqueue' => function ($attributions) use (&$received) {
+                        $received = $attributions;
+                        return [];
+                    },
+                ],
+            ]);
+
+        $handler->handle_conversion();
+
+        expect($received)->toBe([$hash2 => 1.0]);
+    });
+
+    it('notifies nobody when no click row matches any hash', function () {
+        [$handler, $cm, , , $cis, $q, $qp] = make_conversion_handler();
+
+        $hash_a = TestFactory::hash('orphan-a');
+        $hash_b = TestFactory::hash('orphan-b');
+        $now    = 1700000000;
+
+        Functions\when('time')->justReturn($now);
+        Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
+
+        $cm->shouldReceive('parse')->with('_ad_clicks')->once()->andReturn([
+            $hash_a => $now - 7200,
+            $hash_b => $now - 3600,
+        ]);
+
+        \Patchwork\redefine(
+            'Kntnt\Ad_Attribution\Post_Type::get_valid_hashes',
+            fn (array $hashes) => $hashes,
+        );
+
+        // Dedup enabled, so a dedup cookie would be written if anything were recorded.
+        Filters\expectApplied('kntnt_ad_attr_dedup_seconds')->andReturn(3600);
+        $cm->shouldReceive('parse')->with('_ad_last_conv')->andReturn([]);
+
+        $wpdb = TestFactory::wpdb();
+        $GLOBALS['wpdb'] = $wpdb;
+        $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
+        $wpdb->shouldReceive('query')->with('COMMIT')->once();
+        $wpdb->shouldReceive('prepare')->andReturn('SQL');
+        $wpdb->shouldReceive('get_var')->andReturn(null);
+        $wpdb->shouldNotReceive('insert');
+
+        $_SERVER['REMOTE_ADDR']     = '127.0.0.1';
+        $_SERVER['HTTP_USER_AGENT'] = 'TestAgent';
+        $_SERVER['REQUEST_URI']     = '/';
+
+        Functions\when('home_url')->alias(fn ($path) => 'https://example.com' . $path);
+        $wpdb->shouldReceive('get_results')->andReturn([]);
+        $cis->shouldReceive('get_for_hashes')->andReturn([]);
+        $qp->shouldReceive('schedule');
+
+        $enqueue_called = false;
+        Filters\expectApplied('kntnt_ad_attr_conversion_reporters')
+            ->andReturn([
+                'probe' => [
+                    'enqueue' => function () use (&$enqueue_called) {
+                        $enqueue_called = true;
+                        return [];
+                    },
+                ],
+            ]);
+
+        Actions\expectDone('kntnt_ad_attr_conversion_recorded')->never();
+        $cm->shouldNotReceive('set_dedup_cookie');
+        $q->shouldNotReceive('enqueue');
+
+        $handler->handle_conversion();
+
+        expect($enqueue_called)->toBeFalse();
+    });
+
+    it('passes the written weight unchanged when another hash has no click row', function () {
+        [$handler, $cm, , , $cis, $q, $qp] = make_conversion_handler();
+
+        $hash_a = TestFactory::hash('split-a');
+        $hash_b = TestFactory::hash('split-b');
+        $now    = 1700000000;
+
+        Functions\when('time')->justReturn($now);
+        Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
+
+        $cm->shouldReceive('parse')->with('_ad_clicks')->once()->andReturn([
+            $hash_a => $now - 7200,
+            $hash_b => $now - 3600,
+        ]);
+
+        \Patchwork\redefine(
+            'Kntnt\Ad_Attribution\Post_Type::get_valid_hashes',
+            fn (array $hashes) => $hashes,
+        );
+
+        Filters\expectApplied('kntnt_ad_attr_attribution')
+            ->once()
+            ->andReturn([$hash_a => 0.5, $hash_b => 0.5]);
+
+        $wpdb = TestFactory::wpdb();
+        $GLOBALS['wpdb'] = $wpdb;
+        $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
+        $wpdb->shouldReceive('query')->with('COMMIT')->once();
+
+        // Only hash A has a click row: the prepared lookup carries the hash
+        // as its first argument, so the fake answers per hash.
+        $wpdb->shouldReceive('prepare')->andReturnUsing(fn ($sql, ...$args) => $args[0] ?? $sql);
+        $wpdb->shouldReceive('get_var')->andReturnUsing(fn ($query) => $query === $hash_a ? '42' : null);
+        $wpdb->shouldReceive('insert')->once()->andReturn(true);
+        $wpdb->shouldReceive('get_results')->andReturn([]);
+
+        $_SERVER['REMOTE_ADDR']     = '127.0.0.1';
+        $_SERVER['HTTP_USER_AGENT'] = 'TestAgent';
+        $_SERVER['REQUEST_URI']     = '/';
+
+        Functions\when('home_url')->alias(fn ($path) => 'https://example.com' . $path);
+        $cis->shouldReceive('get_for_hashes')->andReturn([]);
+        $qp->shouldReceive('schedule')->once();
+
+        $action_received = null;
+        Actions\expectDone('kntnt_ad_attr_conversion_recorded')
+            ->once()
+            ->whenHappen(function ($attributions) use (&$action_received) {
+                $action_received = $attributions;
+            });
+
+        $reporter_received = null;
+        Filters\expectApplied('kntnt_ad_attr_conversion_reporters')
+            ->once()
+            ->andReturn([
+                'probe' => [
+                    'enqueue' => function ($attributions) use (&$reporter_received) {
+                        $reporter_received = $attributions;
+                        return [];
+                    },
+                ],
+            ]);
+
+        $handler->handle_conversion();
+
+        expect($action_received)->toBe([$hash_a => 0.5])
+            ->and($reporter_received)->toBe([$hash_a => 0.5]);
+    });
+
+    it('passes click IDs and campaigns for recorded hashes only', function () {
+        [$handler, , , , $cis, $q, $qp, $wpdb, $hash1, $hash2] = setup_conversion_path();
+
+        // Fake stores that answer for whichever hashes they are asked about.
+        $cis->shouldReceive('get_for_hashes')->andReturnUsing(
+            fn (array $hashes) => array_fill_keys($hashes, ['google_ads' => ['id' => 'gclid', 'captured_at' => 1]]),
+        );
+
+        $prepared = [];
+        $wpdb->shouldReceive('prepare')->andReturnUsing(function ($sql, ...$args) use (&$prepared) {
+            $prepared[] = $args;
+            return count($prepared) - 1;
+        });
+        $wpdb->shouldReceive('get_results')->andReturnUsing(function ($query) use (&$prepared, $hash1, $hash2) {
+            $rows = [];
+            foreach (array_intersect([$hash1, $hash2], $prepared[$query]) as $hash) {
+                $rows[] = (object) [
+                    'hash'                => $hash,
+                    'meta_key'            => '_utm_source',
+                    'meta_value'          => 'google',
+                    'utm_content'         => 'c',
+                    'utm_term'            => 't',
+                    'utm_id'              => 'i',
+                    'utm_source_platform' => 'p',
+                ];
+            }
+            return $rows;
+        });
+
+        Functions\when('home_url')->alias(fn ($path) => 'https://example.com' . $path);
+        $qp->shouldReceive('schedule')->once();
+
+        $received_click_ids = null;
+        $received_campaigns = null;
+        Filters\expectApplied('kntnt_ad_attr_conversion_reporters')
+            ->once()
+            ->andReturn([
+                'probe' => [
+                    'enqueue' => function ($attributions, $click_ids, $campaigns) use (&$received_click_ids, &$received_campaigns) {
+                        $received_click_ids = $click_ids;
+                        $received_campaigns = $campaigns;
+                        return [];
+                    },
+                ],
+            ]);
+
+        $handler->handle_conversion();
+
+        expect(array_keys($received_click_ids))->toBe([$hash2])
+            ->and(array_keys($received_campaigns))->toBe([$hash2]);
     });
 
 });
