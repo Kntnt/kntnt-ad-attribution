@@ -409,6 +409,11 @@ final class Campaign_List_Table extends WP_List_Table {
 		}
 
 		// Date filter in JOIN condition so zero-click URLs still appear.
+		// Test clicks are excluded in the same JOIN condition, and with them
+		// their conversions (joined through cv.click_id). This is the one
+		// place that keeps test traffic out of the main view, its totals and
+		// the CSV export, so flagging a click row as a test is all it takes
+		// to remove the click and its conversions from all three.
 		$from_where .= "
 			LEFT JOIN {$wpdb->postmeta} pm_src
 				ON pm_src.post_id = p.ID AND pm_src.meta_key = '_utm_source'
@@ -417,7 +422,7 @@ final class Campaign_List_Table extends WP_List_Table {
 			LEFT JOIN {$wpdb->postmeta} pm_camp
 				ON pm_camp.post_id = p.ID AND pm_camp.meta_key = '_utm_campaign'
 			LEFT JOIN {$clicks_table} c
-				ON c.hash = pm_hash.meta_value AND c.clicked_at BETWEEN %s AND %s
+				ON c.hash = pm_hash.meta_value AND c.clicked_at BETWEEN %s AND %s AND c.is_test = 0
 			LEFT JOIN {$conv_table} cv
 				ON cv.click_id = c.id
 			WHERE p.post_type = %s AND p.post_status = 'publish'";

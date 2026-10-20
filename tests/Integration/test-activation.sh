@@ -29,6 +29,10 @@ assert_contains "$clicks_sql" '"utm_content"' "Clicks table has utm_content colu
 assert_contains "$clicks_sql" '"utm_term"' "Clicks table has utm_term column"
 assert_contains "$clicks_sql" '"utm_id"' "Clicks table has utm_id column"
 assert_contains "$clicks_sql" '"utm_source_platform"' "Clicks table has utm_source_platform column"
+# Added by ALTER TABLE in 1.10.0, so SQLite lists it unquoted in the CREATE
+# statement; ask the table itself.
+is_test_columns=$(query_db "SELECT COUNT(*) AS cnt FROM pragma_table_info('wp_kntnt_ad_attr_clicks') WHERE name = 'is_test'" | jq -r '.cnt')
+assert_equals "1" "$is_test_columns" "Clicks table has is_test column"
 
 # --- Conversions table schema ---
 

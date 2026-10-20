@@ -99,6 +99,19 @@ rerun_count=$(query_db "SELECT COUNT(*) AS cnt FROM wp_kntnt_ad_attr_click_ids W
 assert_equals "1" "$rerun_count" "Re-run: existing per-click rows survive"
 execute_sql "DELETE FROM wp_kntnt_ad_attr_click_ids WHERE value = 'RERUN'" > /dev/null
 
+# --- Clicks carry a test flag (1.10.0), added once however often it runs ---
+
+# The fresh install and the two re-runs above have all run the 1.10.0 file.
+is_test_columns=$(query_db "SELECT COUNT(*) AS cnt FROM pragma_table_info('wp_kntnt_ad_attr_clicks') WHERE name = 'is_test'" | jq -r '.cnt')
+assert_equals "1" "$is_test_columns" "clicks.is_test exists exactly once after re-runs"
+
+# A row written without the flag, as by older code, is a real click.
+flag_hash=$(openssl rand -hex 32)
+execute_sql "INSERT INTO wp_kntnt_ad_attr_clicks (hash, clicked_at) VALUES ('${flag_hash}', '2026-01-01 00:00:00')" > /dev/null
+flag_default=$(query_db "SELECT is_test FROM wp_kntnt_ad_attr_clicks WHERE hash = '${flag_hash}'" | jq -r '.is_test')
+assert_equals "0" "$flag_default" "clicks.is_test defaults to 0 (a real click)"
+execute_sql "DELETE FROM wp_kntnt_ad_attr_clicks WHERE hash = '${flag_hash}'" > /dev/null
+
 # --- Queue table has status column with default ---
 
 queue_sql=$(query_db "SELECT sql FROM sqlite_master WHERE type='table' AND name='wp_kntnt_ad_attr_queue'" | jq -r '.sql')

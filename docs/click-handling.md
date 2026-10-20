@@ -12,16 +12,17 @@ The click handler is registered on `template_redirect` — the conventional hook
 5. If CPT post_status ≠ publish → 404
 6. Resolve target URL: get_permalink( $target_post_id )
 7. If target URL not found → 404
-7b. Forward query parameters: merge incoming request params with target URL params (target wins on collision), filter via `kntnt_ad_attr_redirect_query_params`
+7b. Forward query parameters: merge incoming request params with target URL params (target wins on collision), filter via `kntnt_ad_attr_redirect_query_params`. The test parameter `kntnt_ad_attr_test` is removed first and never forwarded
 8. Redirect loop guard: verify that target URL does not start with /<prefix>/
 9. Bot check: if is_bot() → redirect without recording a click or setting a cookie                       [outcome: bot]
 9b. Speculative check: if is_speculative() → 503 with no-cache headers, no redirect, nothing recorded      [outcome: speculative]
+9c. Internal check: if not a test click and is_internal() → redirect without recording anything, like a bot   [outcome: internal]
 10. Check consent
 10a. Read platform click IDs from the request via registered kntnt_ad_attr_click_id_capturers
-10b. Repeat check: if any of them is already recorded on a click of this tracking URL → resolve to the original click, handle consent for it, redirect (skip insert)   [outcome: repeat]
-10c. Click deduplication: if consent=true and dedup_seconds>0 and hash in cookie within window and a click row matches the entry → re-send cookie with the original timestamp, redirect (skip insert)   [outcome: deduplicated]
+10b. Repeat check (skipped for a test click): if any of them is already recorded on a click of this tracking URL → resolve to the original click, handle consent for it, redirect (skip insert)   [outcome: repeat]
+10c. Click deduplication (skipped for a test click): if consent=true and dedup_seconds>0 and hash in cookie within window and a click row matches the entry → re-send cookie with the original timestamp, redirect (skip insert)   [outcome: deduplicated]
 11. Extract per-click UTM fields (Content, Term, Id, Group) from incoming parameters
-11b. Insert click record into kntnt_ad_attr_clicks table
+11b. Insert click record into kntnt_ad_attr_clicks table, with is_test = 1 for a test click
 11c. Store the captured click IDs, keyed by the inserted click row's ID (skipped if the insert failed)
 11d. Populate empty postmeta fields (Source, Medium, Campaign only) from incoming UTM/MTM query parameters
 11e. Fire kntnt_ad_attr_click action (hash, target URL, campaign data) — allows companion plugins to capture platform-specific parameters (e.g. gclid)
@@ -29,7 +30,7 @@ The click handler is registered on `template_redirect` — the conventional hook
 13. Redirect to target URL                                                                                [outcome: recorded]
 ```
 
-Every request that gets past step 8 writes one diagnostic log line, with the outcome shown in brackets, just before its response (see [Diagnostic Log Line](#diagnostic-log-line)).
+A **test click** is a request with `kntnt_ad_attr_test=1` (see [Test Clicks](#test-clicks)). Every request that gets past step 8 writes one diagnostic log line, with the outcome shown in brackets, just before its response (see [Diagnostic Log Line](#diagnostic-log-line)).
 
 ## Counting Rules
 
@@ -41,11 +42,12 @@ The handler classifies each request for a published tracking URL with a valid ta
 |---|---|---|---|---|
 | 1 | **Bot** | `kntnt_ad_attr_is_bot` (User-Agent signatures, see [Bot Detection](#bot-detection)) | 302 redirect with query forwarding | Nothing |
 | 2 | **Speculative request** | `kntnt_ad_attr_is_speculative` (`Sec-Purpose` contains `prefetch`, or `Purpose: prefetch`) | 503, no-cache headers, no redirect | Nothing |
-| 3 | **Repeat** | A platform click ID in the request is already recorded on a click of this tracking URL | 302 redirect with query forwarding | No click row or click ID; the cookie or transport refers to the original click |
-| 4 | **Duplicate** | Click deduplication (opt-in, consent required; see [Click Deduplication](#click-deduplication)) | 302 redirect with query forwarding | No click row; the cookie entry keeps its click |
-| 5 | **Click** | None of the above | 302 redirect with query forwarding | Click row, click IDs, `kntnt_ad_attr_click`, cookie or transport per consent |
+| 3 | **Internal request** | `kntnt_ad_attr_is_internal` (a logged-in user with `kntnt_ad_attr`); never matches a test click | 302 redirect with query forwarding | Nothing |
+| 4 | **Repeat** | A platform click ID in the request is already recorded on a click of this tracking URL | 302 redirect with query forwarding | No click row or click ID; the cookie or transport refers to the original click |
+| 5 | **Duplicate** | Click deduplication (opt-in, consent required; see [Click Deduplication](#click-deduplication)) | 302 redirect with query forwarding | No click row; the cookie entry keeps its click |
+| 6 | **Click** | None of the above | 302 redirect with query forwarding | Click row (`is_test = 1` for a test click), click IDs, `kntnt_ad_attr_click`, cookie or transport per consent |
 
-Bots come first because nothing about their requests is worth recording. Speculative requests come next because declining them must not depend on consent or on what was recorded before. The repeat check precedes deduplication because it works without consent and resolves to a specific earlier click.
+Bots come first because nothing about their requests is worth recording. Speculative requests come next because declining them must not depend on consent or on what was recorded before. Internal requests follow, so that staff checking their own ads leave no trace. The repeat check precedes deduplication because it works without consent and resolves to a specific earlier click. A test click skips the internal, repeat and deduplication checks: it always gets its own click row, flagged as a test.
 
 ### Click
 
@@ -81,9 +83,23 @@ The handler declines it with a non-2xx, non-redirect, uncacheable response (503 
 
 Detection runs through the `kntnt_ad_attr_is_speculative` filter, which works like `kntnt_ad_attr_is_bot`: `Speculation_Detector` registers the default header check, and other callbacks can add signals or overrule it.
 
+### Internal request
+
+A request from a logged-in user who can manage ad attribution (`kntnt_ad_attr`, granted to administrators and editors) is internal traffic. It is handled like a bot: redirected with query forwarding, with no click row, click ID, cookie, transport or `kntnt_ad_attr_click`. Detection runs through the `kntnt_ad_attr_is_internal` filter; `Internal_Detector` registers the default, which checks the current user and validates the logged-in cookie. Sites switch it off with `add_filter( 'kntnt_ad_attr_is_internal', '__return_false', PHP_INT_MAX )` or extend it, for example by IP. A test click is never internal.
+
 ### Not covered
 
 Link-preview fetchers and security scanners that use browser User-Agents and send no purpose header are counted as clicks; there is no reliable signal for them. The [diagnostic log line](#diagnostic-log-line) records the headers needed to study what remains.
+
+## Test Clicks
+
+A request to a tracking URL with the query parameter `kntnt_ad_attr_test=1` (`Click_Handler::TEST_PARAM`) is a **test click**, whether the visitor is internal or not. It is processed like any click (bot and speculative checks, consent, cookie or transport, click-ID capture, `kntnt_ad_attr_click`), with three differences:
+
+- Its click row gets `is_test = 1`. The main view, its totals and the CSV export leave test clicks out, and with them every conversion linked to them (see [admin-ui.md](admin-ui.md)).
+- It is never internal, never a [repeat](#repeat) and never a [duplicate](#duplicate). Resolving it to an earlier ordinary click would leave no test row, and the conversion that follows would be reported as real.
+- The parameter is removed before query forwarding, so the landing page never sees it.
+
+A conversion linked to a test click is a test conversion (see [conversion-handling.md](conversion-handling.md#internal-traffic-and-test-conversions)). See the README section *Testing a live setup* for the end-to-end steps.
 
 ## Click Deduplication
 
@@ -254,13 +270,14 @@ All redirect responses shall include `nocache_headers()` to prevent caching.
 When logging is enabled (Tools → Ad Attribution → Logging), every request to a tracking URL that gets past the redirect loop guard writes exactly one line through `Logger::info( 'CORE', … )`, just before its response:
 
 ```
-[2026-10-20 14:03:11+02:00][CORE][INFO] Tracking URL request: outcome=repeat hash=3f9a1c0b sec_purpose="" purpose="" user_agent="Mozilla/5.0 (Macintosh; …) Chrome/141.0.0.0 Safari/537.36"
+[2026-10-20 14:03:11+02:00][CORE][INFO] Tracking URL request: outcome=repeat hash=3f9a1c0b test=0 sec_purpose="" purpose="" user_agent="Mozilla/5.0 (Macintosh; …) Chrome/141.0.0.0 Safari/537.36"
 ```
 
 | Field | Value |
 |---|---|
-| `outcome` | `recorded`, `repeat`, `deduplicated`, `speculative` or `bot` |
+| `outcome` | `recorded`, `repeat`, `deduplicated`, `speculative`, `bot` or `internal` |
 | `hash` | The first 8 characters of the tracking URL's hash |
+| `test` | `1` for a test click (`kntnt_ad_attr_test=1`), otherwise `0` |
 | `sec_purpose`, `purpose`, `user_agent` | The raw `Sec-Purpose`, `Purpose` and `User-Agent` request headers, sanitized (no line breaks) and quoted; `""` when absent |
 
 The line holds no IP address. With logging disabled, nothing is written. Requests that end in a 404 (unknown or unpublished hash, missing target, redirect loop) write no line.

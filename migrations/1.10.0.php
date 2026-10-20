@@ -1,6 +1,6 @@
 <?php
 /**
- * Migration 1.10.0 — Per-click click IDs.
+ * Migration 1.10.0 — Per-click click IDs and the test flag on click rows.
  *
  * Every section in this file must be safe to run more than once. The
  * Migrator records only the version reached, not which files or sections
@@ -60,5 +60,18 @@ return function ( \wpdb $wpdb ): void {
 		PRIMARY KEY (click_id, platform),
 		INDEX idx_platform_value (platform, value(100))
 	) {$charset}" );
+
+	// ─── Test flag on click rows ───
+
+	// A test click (tracking URL requested with kntnt_ad_attr_test=1) is
+	// recorded like any other but flagged, and a conversion inherits the
+	// flag through its click. Existing clicks are real clicks, hence the
+	// default. The column is added only when missing, so a re-run is a no-op.
+	$clicks_table   = $wpdb->prefix . 'kntnt_ad_attr_clicks';
+	$clicks_columns = $columns_of( $clicks_table );
+
+	if ( $clicks_columns !== [] && ! in_array( 'is_test', $clicks_columns, true ) ) {
+		$wpdb->query( "ALTER TABLE {$clicks_table} ADD COLUMN is_test TINYINT(1) NOT NULL DEFAULT 0" );
+	}
 
 };

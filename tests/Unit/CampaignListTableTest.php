@@ -825,3 +825,89 @@ describe('Campaign_List_Table::get_totals()', function () {
     });
 
 });
+
+// ─── Test clicks ───
+
+/**
+ * Returns the ON condition of the clicks JOIN in a captured query: the text
+ * between the clicks JOIN and the conversions JOIN.
+ *
+ * Conditions there filter which clicks (and, through cv.click_id, which
+ * conversions) are counted, while zero-click tracking URLs still appear.
+ *
+ * @param string $sql Captured SQL.
+ *
+ * @return string The clicks JOIN condition, or '' if the query has none.
+ */
+function clicks_join_condition(string $sql): string {
+    return preg_match('/LEFT JOIN wp_kntnt_ad_attr_clicks c\s+ON(.*?)LEFT JOIN wp_kntnt_ad_attr_conversions/s', $sql, $m) ? $m[1] : '';
+}
+
+/**
+ * Captures the SQL passed to $wpdb->prepare() while the callback runs.
+ *
+ * @param callable $run Callback that runs the query, given the wpdb mock.
+ *
+ * @return string[] Captured SQL statements.
+ */
+function capture_list_table_sql(callable $run): array {
+    $wpdb = TestFactory::wpdb();
+    $GLOBALS['wpdb'] = $wpdb;
+
+    $captured_sql = [];
+    $wpdb->shouldReceive('esc_like')->andReturnArg(0);
+    $wpdb->shouldReceive('prepare')->andReturnUsing(function ($sql) use (&$captured_sql) {
+        $captured_sql[] = $sql;
+        return 'SQL';
+    });
+
+    $run($wpdb);
+
+    return $captured_sql;
+}
+
+describe('Campaign_List_Table test clicks', function () {
+
+    beforeEach(function () {
+        stub_default_dates();
+    });
+
+    afterEach(function () {
+        unset($GLOBALS['wpdb']);
+        $_GET = [];
+    });
+
+    it('leaves test clicks and their conversions out of the main view', function () {
+        $captured_sql = capture_list_table_sql(function ($wpdb) {
+            $wpdb->shouldReceive('get_var')->andReturn(0);
+            $wpdb->shouldReceive('get_results')->andReturn([]);
+            (new Campaign_List_Table())->prepare_items();
+        });
+
+        $item_queries = array_filter($captured_sql, fn ($sql) => str_contains($sql, 'GROUP BY'));
+
+        expect($item_queries)->not->toBeEmpty();
+        foreach ($item_queries as $sql) {
+            expect(clicks_join_condition($sql))->toContain('c.is_test = 0');
+        }
+    });
+
+    it('leaves test clicks and their conversions out of the totals', function () {
+        $captured_sql = capture_list_table_sql(function ($wpdb) {
+            $wpdb->shouldReceive('get_row')->once()->andReturn(null);
+            (new Campaign_List_Table())->get_totals();
+        });
+
+        expect(clicks_join_condition($captured_sql[0]))->toContain('c.is_test = 0');
+    });
+
+    it('leaves test clicks and their conversions out of the CSV export', function () {
+        $captured_sql = capture_list_table_sql(function ($wpdb) {
+            $wpdb->shouldReceive('get_results')->once()->andReturn([]);
+            (new Campaign_List_Table())->fetch_all_items();
+        });
+
+        expect(clicks_join_condition($captured_sql[0]))->toContain('c.is_test = 0');
+    });
+
+});

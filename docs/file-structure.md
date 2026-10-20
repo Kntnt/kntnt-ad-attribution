@@ -23,6 +23,7 @@ kntnt-ad-attribution/
 │   ├── Consent.php               ← Three-state consent check logic
 │   ├── Bot_Detector.php          ← User-Agent filtering, robots.txt rule
 │   ├── Speculation_Detector.php  ← Prefetch/prerender detection (Sec-Purpose, Purpose)
+│   ├── Internal_Detector.php     ← Internal traffic detection (logged-in staff)
 │   ├── Rest_Endpoint.php         ← REST API (set-cookie with rate limiting, search-posts)
 │   ├── Admin_Page.php            ← Tools page with merged view, URL CRUD, CSV export
 │   ├── Campaign_List_Table.php   ← WP_List_Table for campaign reporting
@@ -40,7 +41,7 @@ kntnt-ad-attribution/
 │   ├── 1.5.0.php                 ← Clicks + conversions tables, drops stats
 │   ├── 1.8.0.php                 ← Per-job retry columns and index on queue table
 │   ├── 1.9.0.php                 ← Deferred processing (not_before, last_attempt_at) columns
-│   └── 1.10.0.php                ← Click-ID table keyed by click row (replaces the per-hash table)
+│   └── 1.10.0.php                ← Click-ID table keyed by click row (replaces the per-hash table), clicks.is_test
 ├── js/
 │   ├── pending-consent.js        ← Client-side: pending consent, sessionStorage, REST call
 │   └── admin.js                  ← Admin: select2, page selector, UTM field auto-fill

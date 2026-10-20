@@ -90,6 +90,14 @@ final class Plugin {
 	public readonly Speculation_Detector $speculation_detector;
 
 	/**
+	 * Internal traffic detector component instance.
+	 *
+	 * @var Internal_Detector
+	 * @since 1.10.0
+	 */
+	public readonly Internal_Detector $internal_detector;
+
+	/**
 	 * Click handler component instance.
 	 *
 	 * @var Click_Handler
@@ -220,6 +228,7 @@ final class Plugin {
 		$this->consent              = new Consent();
 		$this->bot_detector         = new Bot_Detector();
 		$this->speculation_detector = new Speculation_Detector();
+		$this->internal_detector    = new Internal_Detector();
 		$this->click_id_store       = new Click_ID_Store();
 		$this->queue                = new Queue( $this->settings );
 		$this->queue_processor      = new Queue_Processor( $this->queue, $this->logger );
@@ -434,6 +443,9 @@ final class Plugin {
 
 		// Register speculative-request (prefetch/prerender) detection.
 		$this->speculation_detector->register();
+
+		// Register the default internal traffic detection (logged-in staff).
+		$this->internal_detector->register();
 
 		// Register rewrite rule, query var, and click handler.
 		$this->click_handler->register();

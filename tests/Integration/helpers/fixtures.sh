@@ -158,13 +158,41 @@ reset_probe_calls() {
     set_option "test_probe_calls" ""
 }
 
-# Switch off the probe capturers and reporter and forget recorded calls.
-# Call at the end of every suite that uses them.
+# Switch the probe listener on kntnt_ad_attr_conversion_recorded (see
+# test-helpers.php).
+# Usage: set_probe_recorded on|off
+set_probe_recorded() {
+    local mode="$1"
+    [[ "$mode" == "off" ]] && mode=""
+    set_option "test_probe_recorded" "$mode"
+}
+
+# Print every kntnt_ad_attr_conversion_recorded call the probe listener saw,
+# as a JSON array with one {attributions, context} object per call.
+# Usage: get_recorded_calls
+get_recorded_calls() {
+    get_option "test_probe_recorded_calls" | jq -c '.value | if type == "array" then . else [] end'
+}
+
+# Switch off the probe capturers, reporter and listener, and forget their
+# recorded calls. Call at the end of every suite that uses them.
 # Usage: reset_probes
 reset_probes() {
     set_probe_capturers ""
     set_probe_reporter "off"
     reset_probe_calls
+    set_probe_recorded "off"
+    set_option "test_probe_recorded_calls" ""
+}
+
+# Switch the plugin's default internal-traffic detection on or off. The test
+# environment keeps it off (see test-helpers.php) because suites trigger
+# conversions as the logged-in admin.
+# Usage: set_internal_default on|off
+set_internal_default() {
+    local mode="$1"
+    [[ "$mode" == "off" ]] && mode=""
+    set_option "test_internal_default" "$mode"
 }
 
 # Switch the plugin's diagnostic logging (see test-helpers.php).
@@ -317,6 +345,21 @@ trigger_conversion() {
         -H "X-WP-Nonce: ${WP_NONCE}" \
         -b "${ADMIN_COOKIE}" \
         -d "$payload"
+}
+
+# Trigger a conversion in a REST request that carries the admin's logged-in
+# cookie but no nonce, like a form plugin submitting through the REST API.
+# WordPress resets the current user to 0 in such a request.
+# Usage: trigger_conversion_without_nonce <ad_clicks_cookie_value>
+# Returns: JSON with success and set_cookies
+trigger_conversion_without_nonce() {
+    local ad_clicks="${1:-}"
+
+    curl -sf "${WP_BASE_URL}/?rest_route=/kntnt-ad-attribution/v1/test-trigger-conversion-public" \
+        -X POST \
+        -H "Content-Type: application/json" \
+        -b "${ADMIN_COOKIE}" \
+        -d "$(jq -n --arg ad_clicks "$ad_clicks" '{ad_clicks: $ad_clicks}')"
 }
 
 # Delete a transient.

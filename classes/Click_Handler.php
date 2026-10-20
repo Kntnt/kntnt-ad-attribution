@@ -27,6 +27,18 @@ namespace Kntnt\Ad_Attribution;
 final class Click_Handler {
 
 	/**
+	 * Query parameter that makes a tracking-URL request a test click.
+	 *
+	 * A test click is processed like any other click, but its click row is
+	 * flagged as a test, so it and its conversions stay out of the
+	 * statistics and away from reporters that do not support tests.
+	 *
+	 * @var string
+	 * @since 1.10.0
+	 */
+	public const TEST_PARAM = 'kntnt_ad_attr_test';
+
+	/**
 	 * Number of leading hash characters written to the diagnostic log.
 	 *
 	 * Enough to tell tracking URLs apart, without writing the full
@@ -155,9 +167,11 @@ final class Click_Handler {
 	 *
 	 * Implements the click flow: hash extraction → validation → database
 	 * lookup → target resolution → loop guard → bot check → speculative
-	 * check → consent check → repeat check → deduplication → click
-	 * recording → cookie/transport → redirect. Each check that ends the
-	 * request records no click; see docs/click-handling.md, "Counting rules".
+	 * check → internal-traffic check → consent check → repeat check →
+	 * deduplication → click recording → cookie/transport → redirect. Each
+	 * check that ends the request records no click; see docs/click-handling.md,
+	 * "Counting rules". A test click skips the internal-traffic, repeat and
+	 * deduplication checks and is recorded with its test flag set.
 	 *
 	 * @return void
 	 * @since 1.0.0
@@ -208,8 +222,11 @@ final class Click_Handler {
 		// Forward incoming query parameters to the target URL. Target URL
 		// parameters take precedence over incoming ones so that the site
 		// owner's configuration cannot be overridden by the ad platform.
+		// The test parameter is the plugin's own and never reaches the
+		// landing page.
+		$is_test_click   = sanitize_text_field( $_GET[ self::TEST_PARAM ] ?? '' ) === '1';
 		$incoming_params = array_map( 'sanitize_text_field', $_GET );
-		unset( $incoming_params['kntnt_ad_attr_hash'] );
+		unset( $incoming_params['kntnt_ad_attr_hash'], $incoming_params[ self::TEST_PARAM ] );
 
 		$target_query  = wp_parse_url( $target_url, PHP_URL_QUERY ) ?? '';
 		$target_params = [];
@@ -246,7 +263,7 @@ final class Click_Handler {
 
 		// Step 9: Bot check — bots get redirected without a click row or cookies.
 		if ( $this->bot_detector->is_bot() ) {
-			$this->log_request( 'bot', $hash );
+			$this->log_request( 'bot', $hash, $is_test_click );
 			$this->redirect( $target_url );
 		}
 
@@ -255,8 +272,16 @@ final class Click_Handler {
 		// makes the browser discard it, so a real click that follows reaches
 		// the server as a fresh request and is counted once.
 		if ( $this->speculation_detector->is_speculative() ) {
-			$this->log_request( 'speculative', $hash );
+			$this->log_request( 'speculative', $hash, $is_test_click );
 			$this->decline_speculative();
+		}
+
+		// Internal traffic (e.g. logged-in staff) is handled like a bot, so
+		// checking the site's own ads leaves no trace. A test click is the
+		// exception: it is how staff test the setup end to end.
+		if ( ! $is_test_click && Internal_Detector::is_internal() ) {
+			$this->log_request( 'internal', $hash, $is_test_click );
+			$this->redirect( $target_url );
 		}
 
 		// Capture the current time once for consistent timestamps across
@@ -274,25 +299,28 @@ final class Click_Handler {
 
 		// Repeat check — a reload, back/forward navigation, bookmark or shared
 		// link carries a click ID that an earlier click of this tracking URL
-		// already recorded. It is not a new click.
-		$original_click = $this->find_original_click( $hash, $click_ids );
+		// already recorded. It is not a new click. A test click is never a
+		// repeat, for the same reason it is never a duplicate (below).
+		$original_click = $is_test_click ? null : $this->find_original_click( $hash, $click_ids );
 		if ( $original_click !== null ) {
 			match ( $consent_state ) {
 				true  => $this->set_cookie( $hash, $this->repeat_entry_timestamp( $hash, $original_click['clicked_at'] ) ),
 				false => null,
 				null  => $this->handle_pending_consent( $hash, $original_click['clicked_at'], $target_url ),
 			};
-			$this->log_request( 'repeat', $hash );
+			$this->log_request( 'repeat', $hash, $is_test_click );
 			$this->redirect( $target_url );
 		}
 
 		// Step 10b: Click deduplication — skip DB insert when the same hash
 		// was already clicked within the dedup window and consent allows
 		// reading the cookie. Without consent we cannot read the cookie,
-		// so dedup is only possible when consent is granted.
+		// so dedup is only possible when consent is granted. A test click is
+		// never a duplicate: reusing an earlier ordinary click would leave no
+		// test row, and a conversion would then be reported as real.
 		$dedup_seconds = (int) apply_filters( 'kntnt_ad_attr_dedup_seconds', 0 );
 
-		if ( $consent_state === true && $dedup_seconds > 0 ) {
+		if ( $consent_state === true && $dedup_seconds > 0 && ! $is_test_click ) {
 			$existing = $this->cookie_manager->parse();
 			if ( isset( $existing[ $hash ] ) && ( $now - $existing[ $hash ] ) < $dedup_seconds ) {
 
@@ -305,7 +333,7 @@ final class Click_Handler {
 				// entry at it, which repairs the cookie.
 				if ( $this->click_row_exists( $hash, $existing[ $hash ] ) ) {
 					$this->set_cookie( $hash, $existing[ $hash ] );
-					$this->log_request( 'deduplicated', $hash );
+					$this->log_request( 'deduplicated', $hash, $is_test_click );
 					$this->redirect( $target_url );
 				}
 			}
@@ -331,6 +359,7 @@ final class Click_Handler {
 			'utm_term'            => $click_term !== '' ? mb_substr( $click_term, 0, 255 ) : null,
 			'utm_id'              => $click_id_val !== '' ? mb_substr( $click_id_val, 0, 255 ) : null,
 			'utm_source_platform' => $click_group !== '' ? mb_substr( $click_group, 0, 255 ) : null,
+			'is_test'             => $is_test_click ? 1 : 0,
 		] );
 		$click_row_id = $inserted ? (int) $wpdb->insert_id : 0;
 
@@ -389,7 +418,7 @@ final class Click_Handler {
 		};
 
 		// Step 13: Redirect to the target page.
-		$this->log_request( 'recorded', $hash );
+		$this->log_request( 'recorded', $hash, $is_test_click );
 		$this->redirect( $target_url );
 	}
 
@@ -421,16 +450,18 @@ final class Click_Handler {
 	 * line as one more field, never in a second line. Logger writes nothing
 	 * unless logging is enabled.
 	 *
-	 * @param string $outcome How the request was counted: 'recorded', 'repeat', 'deduplicated', 'speculative' or 'bot'.
+	 * @param string $outcome How the request was counted: 'recorded', 'repeat', 'deduplicated', 'speculative', 'bot' or 'internal'.
 	 * @param string $hash    The tracking URL hash.
+	 * @param bool   $is_test Whether the request is a test click (`kntnt_ad_attr_test=1`).
 	 *
 	 * @return void
 	 * @since 1.10.0
 	 */
-	private function log_request( string $outcome, string $hash ): void {
+	private function log_request( string $outcome, string $hash, bool $is_test ): void {
 		$fields = [
 			'outcome'     => $outcome,
 			'hash'        => substr( $hash, 0, self::LOG_HASH_PREFIX_LENGTH ),
+			'test'        => $is_test ? '1' : '0',
 			'sec_purpose' => self::quote_header( 'HTTP_SEC_PURPOSE' ),
 			'purpose'     => self::quote_header( 'HTTP_PURPOSE' ),
 			'user_agent'  => self::quote_header( 'HTTP_USER_AGENT' ),
