@@ -538,6 +538,7 @@ Two mu-plugins provide test infrastructure:
 
   - **Internal traffic is off.** Suites trigger conversions as the logged-in admin, which the plugin treats as internal traffic and does not record. A `kntnt_ad_attr_is_internal` callback at `PHP_INT_MAX` therefore returns `false`, as the documented one-liner does, unless option `test_internal_default` is `on` (`set_internal_default on|off`). A suite that turns it on must turn it off at its end.
   - **Anonymous visitors.** A request with the header `X-Test-Visitor: anonymous` is stripped of the WordPress login cookies before WordPress determines the current user. See [Playground's cookie store](#playgrounds-cookie-store).
+  - **Plugin cookies.** A request with the header `X-Test-Plugin-Cookies` carries exactly the plugin cookies (`_ad_clicks`, `_aah_pending`, `_ad_last_conv`) the header names, in Cookie-header syntax, and none for the value `none`; they replace those in `$_COOKIE` before the plugin reads it. `plugin_cookies "_ad_clicks=<value>"` prints the header, and `plugin_cookies` alone prints it for a visitor without plugin cookies. See [Playground's cookie store](#playgrounds-cookie-store).
 
 ### 7.3 Bootstrap Flow
 
@@ -552,7 +553,7 @@ Two mu-plugins provide test infrastructure:
 
 **`helpers/assertions.sh`** provides: `assert_status`, `assert_contains`, `assert_not_contains`, `assert_equals`, `assert_greater_than`, `assert_json_field`, `print_summary`. Each assertion increments `TESTS_RUN` and optionally `TESTS_FAILED`.
 
-**`helpers/fixtures.sh`** provides: `create_tracking_url`, `create_target_page`, `simulate_click`, `get_click_cookies`, `extract_cookie_value`, `set_consent_state`, `get_click_count`, `query_db`, `query_db_rows`, `execute_sql`, `flush_rewrites`, `trigger_conversion`, `clear_cookies`, `strip_secure_flag`, `set_option`, `set_dedup_seconds`, `set_internal_default` (`on`|`off`), `trigger_conversion_without_nonce`, the logging helpers `set_logging` (`on`|`off`), `get_log` and `clear_log`, and the probe adapter switches `set_probe_capturers`, `set_probe_reporter` (`on`|`supports_test`|`off`), `get_probe_calls` (JSON array of recorded `enqueue` calls), `reset_probe_calls`, `set_probe_recorded` (`on`|`off`), `get_recorded_calls` and `reset_probes`.
+**`helpers/fixtures.sh`** provides: `create_tracking_url`, `create_target_page`, `simulate_click`, `get_click_cookies`, `extract_cookie_value`, `set_consent_state`, `get_click_count`, `query_db`, `query_db_rows`, `execute_sql`, `flush_rewrites`, `trigger_conversion`, `clear_cookies`, `strip_secure_flag`, `set_option`, `set_dedup_seconds`, `set_internal_default` (`on`|`off`), `trigger_conversion_without_nonce`, `plugin_cookies` (the `X-Test-Plugin-Cookies` header), the logging helpers `set_logging` (`on`|`off`), `get_log` and `clear_log`, and the probe adapter switches `set_probe_capturers`, `set_probe_reporter` (`on`|`supports_test`|`off`), `get_probe_calls` (JSON array of recorded `enqueue` calls), `reset_probe_calls`, `set_probe_recorded` (`on`|`off`), `get_recorded_calls` and `reset_probes`.
 
 ### 7.5 Integration Test Coverage
 
@@ -614,8 +615,8 @@ Each test script sources `helpers/assertions.sh` and `helpers/fixtures.sh`, crea
 #### `test-deduplication.sh` — Conversion and Click Deduplication
 
 - With dedup disabled (default `0`), repeated conversions for the same hash are all recorded.
-- With dedup enabled (`set_dedup_seconds`, backed by the `test_dedup_seconds` option in the test-helpers mu-plugin) and consent granted: a re-click within the window re-sends the cookie with the original timestamp and records no second click row; a later conversion records exactly one conversion row, linked to the original click row.
-- A cookie entry within the window that no click row matches is recorded as a new click, and the entry is repointed at that row.
+- With dedup enabled (`set_dedup_seconds`, backed by the `test_dedup_seconds` option in the test-helpers mu-plugin) and consent granted: a first click by a visitor without plugin cookies records a click row; a re-click within the window carrying that visitor's cookie (`plugin_cookies`) re-sends the cookie with the original timestamp and records no second click row; a later conversion records exactly one conversion row, linked to the original click row.
+- A cookie entry within the window that no click row matches is recorded as a new click, and the entry is repointed at that row. The cookie also holds an entry for another hash, which the response keeps, so the test shows the plugin read the cookie.
 
 ---
 
@@ -634,7 +635,8 @@ Runs once with the `cookie` transport and once with the `fragment` transport, se
 
 Uses the probe capturer (`google_ads=gclid`) and logging (`set_logging on`, `get_log`, `clear_log`).
 
-- Two requests with `gclid=RRR` give one click row and one click-ID row. The repeat redirects with its query parameters, and its `_ad_clicks` entry carries the original click's timestamp.
+- Every request carries exactly the plugin cookies the test gives it (`plugin_cookies`), none unless stated.
+- Two requests with `gclid=RRR` give one click row and one click-ID row. The repeat, by a visitor without an entry for the hash, redirects with its query parameters and gets an `_ad_clicks` entry with the original click's timestamp.
 - A request with `Sec-Purpose: prefetch` gets 503, no redirect, no `_ad_clicks` cookie and no click row; a normal request after it gives one click row. `Purpose: prefetch` also gets 503.
 - With logging enabled, each request writes exactly one `Tracking URL request:` line, with the outcome (`recorded`, `repeat`, `speculative`, `bot`, `deduplicated`), the hash prefix and the `Sec-Purpose`, `Purpose` and `User-Agent` values, and no IP address. With logging disabled, nothing is written.
 - The suite switches logging off, clears the log, and resets the probes, the dedup window and the consent state.
@@ -744,7 +746,7 @@ Uses the probe reporter, whose jobs are deferred a day so WP-Cron leaves them `p
 
 Uses the probe capturer (`google_ads=gclid`) and probe reporter.
 
-- Visitor A clicks with `gclid=AAA&utm_term=kwA`, visitor B with `gclid=BBB&utm_term=kwB`; A converts. The reporter receives `AAA` with A's `clicked_at` and `kwA`.
+- Visitor A clicks with `gclid=AAA&utm_term=kwA`, visitor B with `gclid=BBB&utm_term=kwB`, each without plugin cookies (`plugin_cookies`); A's cookie holds only A's click. A converts. The reporter receives `AAA` with A's `clicked_at` and `kwA`.
 - A click without `gclid` converts with no click ID for the hash.
 - Retention cleanup, the daily orphan sweep and permanent deletion of a tracking URL (via the admin trash view's nonce link) leave no click-ID rows for deleted clicks.
 
@@ -909,9 +911,9 @@ helper_name() {
 
 Playground's server (php-wasm `PHPRequestHandler`, `@wp-playground/cli` 0.9.x) does not pass a request's own `Cookie` header to PHP. It replaces it with the contents of a server-side `HttpCookieStore`, which remembers every cookie that any response has set. Every request therefore carries every cookie seen so far, including the admin's logged-in cookie from the setup login, whatever curl sends with `-b`; a cookie sent only by curl (e.g. `-b foo=bar`) does not arrive at all.
 
-**Impact:** a test cannot make a request "without cookies". With internal-traffic detection on, every request would be internal.
+**Impact:** a test cannot make a request "without cookies". With internal-traffic detection on, every request would be internal. A later "visitor" also carries the `_ad_clicks` and `_aah_pending` that earlier visitors' responses set.
 
-**Mitigation:** the test environment keeps internal-traffic detection off unless a suite switches it on, and a request that sends `X-Test-Visitor: anonymous` (custom headers do reach PHP) is stripped of the WordPress login cookies by the test-helpers mu-plugin before WordPress determines the current user. To give a request a specific `_ad_clicks` value, use `trigger_conversion` (which injects it into `$_COOKIE`) rather than `curl -b`.
+**Mitigation:** the test environment keeps internal-traffic detection off unless a suite switches it on, and a request that sends `X-Test-Visitor: anonymous` (custom headers do reach PHP) is stripped of the WordPress login cookies by the test-helpers mu-plugin before WordPress determines the current user. To control which plugin cookies a tracking-URL request carries, send `X-Test-Plugin-Cookies` (fixture `plugin_cookies`): the mu-plugin replaces `_ad_clicks`, `_aah_pending` and `_ad_last_conv` in `$_COOKIE` with the ones the header names, or none. A conversion takes its `_ad_clicks` value from `trigger_conversion`, which injects it into `$_COOKIE`. Never use `curl -b` for plugin cookies.
 
 ### SQLite date comparison limits
 

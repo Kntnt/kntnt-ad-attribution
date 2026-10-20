@@ -26,13 +26,14 @@ TARGET_ID=$(echo "$TARGET_JSON" | jq -r '.post_id')
 HASH=$(create_tracking_url "$TARGET_ID" "google" "cpc" "click-ids")
 flush_rewrites
 
-# Clicks the tracking URL as a new visitor (no cookies) with the given query
-# string and prints the visitor's _ad_clicks value.
+# Clicks the tracking URL as a new visitor (no plugin cookies) with the given
+# query string and prints the visitor's _ad_clicks value.
 # Usage: click_as_new_visitor <hash> <query>
 click_as_new_visitor() {
     local headers
     headers=$(curl -sS -D - -o /dev/null \
         -A "Mozilla/5.0 Chrome/120.0.0.0" \
+        -H "$(plugin_cookies)" \
         --max-redirs 0 \
         "${WP_BASE_URL}/ad/$1/?$2" 2>/dev/null || true)
     extract_cookie_value "$headers" "_ad_clicks"
@@ -49,12 +50,14 @@ stored_click_ids() {
 
 cookie_a=$(click_as_new_visitor "$HASH" "gclid=AAA&utm_term=kwA")
 timestamp_a="${cookie_a##*:}"
+assert_equals "${HASH}:${timestamp_a}" "$cookie_a" "Visitor A's cookie holds only A's click"
 
 # A second apart at least: clicks on the same hash in the same second
 # cannot be told apart by (hash, clicked_at).
 sleep 2
 
-click_as_new_visitor "$HASH" "gclid=BBB&utm_term=kwB" > /dev/null
+cookie_b=$(click_as_new_visitor "$HASH" "gclid=BBB&utm_term=kwB")
+assert_not_contains "$cookie_b" "$timestamp_a" "Visitor B's cookie does not carry A's click"
 
 assert_equals "AAA,BBB" "$(stored_click_ids "$HASH")" "Each click keeps its own click ID"
 

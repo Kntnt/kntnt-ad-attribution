@@ -60,9 +60,15 @@ set_dedup_seconds 86400
 HASH_DEDUP=$(create_tracking_url "$TARGET_ID" "google" "cpc" "click-dedup-test")
 flush_rewrites
 
-# First click: no cookie sent, so a click row is recorded.
-cookies_first=$(get_click_cookies "$HASH_DEDUP")
+# First click by a visitor without plugin cookies, so a click row is
+# recorded.
+cookies_first=$(curl -sS -D - -o /dev/null \
+    -A "Mozilla/5.0 Chrome/120" \
+    -H "$(plugin_cookies)" \
+    --max-redirs 0 \
+    "${WP_BASE_URL}/ad/${HASH_DEDUP}/" 2>/dev/null || true)
 ad_clicks_first=$(extract_cookie_value "$cookies_first" "_ad_clicks")
+assert_equals "1" "$(get_click_count "$HASH_DEDUP")" "First click records a click row"
 ts_first=$(echo "$ad_clicks_first" | grep -oP "${HASH_DEDUP}:\K[0-9]+" || true)
 assert_greater_than "0" "${ts_first:-0}" "First click sets an _ad_clicks entry for the hash"
 
@@ -74,7 +80,7 @@ sleep 2
 headers_second=$(curl -sS -D - -o /dev/null \
     -A "Mozilla/5.0 Chrome/120" \
     --max-redirs 0 \
-    -b "_ad_clicks=${ad_clicks_first}" \
+    -H "$(plugin_cookies "_ad_clicks=${ad_clicks_first}")" \
     "${WP_BASE_URL}/ad/${HASH_DEDUP}/" 2>/dev/null || true)
 assert_contains "$headers_second" "302" "Deduplicated re-click still redirects"
 
@@ -102,19 +108,24 @@ HASH_HEAL=$(create_tracking_url "$TARGET_ID" "google" "cpc" "click-dedup-heal")
 flush_rewrites
 
 # An entry inside the window that no click row matches, as written by
-# versions that rewrote the timestamp on dedup.
+# versions that rewrote the timestamp on dedup, next to an entry for
+# another tracking URL. The other entry surviving shows that the plugin
+# read the cookie.
 ts_stale=$(( $(date +%s) - 60 ))
+HASH_OTHER=$(openssl rand -hex 32)
 headers_heal=$(curl -sS -D - -o /dev/null \
     -A "Mozilla/5.0 Chrome/120" \
     --max-redirs 0 \
-    -b "_ad_clicks=${HASH_HEAL}:${ts_stale}" \
+    -H "$(plugin_cookies "_ad_clicks=${HASH_OTHER}:${ts_stale},${HASH_HEAL}:${ts_stale}")" \
     "${WP_BASE_URL}/ad/${HASH_HEAL}/" 2>/dev/null || true)
 
 heal_rows=$(query_db_rows "SELECT clicked_at FROM wp_kntnt_ad_attr_clicks WHERE hash='${HASH_HEAL}'")
 assert_equals "1" "$(echo "$heal_rows" | jq 'length')" "Entry without a click row is handled as a new click"
 
 ad_clicks_heal=$(extract_cookie_value "$headers_heal" "_ad_clicks")
+assert_contains "$ad_clicks_heal" "${HASH_OTHER}:${ts_stale}" "The click read the visitor's cookie"
 ts_heal=$(echo "$ad_clicks_heal" | grep -oP "${HASH_HEAL}:\K[0-9]+" || true)
+assert_greater_than "$ts_stale" "${ts_heal:-0}" "Repaired entry no longer carries the stale timestamp"
 heal_clicked_at=$(echo "$heal_rows" | jq -r '.[0].clicked_at')
 ts_heal_utc=$(jq -rn --argjson t "${ts_heal:-0}" '$t | strftime("%Y-%m-%d %H:%M:%S")')
 assert_equals "$heal_clicked_at" "$ts_heal_utc" "Repaired entry points at the new click row"

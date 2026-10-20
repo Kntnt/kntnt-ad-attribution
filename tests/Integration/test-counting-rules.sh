@@ -29,16 +29,18 @@ HASH_REPEAT=$(create_tracking_url "$TARGET_ID" "google" "cpc" "counting-repeat")
 HASH_SPECULATIVE=$(create_tracking_url "$TARGET_ID" "google" "cpc" "counting-speculative")
 flush_rewrites
 
-# Requests a tracking URL as a new visitor and prints the status code, the
-# redirect URL and the _ad_clicks value, separated by |.
-# Usage: request_tracking_url <hash> <query> [curl options…]
+# Requests a tracking URL carrying exactly the given plugin cookies ("" for a
+# new visitor without any) and prints the status code, the redirect URL and
+# the _ad_clicks value, separated by |.
+# Usage: request_tracking_url <hash> <query> <plugin cookies> [curl options…]
 request_tracking_url() {
-    local hash="$1" query="$2"
-    shift 2
+    local hash="$1" query="$2" cookies="$3"
+    shift 3
     local headers
     headers=$(curl -sS -D - -o /dev/null \
         -w 'HTTP_CODE:%{http_code}|%{redirect_url}' \
         --max-redirs 0 \
+        -H "$(plugin_cookies "$cookies")" \
         "$@" \
         "${WP_BASE_URL}/ad/${hash}/${query:+?$query}" 2>/dev/null || true)
     local status_and_url="${headers##*HTTP_CODE:}"
@@ -47,44 +49,48 @@ request_tracking_url() {
 
 # ─── Two requests with the same gclid give one click row ───
 
-first=$(request_tracking_url "$HASH_REPEAT" "gclid=RRR" -A "$BROWSER_UA")
+first=$(request_tracking_url "$HASH_REPEAT" "gclid=RRR" "" -A "$BROWSER_UA")
 assert_equals "302" "$(echo "$first" | cut -d'|' -f1)" "First request with gclid=RRR redirects"
-original_entry=$(echo "$first" | cut -d'|' -f3)
 assert_equals "1" "$(get_click_count "$HASH_REPEAT")" "First request with gclid=RRR is recorded"
+original_clicked_at=$(query_db "SELECT clicked_at FROM wp_kntnt_ad_attr_clicks WHERE hash = '${HASH_REPEAT}'" | jq -r '.clicked_at')
+original_entry="${HASH_REPEAT}:$(jq -rn --arg d "$original_clicked_at" '$d | sub(" "; "T") + "Z" | fromdate')"
+assert_equals "$original_entry" "$(echo "$first" | cut -d'|' -f3)" "First request's visitor gets one entry, pointing at its click"
 
 # A second apart at least, so a wrongly recorded repeat would get a new
 # timestamp that the cookie assertion below would catch.
 sleep 2
 
-repeat=$(request_tracking_url "$HASH_REPEAT" "gclid=RRR" -A "$BROWSER_UA")
+repeat=$(request_tracking_url "$HASH_REPEAT" "gclid=RRR" "" -A "$BROWSER_UA")
 assert_equals "302" "$(echo "$repeat" | cut -d'|' -f1)" "Repeat request redirects"
 assert_contains "$(echo "$repeat" | cut -d'|' -f2)" "gclid=RRR" "Repeat request forwards its query parameters"
 assert_equals "1" "$(get_click_count "$HASH_REPEAT")" "Repeat request adds no click row"
 assert_equals "1" "$(query_db "SELECT COUNT(*) AS cnt FROM wp_kntnt_ad_attr_click_ids ci JOIN wp_kntnt_ad_attr_clicks c ON c.id = ci.click_id WHERE c.hash = '${HASH_REPEAT}'" | jq -r '.cnt')" \
     "Repeat request stores no click ID"
+# The repeat comes from a visitor without an entry for the hash (another
+# browser, a shared link), so its new entry must point at the original click.
 assert_equals "$original_entry" "$(echo "$repeat" | cut -d'|' -f3)" \
-    "Repeat request points the cookie entry at the original click"
+    "Repeat request by a visitor without an entry gets one pointing at the original click"
 
 # ─── A prefetch followed by a normal request gives one click row ───
 
-prefetch=$(request_tracking_url "$HASH_SPECULATIVE" "" -A "$BROWSER_UA" -H "Sec-Purpose: prefetch")
+prefetch=$(request_tracking_url "$HASH_SPECULATIVE" "" "" -A "$BROWSER_UA" -H "Sec-Purpose: prefetch")
 assert_equals "503" "$(echo "$prefetch" | cut -d'|' -f1)" "Prefetch gets 503"
 assert_equals "" "$(echo "$prefetch" | cut -d'|' -f2)" "Prefetch is not redirected"
 assert_equals "" "$(echo "$prefetch" | cut -d'|' -f3)" "Prefetch sets no _ad_clicks cookie"
 assert_equals "0" "$(get_click_count "$HASH_SPECULATIVE")" "Prefetch adds no click row"
 
-click=$(request_tracking_url "$HASH_SPECULATIVE" "" -A "$BROWSER_UA")
+click=$(request_tracking_url "$HASH_SPECULATIVE" "" "" -A "$BROWSER_UA")
 assert_equals "302" "$(echo "$click" | cut -d'|' -f1)" "Normal request after the prefetch redirects"
 assert_equals "1" "$(get_click_count "$HASH_SPECULATIVE")" "Normal request after the prefetch is recorded once"
 click_entry=$(echo "$click" | cut -d'|' -f3)
 
 # ─── A bot and a deduplicated click, for the log ───
 
-bot=$(request_tracking_url "$HASH_SPECULATIVE" "" -A "Googlebot/2.1")
+bot=$(request_tracking_url "$HASH_SPECULATIVE" "" "" -A "Googlebot/2.1")
 assert_equals "302" "$(echo "$bot" | cut -d'|' -f1)" "Bot is redirected"
 
 set_dedup_seconds 3600
-duplicate=$(request_tracking_url "$HASH_SPECULATIVE" "" -A "$BROWSER_UA" -b "_ad_clicks=${click_entry}")
+duplicate=$(request_tracking_url "$HASH_SPECULATIVE" "" "_ad_clicks=${click_entry}" -A "$BROWSER_UA")
 set_dedup_seconds 0
 assert_equals "302" "$(echo "$duplicate" | cut -d'|' -f1)" "Duplicate click is redirected"
 assert_equals "1" "$(get_click_count "$HASH_SPECULATIVE")" "Bot and duplicate add no click row"
@@ -119,7 +125,7 @@ assert_not_contains "$log" "::1" "Log holds no IPv6 loopback address"
 
 set_logging "off"
 clear_log
-legacy_prefetch=$(request_tracking_url "$HASH_SPECULATIVE" "" -A "$BROWSER_UA" -H "Purpose: prefetch")
+legacy_prefetch=$(request_tracking_url "$HASH_SPECULATIVE" "" "" -A "$BROWSER_UA" -H "Purpose: prefetch")
 assert_equals "503" "$(echo "$legacy_prefetch" | cut -d'|' -f1)" "Legacy Purpose: prefetch gets 503"
 assert_equals "1" "$(get_click_count "$HASH_SPECULATIVE")" "Legacy prefetch adds no click row"
 assert_equals "" "$(get_log)" "Nothing is logged with logging disabled"

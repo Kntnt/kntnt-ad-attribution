@@ -53,6 +53,27 @@ if (($_SERVER['HTTP_X_TEST_VISITOR'] ?? '') === 'anonymous') {
     }
 }
 
+// Plugin cookies per request. For the same reason, a request carries the
+// _ad_clicks and _aah_pending of every earlier visitor, and a cookie curl
+// sends with -b never arrives. A request with the header
+// "X-Test-Plugin-Cookies" carries exactly the plugin cookies the header
+// names, in Cookie-header syntax ("_ad_clicks=<hash>:<ts>,…; _aah_pending=…"),
+// and none for the value "none". They are replaced here, before the plugin
+// reads $_COOKIE. fixtures.sh: plugin_cookies.
+if (isset($_SERVER['HTTP_X_TEST_PLUGIN_COOKIES'])) {
+    $plugin_cookies = ['_ad_clicks', '_aah_pending', '_ad_last_conv'];
+    foreach ($plugin_cookies as $name) {
+        unset($_COOKIE[$name]);
+    }
+    foreach (explode(';', (string) $_SERVER['HTTP_X_TEST_PLUGIN_COOKIES']) as $pair) {
+        [$name, $value] = array_pad(explode('=', trim($pair), 2), 2, '');
+        if (in_array($name, $plugin_cookies, true)) {
+            $_COOKIE[$name] = urldecode($value);
+        }
+    }
+    unset($plugin_cookies, $pair, $name, $value);
+}
+
 /*
  * Probe adapters: a click-ID capturer and a conversion reporter that suites
  * switch on through string options (test-set-option), so no add-on plugin

@@ -1103,7 +1103,7 @@ A comprehensive test strategy is documented in `docs/testing-strategy.md`, cover
 - The global `kntnt_ad_attribution_delete_cookies()` function (v1.7.0) is defined in `kntnt-ad-attribution.php` after `Plugin::get_instance()`. CMP plugins call it from server-side opt-out hooks to expire HttpOnly cookies. The cookie list is filterable via `kntnt_ad_attr_delete_cookies`.
 - `Conversion_Handler` requires `consent=true` before reading the `_ad_clicks` cookie (ePrivacy Art. 5(3)). Both `consent=false` and `consent=null` abort without attribution.
 - Internal traffic detection is on by default, so a logged-in administrator records no clicks or conversions. The integration tests trigger conversions as the logged-in admin, so `tests/Integration/test-helpers-plugin/test-helpers.php` switches the default off unless option `test_internal_default` is `on`.
-- Playground's server replaces each request's `Cookie` header with every cookie that earlier responses have set, so in integration tests every request carries the admin's logged-in cookie. Send `X-Test-Visitor: anonymous` to emulate a visitor without a session.
+- Playground's server replaces each request's `Cookie` header with every cookie that earlier responses have set, so in integration tests every request carries the admin's logged-in cookie. Send `X-Test-Visitor: anonymous` to emulate a visitor without a session, and `X-Test-Plugin-Cookies` (fixture `plugin_cookies`) to control which plugin cookies (`_ad_clicks`, `_aah_pending`, `_ad_last_conv`) a request carries.
 
 ### Contributor FAQ
 
