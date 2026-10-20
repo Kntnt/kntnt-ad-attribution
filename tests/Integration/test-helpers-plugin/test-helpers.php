@@ -264,3 +264,10 @@ add_action('rest_api_init', function () {
         'permission_callback' => fn () => current_user_can('manage_options'),
     ]);
 });
+
+// Pending-consent transport override. Set option `test_pending_transport`
+// to 'fragment' or 'cookie' via test-set-option; '' keeps the plugin default.
+add_filter('kntnt_ad_attr_pending_transport', function (string $transport): string {
+    $override = (string) get_option('test_pending_transport', '');
+    return $override !== '' ? $override : $transport;
+});

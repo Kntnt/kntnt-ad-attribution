@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Integration test: REST API endpoints.
 #
-# Tests the /set-cookie and /search-posts endpoints for validation,
-# rate limiting, consent enforcement, and search strategies.
+# Tests the /set-cookie and /search-posts endpoints for validation, exact
+# click-row matching of hash:timestamp pairs, rate limiting, consent
+# enforcement, and search strategies.
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -20,15 +21,45 @@ HASH=$(create_tracking_url "$TARGET_ID" "google" "cpc" "rest-test")
 # Ensure consent is granted for set-cookie tests.
 set_consent_state "granted"
 
-# Clear any existing rate limit transients.
-delete_transient "kntnt_ad_attr_rl_test" > /dev/null 2>&1 || true
+# Clear any existing rate limit transients (shared by all suites, since
+# every request comes from localhost).
+execute_sql "DELETE FROM wp_options WHERE option_name LIKE '%kntnt_ad_attr_rl_%'" > /dev/null
+
+# Record a click so set-cookie has a click row to match. set-cookie takes
+# hash:timestamp pairs, where the timestamp is the click row's clicked_at.
+simulate_click "$HASH" > /dev/null
+CLICKED_AT=$(query_db "SELECT clicked_at FROM wp_kntnt_ad_attr_clicks WHERE hash='$HASH' ORDER BY id DESC LIMIT 1" | jq -r '.clicked_at')
+CLICK_TS=$(date -u -d "$CLICKED_AT" +%s)
+PAIR="${HASH}:${CLICK_TS}"
 
 # ─── /set-cookie endpoint ───
 
 echo ""
 echo "--- /set-cookie ---"
 
-# --- Valid hashes: returns success ---
+# --- Pair matching a click row: returns success ---
+
+response=$(curl -sf "${WP_BASE_URL}/?rest_route=/kntnt-ad-attribution/v1/set-cookie" \
+    -X POST \
+    -H "Content-Type: application/json" \
+    -H "X-WP-Nonce: ${WP_NONCE}" \
+    -b "${ADMIN_COOKIE}" \
+    -d "{\"hashes\":[\"$PAIR\"]}")
+success=$(echo "$response" | jq -r '.success')
+assert_equals "true" "$success" "Pair matching a click row returns success=true"
+
+# --- Pair whose timestamp matches no click row: returns failure ---
+
+response=$(curl -sf "${WP_BASE_URL}/?rest_route=/kntnt-ad-attribution/v1/set-cookie" \
+    -X POST \
+    -H "Content-Type: application/json" \
+    -H "X-WP-Nonce: ${WP_NONCE}" \
+    -b "${ADMIN_COOKIE}" \
+    -d "{\"hashes\":[\"${HASH}:$((CLICK_TS - 3600))\"]}")
+success=$(echo "$response" | jq -r '.success')
+assert_equals "false" "$success" "Pair matching no click row returns success=false"
+
+# --- Bare hash (pre-1.10.0 client format): returns failure ---
 
 response=$(curl -sf "${WP_BASE_URL}/?rest_route=/kntnt-ad-attribution/v1/set-cookie" \
     -X POST \
@@ -37,7 +68,7 @@ response=$(curl -sf "${WP_BASE_URL}/?rest_route=/kntnt-ad-attribution/v1/set-coo
     -b "${ADMIN_COOKIE}" \
     -d "{\"hashes\":[\"$HASH\"]}")
 success=$(echo "$response" | jq -r '.success')
-assert_equals "true" "$success" "Valid hash returns success=true"
+assert_equals "false" "$success" "Bare hash returns success=false"
 
 # --- All invalid hashes: returns failure ---
 
@@ -58,7 +89,7 @@ response=$(curl -sf "${WP_BASE_URL}/?rest_route=/kntnt-ad-attribution/v1/set-coo
     -H "Content-Type: application/json" \
     -H "X-WP-Nonce: ${WP_NONCE}" \
     -b "${ADMIN_COOKIE}" \
-    -d "{\"hashes\":[\"$unknown_hash\"]}")
+    -d "{\"hashes\":[\"${unknown_hash}:${CLICK_TS}\"]}")
 success=$(echo "$response" | jq -r '.success')
 assert_equals "false" "$success" "Unknown hash (not in DB) returns success=false"
 
@@ -70,7 +101,7 @@ response=$(curl -sf "${WP_BASE_URL}/?rest_route=/kntnt-ad-attribution/v1/set-coo
     -H "Content-Type: application/json" \
     -H "X-WP-Nonce: ${WP_NONCE}" \
     -b "${ADMIN_COOKIE}" \
-    -d "{\"hashes\":[\"$HASH\"]}")
+    -d "{\"hashes\":[\"$PAIR\"]}")
 success=$(echo "$response" | jq -r '.success')
 assert_equals "false" "$success" "Consent denied: set-cookie returns success=false"
 set_consent_state "granted"
