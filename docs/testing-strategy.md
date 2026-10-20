@@ -685,7 +685,7 @@ Uses the probe capturer (`google_ads=gclid`) and logging (`set_logging on`, `get
 
 - Old clicks deleted (> retention window).
 - Recent clicks preserved.
-- Orphaned conversions (missing parent click) deleted.
+- (The click IDs and conversions of deleted clicks, orphaned conversions included, are covered by `test-click-ids.sh`.)
 - Tracking URL drafted when target post deleted.
 
 ---
