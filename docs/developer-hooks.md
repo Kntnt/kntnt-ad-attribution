@@ -146,7 +146,14 @@ add_filter( 'kntnt_ad_attr_redirect_query_params', function ( array $merged, arr
 
 **`kntnt_ad_attr_click_id_capturers`**
 
-Registers platform-specific GET parameters that the core captures and stores at ad click time. Return an associative array mapping platform identifiers to GET parameter names. Default: `[]` (no click IDs captured).
+Registers platform-specific GET parameters that the core captures and stores at ad click time. Return an associative array mapping platform identifiers to capturers. Default: `[]` (no click IDs captured).
+
+A capturer is either:
+
+- the GET parameter name, for a parameter whose value identifies one click, such as `gclid`; or
+- (since 1.11.0) an array `[ 'parameter' => string, 'unique' => bool ]`. `unique` is optional and defaults to `true`. Set it to `false` for a parameter whose value many clicks share, such as Google's `gbraid` and `wbraid`.
+
+An entry without a parameter name is ignored.
 
 ```php
 add_filter( 'kntnt_ad_attr_click_id_capturers', function ( array $capturers ): array {
@@ -164,9 +171,18 @@ add_filter( 'kntnt_ad_attr_click_id_capturers', function ( array $capturers ): a
 } );
 ```
 
+A parameter that is not unique per click:
+
+```php
+add_filter( 'kntnt_ad_attr_click_id_capturers', function ( array $capturers ): array {
+    $capturers['google_ads_gbraid'] = [ 'parameter' => 'gbraid', 'unique' => false ];
+    return $capturers;
+} );
+```
+
 The core iterates the returned array, reads each GET parameter, sanitizes it with `sanitize_text_field()`, validates length (max 255), and stores it in the `kntnt_ad_attr_click_ids` table. Click IDs are stored per click: they are stored after the click row is inserted and are keyed by that row, so each click ID belongs to exactly one click, and a click without the parameter has no ID for that platform. Capture happens before the `kntnt_ad_attr_click` action fires. Click IDs are deleted together with their click rows.
 
-The captured values also drive repeat detection (v1.10.0): a request carrying a click ID already recorded on a click of the same tracking URL is a repeat, which records no click row and refers to the original click instead. Without capturers there is no repeat detection. See [click-handling.md](click-handling.md#repeat).
+The captured values also drive repeat detection (v1.10.0): a request carrying a unique click ID already recorded on a click of the same tracking URL is a repeat, which records no click row and refers to the original click instead. Values of a capturer with `'unique' => false` are captured and stored like any other click ID, but take no part in repeat detection, because another visitor's click may carry the same value. The accepted consequence: a reload, bookmark or shared link that carries only non-unique click IDs is counted as a new click unless deduplication catches it, which needs consent. Over-counting such clicks is preferred to linking a conversion to another visitor's click. Without capturers there is no repeat detection. See [click-handling.md](click-handling.md#repeat).
 
 **`kntnt_ad_attr_conversion_reporters`**
 

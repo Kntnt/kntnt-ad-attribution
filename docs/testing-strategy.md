@@ -360,6 +360,7 @@ The most complex class. Tests cover the full click flow:
 - Failed click insert: no click ID, cookie entry, transport cookie, fragment or `kntnt_ad_attr_click`; one CORE ERROR line with outcome `failed`; redirect as usual.
 - Speculative requests (`Sec-Purpose: prefetch`, `prefetch;prerender`, `Purpose: prefetch`): 503 via `status_header` + `nocache_headers`, no redirect, insert, click ID, cookie, transport or action; a `kntnt_ad_attr_is_speculative` callback can overrule detection. The handler gets a real `Speculation_Detector`, and `apply_default_speculation_detection()` makes the filter run its default callback, which Brain Monkey would otherwise skip.
 - Repeats (click ID already recorded on the tracking URL, via a mocked `Click_ID_Store::find_original_click()`): no insert, click ID or action, redirect with query forwarding; with consent the entry points at the original click unless a newer entry has a click row; with undetermined consent the transport carries the original click; the earliest original wins across platforms; the same value on another tracking URL is recorded.
+- Non-unique click IDs (`gclid_and_non_unique_gbraid_capturers()` registers `gclid` and a gbraid with `'unique' => false`): a new gclid with an already recorded gbraid is recorded and stores both on the new row, with the transport carrying the new click; a request with only an already recorded gbraid is recorded; a recorded gclid resolves to its original click whether or not the gbraid is recorded on an earlier click; an array capturer without `unique` is unique; capturers without a usable parameter name (none, empty, not a string) are ignored.
 - Diagnostic log line (the handler gets a `Logger` spy; `capture_log_lines()` collects every level): exactly one CORE INFO line per outcome (`recorded`, `repeat`, `deduplicated`, `speculative`, `bot`) with the hash prefix and the raw `Sec-Purpose`, `Purpose` and `User-Agent` values, and without the `REMOTE_ADDR`.
 - Internal traffic and test clicks (`setup_click_request()` stubs a request with given query parameters and captures the redirect URL): an internal request redirects with query forwarding and records nothing (no insert, click ID, consent check, cookie, transport or action); a test click (`kntnt_ad_attr_test=1`) by an external or internal visitor is inserted with `is_test` 1 and the parameter is not forwarded; an ordinary click gets `is_test` 0; a test click is neither deduplicated nor resolved as a repeat of an earlier ordinary click; the request log line has outcome `internal` for an internal request and `test=1`/`test=0` on every line.
 - Postmeta backfill from UTM/MTM params, existing values not overwritten.
@@ -546,7 +547,7 @@ Two mu-plugins provide test infrastructure:
 
   | Option | Effect |
   |--------|--------|
-  | `test_probe_capturers` | `platform=param[,platform=param…]` (e.g. `google_ads=gclid`) adds those `kntnt_ad_attr_click_id_capturers` entries. |
+  | `test_probe_capturers` | `platform=param[,platform=param…]` (e.g. `google_ads=gclid`) adds those `kntnt_ad_attr_click_id_capturers` entries. A param ending in `:non-unique` (e.g. `google_ads_gbraid=gbraid:non-unique`) adds the array form with `'unique' => false`. |
   | `test_probe_reporter` | `on` registers reporter `probe`; `supports_test` also sets `'supports_test' => true`. Its `enqueue` appends everything it receives (`attributions`, `click_ids`, `campaigns`, `context`) to `test_probe_calls` and returns one job per attribution with `not_before` a day ahead, so WP-Cron leaves the jobs pending; its `process` returns `true`. |
   | `test_probe_calls` | The list of recorded `enqueue` calls. |
   | `test_probe_recorded` | `on` records every `kntnt_ad_attr_conversion_recorded` call (`attributions`, `context`) in `test_probe_recorded_calls`. |
@@ -653,10 +654,11 @@ Runs once with the `cookie` transport and once with the `fragment` transport, se
 
 #### `test-counting-rules.sh` — Repeats, Speculative Requests and the Diagnostic Log
 
-Uses the probe capturer (`google_ads=gclid`) and logging (`set_logging on`, `get_log`, `clear_log`).
+Uses the probe capturer (`google_ads=gclid`, and for the shared-gbraid case also `google_ads_gbraid=gbraid:non-unique`) and logging (`set_logging on`, `get_log`, `clear_log`).
 
 - Every request carries exactly the plugin cookies the test gives it (`plugin_cookies`), none unless stated.
 - Two requests with `gclid=RRR` give one click row and one click-ID row. The repeat, by a visitor without an entry for the hash, redirects with its query parameters and gets an `_ad_clicks` entry with the original click's timestamp.
+- With gbraid registered as non-unique: visitor A (`gclid=G1&gbraid=X`) and visitor B (`gclid=G2&gbraid=X`) get a click row each, each `_ad_clicks` entry points at the row carrying that visitor's gclid, and both rows store `X`. Visitor C (`gbraid=X` only) gets a third row. A's reload (`gclid=G1&gbraid=X`) is a repeat pointing at A's click. The log has `recorded` for B and C and `repeat` for the reload.
 - A request with `Sec-Purpose: prefetch` gets 503, no redirect, no `_ad_clicks` cookie and no click row; a normal request after it gives one click row. `Purpose: prefetch` also gets 503.
 - With logging enabled, each request writes exactly one `Tracking URL request:` line, with the outcome (`recorded`, `repeat`, `speculative`, `bot`, `deduplicated`), the hash prefix and the `Sec-Purpose`, `Purpose` and `User-Agent` values, and no IP address. With logging disabled, nothing is written.
 - The suite switches logging off, clears the log, and resets the probes, the dedup window and the consent state.
@@ -979,7 +981,7 @@ curl ... | grep -i '^set-cookie:' || true
 | Bot_Detector | ~10 | bot-detection |
 | Speculation_Detector | ~9 | counting-rules |
 | Internal_Detector | ~8 | internal-traffic |
-| Click_Handler | ~60 | click-flow, query-forwarding, deferred-consent, counting-rules, internal-traffic |
+| Click_Handler | ~65 | click-flow, query-forwarding, deferred-consent, counting-rules, internal-traffic |
 | Conversion_Handler | ~33 | conversion-attribution, deduplication, internal-traffic, recorded-conversions |
 | Post_Type | ~8 | activation, admin-crud |
 | Click_ID_Store | ~6 | click-ids, migration |
@@ -1000,4 +1002,4 @@ curl ... | grep -i '^set-cookie:' || true
 | Plugin | ~6 | activation |
 | pending-consent.js | ~29 | — |
 | admin.js | ~10 | — |
-| **Totals** | **~375 PHP + 39 JS** | **19 suites** |
+| **Totals** | **~382 PHP + 39 JS** | **19 suites** |

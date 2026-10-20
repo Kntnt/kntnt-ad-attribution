@@ -33,7 +33,7 @@ The plugin does not hardcode integrations with any specific consent management o
 - **Three-state consent model** — integrates with any cookie consent plugin via a filter hook, supporting yes, no, and undefined consent states with a transport mechanism for deferred consent.
 - **Platform-agnostic form support** — integrates with any form plugin via an action hook.
 - **Bot detection** — filters out known bots via User-Agent matching and `robots.txt` rules.
-- **Honest click counts** — speculative browser prefetches (`Sec-Purpose: prefetch`) are declined without being counted, and a request repeating a platform click ID already recorded for the tracking URL (reload, back/forward navigation, bookmark) is not counted again. With logging enabled, each tracking-URL request writes one diagnostic line with its outcome and request headers.
+- **Honest click counts** — speculative browser prefetches (`Sec-Purpose: prefetch`) are declined without being counted, and a request repeating a unique platform click ID (such as `gclid`) already recorded for the tracking URL (reload, back/forward navigation, bookmark) is not counted again. With logging enabled, each tracking-URL request writes one diagnostic line with its outcome and request headers.
 - **Internal traffic excluded, test mode included** — clicks and conversions by logged-in staff (users with the `kntnt_ad_attr` capability) are not recorded, so checking your own ads does not skew the statistics. Append `kntnt_ad_attr_test=1` to a tracking URL to test the whole chain instead: the click and its conversion are recorded as tests, kept out of the statistics and the CSV export, and reach only reporters that support test mode. See [Testing a live setup](#testing-a-live-setup).
 - **Two redirect methods** — 302 redirect (default) or, via filter, a JavaScript redirect that serves a minimal page and navigates with JavaScript, so that client-side scripts such as consent managers can run first.
 - **Companion plugin hooks** — fires `kntnt_ad_attr_click` on every recorded click with hash, target URL, campaign data, and access to URL parameters (gclid, fbclid, etc.). Companion plugins can capture platform-specific data and implement server-side API integrations without modifying the core plugin.
@@ -210,7 +210,7 @@ The plugin adds **Ad Attribution** under **Tools** in the WordPress admin menu. 
   - **Delete** removes the conversion and keeps its clicks.
   - Both also delete the report jobs that have not been sent (pending or failed), for Mark as test those of every conversion it made a test. A job that is being sent right now is left alone, and the notice says so; jobs already sent stay. Retracting a conversion already reported to an ad platform is up to the platform's add-on.
 
-**Note:** The plugin tracks clicks (requests to `/ad/<hash>`) and conversions. Requests from bots, speculative browser prefetches, internal traffic (logged-in users who can manage ad attribution) and repeats of an already recorded platform click ID (reloads, back/forward navigation, bookmarks) are not counted as clicks, and test clicks are left out of the statistics; see [Counting rules](docs/click-handling.md#counting-rules). Ad impressions are not available since they occur on the ad platform and never reach your server.
+**Note:** The plugin tracks clicks (requests to `/ad/<hash>`) and conversions. Requests from bots, speculative browser prefetches, internal traffic (logged-in users who can manage ad attribution) and repeats of an already recorded unique platform click ID (reloads, back/forward navigation, bookmarks) are not counted as clicks, and test clicks are left out of the statistics; see [Counting rules](docs/click-handling.md#counting-rules). Ad impressions are not available since they occur on the ad platform and never reach your server.
 
 #### Click-Time Parameter Population
 
@@ -571,12 +571,13 @@ add_filter( 'kntnt_ad_attr_is_internal', function ( bool $is_internal ): bool {
 
 **`kntnt_ad_attr_click_id_capturers`**
 
-Registers platform-specific GET parameters to capture at ad click time. Return an associative array mapping platform identifiers to GET parameter names. Default: `[]`.
+Registers platform-specific GET parameters to capture at ad click time. Return an associative array mapping platform identifiers to capturers: a GET parameter name, or `[ 'parameter' => string, 'unique' => bool ]` (since 1.11.0, `unique` defaults to `true`). `'unique' => false` declares a parameter whose value many clicks share, such as `gbraid` or `wbraid`: its values are stored and reported, but never make a request a repeat, so a reload carrying only such values counts as a new click (see [Click-ID Capturers](#click-id-capturers)). Default: `[]`.
 
 ```php
 add_filter( 'kntnt_ad_attr_click_id_capturers', function ( array $capturers ): array {
-    $capturers['google_ads'] = 'gclid';
-    $capturers['meta']       = 'fbclid';
+    $capturers['google_ads']        = 'gclid';
+    $capturers['meta']              = 'fbclid';
+    $capturers['google_ads_gbraid'] = [ 'parameter' => 'gbraid', 'unique' => false ];
     return $capturers;
 } );
 ```
@@ -798,6 +799,17 @@ add_filter( 'kntnt_ad_attr_click_id_capturers', function ( array $capturers ): a
 ```
 
 The core handles sanitization, validation, and storage. Click IDs are stored per click in a dedicated database table: each click ID belongs to the click row it arrived with, and is deleted together with that click.
+
+A click ID that identifies one click, like `gclid`, also lets the core recognise a reload or bookmark of the same ad click as a repeat rather than a new click. Some parameters are shared by many clicks, such as Google's `gbraid` and `wbraid`. Register those as not unique, so another visitor's click with the same value is not mistaken for a repeat:
+
+```php
+add_filter( 'kntnt_ad_attr_click_id_capturers', function ( array $capturers ): array {
+    $capturers['google_ads_gbraid'] = [ 'parameter' => 'gbraid', 'unique' => false ];
+    return $capturers;
+} );
+```
+
+Non-unique values are stored and reported like any other click ID. The trade-off: a reload, bookmark or shared link that carries only non-unique click IDs counts as a new click, unless click deduplication catches it, which needs consent. Over-counting such clicks is preferred to linking a conversion to another visitor's click.
 
 #### Conversion Reporters
 

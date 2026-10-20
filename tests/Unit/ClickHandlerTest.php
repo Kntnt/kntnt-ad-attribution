@@ -1500,6 +1500,171 @@ describe('Click_Handler::handle_click() repeat click IDs', function () {
 
 });
 
+// ─── handle_click(): non-unique click IDs ───
+
+/**
+ * Capturers for a unique gclid and a gbraid declared not unique per click.
+ *
+ * @return array<string, string|array{parameter: string, unique?: bool}>
+ */
+function gclid_and_non_unique_gbraid_capturers(): array {
+    return [
+        'google_ads'        => 'gclid',
+        'google_ads_gbraid' => ['parameter' => 'gbraid', 'unique' => false],
+    ];
+}
+
+describe('Click_Handler::handle_click() non-unique click IDs', function () {
+
+    afterEach(function () {
+        unset($GLOBALS['wpdb']);
+        $_GET = [];
+    });
+
+    it('records a new gclid as a new click although its gbraid is already recorded on the tracking URL', function () {
+        [$handler, $cm, $con, $bd, $cis] = make_click_handler();
+        $hash = TestFactory::hash('non-unique-shared-gbraid');
+        $wpdb = stub_tracking_url_request($cm, $hash);
+
+        $_GET['gclid']  = 'G2';
+        $_GET['gbraid'] = 'X';
+        Filters\expectApplied('kntnt_ad_attr_click_id_capturers')->andReturn(gclid_and_non_unique_gbraid_capturers());
+        $bd->shouldReceive('is_bot')->andReturn(false);
+        $con->shouldReceive('check')->andReturn(null);
+
+        // G2 is new, but X was recorded on another visitor's click.
+        $cis->shouldReceive('find_original_click')->with($hash, 'google_ads', 'G2')->andReturn(null);
+        $cis->shouldReceive('find_original_click')->with($hash, 'google_ads_gbraid', 'X')->andReturn(['click_id' => 7, 'clicked_at' => 1699990000]);
+
+        Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
+        $wpdb->shouldReceive('insert')->once()->andReturnUsing(function () use ($wpdb) {
+            $wpdb->insert_id = 31;
+            return 1;
+        });
+        $cis->shouldReceive('store')->once()->with(31, 'google_ads', 'G2');
+        $cis->shouldReceive('store')->once()->with(31, 'google_ads_gbraid', 'X');
+        Actions\expectDone('kntnt_ad_attr_click')->once();
+
+        // The transport carries this visitor's own click, not click 7.
+        $cm->shouldReceive('set_transport_cookie')->once()->with($hash, Mockery::not(1699990000));
+
+        Functions\expect('nocache_headers')->once();
+        Functions\expect('wp_redirect')->once()->andReturnUsing(fn () => throw new ExitException('redirect'));
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class, 'redirect');
+    });
+
+    it('records a request carrying only an already recorded gbraid as a new click', function () {
+        [$handler, $cm, $con, $bd, $cis] = make_click_handler();
+        $hash = TestFactory::hash('non-unique-gbraid-only');
+        $wpdb = stub_tracking_url_request($cm, $hash);
+
+        $_GET['gbraid'] = 'X';
+        Filters\expectApplied('kntnt_ad_attr_click_id_capturers')->andReturn(gclid_and_non_unique_gbraid_capturers());
+        $bd->shouldReceive('is_bot')->andReturn(false);
+        $con->shouldReceive('check')->andReturn(false);
+        $cis->shouldReceive('find_original_click')->with($hash, 'google_ads_gbraid', 'X')->andReturn(['click_id' => 7, 'clicked_at' => 1699990000]);
+
+        Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
+        $wpdb->shouldReceive('insert')->once()->andReturnUsing(function () use ($wpdb) {
+            $wpdb->insert_id = 31;
+            return 1;
+        });
+        $cis->shouldReceive('store')->once()->with(31, 'google_ads_gbraid', 'X');
+        Actions\expectDone('kntnt_ad_attr_click')->once();
+
+        Functions\expect('nocache_headers')->once();
+        Functions\expect('wp_redirect')->once()->andReturnUsing(fn () => throw new ExitException('redirect'));
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class, 'redirect');
+    });
+
+    it('resolves a request repeating a recorded gclid to the original click whatever its gbraid', function (?string $gbraid, ?array $gbraid_match) {
+        [$handler, $cm, $con, $bd, $cis] = make_click_handler();
+        $hash = TestFactory::hash('non-unique-gclid-repeat');
+        $wpdb = stub_tracking_url_request($cm, $hash);
+
+        $_GET['gclid'] = 'G1';
+        if ($gbraid !== null) {
+            $_GET['gbraid'] = $gbraid;
+        }
+        Filters\expectApplied('kntnt_ad_attr_click_id_capturers')->andReturn(gclid_and_non_unique_gbraid_capturers());
+        $bd->shouldReceive('is_bot')->andReturn(false);
+        $con->shouldReceive('check')->andReturn(null);
+        $cis->shouldReceive('find_original_click')->with($hash, 'google_ads', 'G1')->andReturn(['click_id' => 9, 'clicked_at' => 1699995000]);
+        $cis->shouldReceive('find_original_click')->with($hash, 'google_ads_gbraid', 'X')->andReturn($gbraid_match);
+
+        $wpdb->shouldNotReceive('insert');
+        $cis->shouldNotReceive('store');
+        Actions\expectDone('kntnt_ad_attr_click')->never();
+
+        // The gclid's click, even when an earlier click shares the gbraid.
+        $cm->shouldReceive('set_transport_cookie')->once()->with($hash, 1699995000);
+
+        Functions\expect('nocache_headers')->once();
+        Functions\expect('wp_redirect')->once()->andReturnUsing(fn () => throw new ExitException('redirect'));
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class, 'redirect');
+    })->with([
+        'gbraid recorded on an earlier click' => ['X', ['click_id' => 4, 'clicked_at' => 1699990000]],
+        'gbraid not recorded'                 => ['X', null],
+        'no gbraid'                           => [null, null],
+    ]);
+
+    it('treats an array capturer without unique as unique', function () {
+        [$handler, $cm, $con, $bd, $cis] = make_click_handler();
+        $hash = TestFactory::hash('non-unique-default');
+        $wpdb = stub_tracking_url_request($cm, $hash);
+
+        $_GET['gclid'] = 'RRR';
+        Filters\expectApplied('kntnt_ad_attr_click_id_capturers')->andReturn(['google_ads' => ['parameter' => 'gclid']]);
+        $bd->shouldReceive('is_bot')->andReturn(false);
+        $con->shouldReceive('check')->andReturn(null);
+        $cis->shouldReceive('find_original_click')->with($hash, 'google_ads', 'RRR')->andReturn(['click_id' => 7, 'clicked_at' => 1699990000]);
+
+        $wpdb->shouldNotReceive('insert');
+        $cis->shouldNotReceive('store');
+        $cm->shouldReceive('set_transport_cookie')->once()->with($hash, 1699990000);
+
+        Functions\expect('nocache_headers')->once();
+        Functions\expect('wp_redirect')->once()->andReturnUsing(fn () => throw new ExitException('redirect'));
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class, 'redirect');
+    });
+
+    it('ignores capturers without a usable parameter name', function () {
+        [$handler, $cm, $con, $bd, $cis] = make_click_handler();
+        $hash = TestFactory::hash('non-unique-unusable-capturers');
+        $wpdb = stub_tracking_url_request($cm, $hash);
+
+        $_GET['gclid'] = 'G1';
+        $_GET['42']    = 'ZZZ';
+        Filters\expectApplied('kntnt_ad_attr_click_id_capturers')->andReturn([
+            'google_ads'   => 'gclid',
+            'no_parameter' => ['unique' => false],
+            'empty'        => ['parameter' => ''],
+            'not_a_string' => ['parameter' => 42],
+            'bare_number'  => 42,
+        ]);
+        $bd->shouldReceive('is_bot')->andReturn(false);
+        $con->shouldReceive('check')->andReturn(false);
+        $cis->shouldReceive('find_original_click')->with($hash, 'google_ads', 'G1')->andReturn(null);
+
+        Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
+        $wpdb->shouldReceive('insert')->once()->andReturnUsing(function () use ($wpdb) {
+            $wpdb->insert_id = 31;
+            return 1;
+        });
+        $cis->shouldReceive('store')->once()->with(31, 'google_ads', 'G1');
+
+        Functions\expect('nocache_headers')->once();
+        Functions\expect('wp_redirect')->once()->andReturnUsing(fn () => throw new ExitException('redirect'));
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class, 'redirect');
+    });
+
+});
+
 // ─── handle_click(): diagnostic log line ───
 
 /**

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A click-ID capturer can be an array, `[ 'parameter' => 'gbraid', 'unique' => false ]`, to declare that its parameter is not unique per click, as with Google's `gbraid` and `wbraid`. Such values are stored per click and reach reporters as before, but take no part in repeat detection. Capturers registered as a parameter name are unique, as before.
+
+### Fixed
+
+- A click ID shared by many clicks could make a new visitor's click count as a repeat of an earlier visitor's click. The new click was not recorded, and its conversion was reported with the earlier click's click IDs. Declaring such a capturer non-unique prevents this.
+
 ## [1.10.0] – 2026-10-20
 
 ### Added

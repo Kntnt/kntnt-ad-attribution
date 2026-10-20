@@ -240,14 +240,15 @@ final class Click_Handler {
 		$consent_state = $this->consent->check();
 
 		// Platform click IDs are read before anything is recorded, because a
-		// value already recorded for this tracking URL makes the request a
-		// repeat rather than a click.
+		// unique value already recorded for this tracking URL makes the
+		// request a repeat rather than a click.
 		$click_ids = $this->capture_click_ids();
 
 		// Repeat check — a reload, back/forward navigation, bookmark or shared
-		// link carries a click ID that an earlier click of this tracking URL
-		// already recorded. It is not a new click. A test click is never a
-		// repeat, for the same reason it is never a duplicate (below).
+		// link carries a unique click ID that an earlier click of this
+		// tracking URL already recorded. It is not a new click. A test click
+		// is never a repeat, for the same reason it is never a duplicate
+		// (below).
 		$original_click = $is_test_click ? null : $this->find_original_click( $hash, $click_ids );
 		if ( $original_click !== null ) {
 			match ( $consent_state ) {
@@ -296,8 +297,8 @@ final class Click_Handler {
 		// Store the captured platform click IDs. Each ID belongs to the click
 		// row just inserted, so a conversion linked to this click reports
 		// this click's IDs and no other visitor's.
-		foreach ( $click_ids as $platform => $value ) {
-			$this->click_id_store->store( $click_row_id, $platform, $value );
+		foreach ( $click_ids as $platform => $captured ) {
+			$this->click_id_store->store( $click_row_id, $platform, $captured['value'] );
 		}
 
 		$this->fill_campaign_meta( $post_id );
@@ -570,20 +571,34 @@ final class Click_Handler {
 	 * Reads the platform click IDs carried by the request.
 	 *
 	 * Asks the registered capturers (`kntnt_ad_attr_click_id_capturers`)
-	 * which query parameter holds each platform's click ID. Empty values and
-	 * values longer than the column (255 characters) are ignored.
+	 * which query parameter holds each platform's click ID, and whether that
+	 * ID is unique per click. A capturer is either the parameter name, which
+	 * is unique, or `[ 'parameter' => …, 'unique' => bool ]`, where `unique`
+	 * defaults to true. A capturer without a parameter name is ignored, as
+	 * are empty values and values longer than the column (255 characters).
 	 *
-	 * @return array<string, string> Platform => click ID value.
+	 * @return array<string, array{value: string, unique: bool}> Platform => click ID value and whether it identifies one click.
 	 * @since 1.10.0
+	 * @since 1.11.0 Accepts array capturers and returns whether each value is unique.
 	 */
 	private function capture_click_ids(): array {
 		$click_ids = [];
 
 		$capturers = apply_filters( 'kntnt_ad_attr_click_id_capturers', [] );
-		foreach ( $capturers as $platform => $parameter ) {
+		foreach ( $capturers as $platform => $capturer ) {
+			if ( ! is_array( $capturer ) ) {
+				$capturer = [ 'parameter' => $capturer ];
+			}
+			$parameter = $capturer['parameter'] ?? null;
+			if ( ! is_string( $parameter ) || $parameter === '' ) {
+				continue;
+			}
 			$value = sanitize_text_field( $_GET[ $parameter ] ?? '' );
 			if ( $value !== '' && strlen( $value ) <= 255 ) {
-				$click_ids[ (string) $platform ] = $value;
+				$click_ids[ (string) $platform ] = [
+					'value'  => $value,
+					'unique' => (bool) ( $capturer['unique'] ?? true ),
+				];
 			}
 		}
 
@@ -593,22 +608,28 @@ final class Click_Handler {
 	/**
 	 * Finds the click a repeat request resolves to.
 	 *
-	 * A request is a repeat if any of its click IDs was already recorded on
-	 * a click of the same tracking URL. The original click is the earliest
-	 * click row carrying any of those values. Without click IDs, for example
-	 * when no capturers are registered, there is nothing to compare.
+	 * A request is a repeat if any of its unique click IDs was already
+	 * recorded on a click of the same tracking URL. The original click is
+	 * the earliest click row carrying any of those values. A click ID that is
+	 * not unique per click, such as Google's gbraid, is shared by other
+	 * visitors' clicks and proves nothing. Without unique click IDs, for
+	 * example when no capturers are registered, there is nothing to compare.
 	 *
-	 * @param string                $hash      The tracking URL hash.
-	 * @param array<string, string> $click_ids Platform => click ID value carried by the request.
+	 * @param string                                             $hash      The tracking URL hash.
+	 * @param array<string, array{value: string, unique: bool}> $click_ids Platform => click ID carried by the request.
 	 *
 	 * @return array{click_id: int, clicked_at: int}|null The original click, or null if the request is not a repeat.
 	 * @since 1.10.0
+	 * @since 1.11.0 Ignores click IDs that are not unique per click.
 	 */
 	private function find_original_click( string $hash, array $click_ids ): ?array {
 		$original = null;
 
-		foreach ( $click_ids as $platform => $value ) {
-			$match = $this->click_id_store->find_original_click( $hash, $platform, $value );
+		foreach ( $click_ids as $platform => $captured ) {
+			if ( ! $captured['unique'] ) {
+				continue;
+			}
+			$match = $this->click_id_store->find_original_click( $hash, $platform, $captured['value'] );
 			if ( $match !== null && ( $original === null || [ $match['clicked_at'], $match['click_id'] ] < [ $original['clicked_at'], $original['click_id'] ] ) ) {
 				$original = $match;
 			}

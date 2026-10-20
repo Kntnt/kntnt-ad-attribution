@@ -97,7 +97,10 @@ add_filter('user_has_cap', function (array $allcaps): array {
  * reset_probe_calls and reset_probes wrap the options.
  *
  *   test_probe_capturers  "platform=param[,platform=param…]", e.g.
- *                         "google_ads=gclid", adds those capturers.
+ *                         "google_ads=gclid", adds those capturers. A
+ *                         param ending in ":non-unique" registers the
+ *                         array form with 'unique' => false, e.g.
+ *                         "google_ads_gbraid=gbraid:non-unique".
  *   test_probe_reporter   "on" registers reporter "probe";
  *                         "supports_test" also sets 'supports_test' => true.
  *   test_probe_calls      List of everything probe's enqueue received, one
@@ -125,9 +128,13 @@ add_filter('kntnt_ad_attr_click_id_capturers', function (array $capturers): arra
     $spec = (string) get_option('test_probe_capturers', '');
     foreach (array_filter(array_map('trim', explode(',', $spec))) as $pair) {
         [$platform, $parameter] = array_pad(explode('=', $pair, 2), 2, '');
-        if ($platform !== '' && $parameter !== '') {
-            $capturers[$platform] = $parameter;
+        if ($platform === '' || $parameter === '') {
+            continue;
         }
+        $non_unique = ':non-unique';
+        $capturers[$platform] = str_ends_with($parameter, $non_unique)
+            ? ['parameter' => substr($parameter, 0, -strlen($non_unique)), 'unique' => false]
+            : $parameter;
     }
     return $capturers;
 });

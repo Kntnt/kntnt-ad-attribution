@@ -3,7 +3,8 @@
 #
 # Verifies that a request repeating a click ID already recorded for the
 # tracking URL and a speculative (prefetch) request are not counted as
-# clicks, and that every tracking URL request writes exactly one
+# clicks, that a click ID declared non-unique (a shared gbraid) does not make
+# a request a repeat, and that every tracking URL request writes exactly one
 # diagnostic log line when logging is enabled, and none when it is not.
 
 set -euo pipefail
@@ -27,6 +28,7 @@ TARGET_JSON=$(create_target_page "Counting Rules Landing")
 TARGET_ID=$(echo "$TARGET_JSON" | jq -r '.post_id')
 HASH_REPEAT=$(create_tracking_url "$TARGET_ID" "google" "cpc" "counting-repeat")
 HASH_SPECULATIVE=$(create_tracking_url "$TARGET_ID" "google" "cpc" "counting-speculative")
+HASH_SHARED=$(create_tracking_url "$TARGET_ID" "google" "cpc" "counting-shared-gbraid")
 flush_rewrites
 
 # Requests a tracking URL carrying exactly the given plugin cookies ("" for a
@@ -71,6 +73,51 @@ assert_equals "1" "$(query_db "SELECT COUNT(*) AS cnt FROM wp_kntnt_ad_attr_clic
 assert_equals "$original_entry" "$(echo "$repeat" | cut -d'|' -f3)" \
     "Repeat request by a visitor without an entry gets one pointing at the original click"
 
+# ─── A shared non-unique gbraid does not make a request a repeat ───
+
+set_probe_capturers "google_ads=gclid,google_ads_gbraid=gbraid:non-unique"
+
+# Prints the _ad_clicks entry for the click row on HASH_SHARED that carries
+# the given value for the given platform.
+# Usage: entry_for_click_id <platform> <value>
+entry_for_click_id() {
+    local clicked_at
+    clicked_at=$(query_db "SELECT c.clicked_at FROM wp_kntnt_ad_attr_clicks c JOIN wp_kntnt_ad_attr_click_ids ci ON ci.click_id = c.id WHERE c.hash = '${HASH_SHARED}' AND ci.platform = '$1' AND ci.value = '$2'" | jq -r '.clicked_at')
+    echo "${HASH_SHARED}:$(jq -rn --arg d "$clicked_at" '$d | sub(" "; "T") + "Z" | fromdate')"
+}
+
+# Prints how many click rows on HASH_SHARED carry gbraid X.
+shared_gbraid_rows() {
+    query_db "SELECT COUNT(*) AS cnt FROM wp_kntnt_ad_attr_click_ids ci JOIN wp_kntnt_ad_attr_clicks c ON c.id = ci.click_id WHERE c.hash = '${HASH_SHARED}' AND ci.platform = 'google_ads_gbraid' AND ci.value = 'X'" | jq -r '.cnt'
+}
+
+visitor_a=$(request_tracking_url "$HASH_SHARED" "gclid=G1&gbraid=X" "" -A "$BROWSER_UA")
+assert_equals "1" "$(get_click_count "$HASH_SHARED")" "Visitor A with gclid=G1 and gbraid=X is recorded"
+
+# A second apart at least, so visitor B's click gets a timestamp of its own.
+sleep 2
+
+visitor_b=$(request_tracking_url "$HASH_SHARED" "gclid=G2&gbraid=X" "" -A "$BROWSER_UA")
+assert_equals "2" "$(get_click_count "$HASH_SHARED")" "Visitor B with a new gclid and the same gbraid gets a click row of its own"
+assert_equals "$(entry_for_click_id google_ads G2)" "$(echo "$visitor_b" | cut -d'|' -f3)" \
+    "Visitor B's entry points at the click row carrying G2"
+assert_equals "$(entry_for_click_id google_ads G1)" "$(echo "$visitor_a" | cut -d'|' -f3)" \
+    "Visitor A's entry points at the click row carrying G1"
+assert_equals "2" "$(shared_gbraid_rows)" "Both clicks store gbraid X"
+
+sleep 2
+
+visitor_c=$(request_tracking_url "$HASH_SHARED" "gbraid=X" "" -A "$BROWSER_UA")
+assert_equals "3" "$(get_click_count "$HASH_SHARED")" "Visitor C with only the same gbraid is recorded as a new click"
+assert_equals "3" "$(shared_gbraid_rows)" "Visitor C's click stores gbraid X"
+
+reload_a=$(request_tracking_url "$HASH_SHARED" "gclid=G1&gbraid=X" "" -A "$BROWSER_UA")
+assert_equals "3" "$(get_click_count "$HASH_SHARED")" "Visitor A's reload with gclid=G1 is still a repeat"
+assert_equals "$(entry_for_click_id google_ads G1)" "$(echo "$reload_a" | cut -d'|' -f3)" \
+    "Visitor A's reload points at visitor A's click"
+
+set_probe_capturers "google_ads=gclid"
+
 # ─── A prefetch followed by a normal request gives one click row ───
 
 prefetch=$(request_tracking_url "$HASH_SPECULATIVE" "" "" -A "$BROWSER_UA" -H "Sec-Purpose: prefetch")
@@ -103,12 +150,17 @@ lines_for() {
 }
 repeat_lines=$(lines_for "$HASH_REPEAT")
 speculative_lines=$(lines_for "$HASH_SPECULATIVE")
+shared_lines=$(lines_for "$HASH_SHARED")
 
 assert_equals "2" "$(echo "$repeat_lines" | grep -c . || true)" "Two requests to the repeat URL wrote two lines"
 assert_equals "4" "$(echo "$speculative_lines" | grep -c . || true)" "Four requests to the speculative URL wrote four lines"
 
 assert_contains "$(echo "$repeat_lines" | sed -n 1p)" "outcome=recorded" "First gclid request is logged as recorded"
 assert_contains "$(echo "$repeat_lines" | sed -n 2p)" "outcome=repeat" "Second gclid request is logged as repeat"
+assert_equals "4" "$(echo "$shared_lines" | grep -c . || true)" "Four requests to the shared-gbraid URL wrote four lines"
+assert_contains "$(echo "$shared_lines" | sed -n 2p)" "outcome=recorded" "Visitor B, sharing visitor A's gbraid, is logged as recorded"
+assert_contains "$(echo "$shared_lines" | sed -n 3p)" "outcome=recorded" "Visitor C, with only a shared gbraid, is logged as recorded"
+assert_contains "$(echo "$shared_lines" | sed -n 4p)" "outcome=repeat" "Visitor A's reload is logged as repeat"
 assert_contains "$(echo "$speculative_lines" | sed -n 1p)" 'outcome=speculative hash=' "Prefetch is logged as speculative"
 assert_contains "$(echo "$speculative_lines" | sed -n 1p)" 'sec_purpose="prefetch"' "Speculative line holds the Sec-Purpose header"
 assert_contains "$(echo "$speculative_lines" | sed -n 2p)" "outcome=recorded" "Normal request is logged as recorded"

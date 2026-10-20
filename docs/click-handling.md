@@ -18,8 +18,8 @@ The click handler is registered on `template_redirect` — the conventional hook
 9b. Speculative check: if is_speculative() → 503 with no-cache headers, no redirect, nothing recorded      [outcome: speculative]
 9c. Internal check: if not a test click and is_internal() → redirect without recording anything, like a bot   [outcome: internal]
 10. Check consent
-10a. Read platform click IDs from the request via registered kntnt_ad_attr_click_id_capturers
-10b. Repeat check (skipped for a test click): if any of them is already recorded on a click of this tracking URL → resolve to the original click, handle consent for it, redirect (skip insert)   [outcome: repeat]
+10a. Read platform click IDs from the request via registered kntnt_ad_attr_click_id_capturers, noting which are unique per click
+10b. Repeat check (skipped for a test click): if any unique one is already recorded on a click of this tracking URL → resolve to the original click, handle consent for it, redirect (skip insert)   [outcome: repeat]
 10c. Click deduplication (skipped for a test click): if consent=true and dedup_seconds>0 and hash in cookie within window and a click row matches the entry → re-send cookie with the original timestamp, redirect (skip insert)   [outcome: deduplicated]
 11. Extract per-click UTM fields (Content, Term, Id, Group) from incoming parameters
 11b. Insert click record into kntnt_ad_attr_clicks table, with is_test = 1 for a test click. If the insert fails → redirect without click IDs, action, cookie entry or transport   [outcome: failed]
@@ -43,7 +43,7 @@ The handler classifies each request for a published tracking URL with a valid ta
 | 1 | **Bot** | `kntnt_ad_attr_is_bot` (User-Agent signatures, see [Bot Detection](#bot-detection)) | 302 redirect with query forwarding | Nothing |
 | 2 | **Speculative request** | `kntnt_ad_attr_is_speculative` (`Sec-Purpose` contains `prefetch`, or `Purpose: prefetch`) | 503, no-cache headers, no redirect | Nothing |
 | 3 | **Internal request** | `kntnt_ad_attr_is_internal` (a logged-in user with `kntnt_ad_attr`); never matches a test click | 302 redirect with query forwarding | Nothing |
-| 4 | **Repeat** | A platform click ID in the request is already recorded on a click of this tracking URL | 302 redirect with query forwarding | No click row or click ID; the cookie or transport refers to the original click |
+| 4 | **Repeat** | A unique platform click ID in the request is already recorded on a click of this tracking URL | 302 redirect with query forwarding | No click row or click ID; the cookie or transport refers to the original click |
 | 5 | **Duplicate** | Click deduplication (opt-in, consent required; see [Click Deduplication](#click-deduplication)) | 302 redirect with query forwarding | No click row; the cookie entry keeps its click |
 | 6 | **Click** | None of the above | 302 redirect with query forwarding | Click row (`is_test = 1` for a test click), click IDs, `kntnt_ad_attr_click`, cookie or transport per consent |
 
@@ -59,19 +59,21 @@ A request that none of the checks match. It inserts a click row, stores the clic
 
 A reload, a back/forward navigation, a bookmark or a shared link reaches the tracking URL again with the platform click ID of the original ad click (for example the same `gclid`). The platform counts one click, so the plugin must too.
 
-A request is a repeat if any click ID captured through `kntnt_ad_attr_click_id_capturers` equals a click ID already recorded on a click row of the **same** tracking URL (`Click_ID_Store::find_original_click()`, which uses the `(platform, value)` index). The same click ID on another tracking URL is not a repeat.
+A request is a repeat if any unique click ID captured through `kntnt_ad_attr_click_id_capturers` equals a click ID already recorded on a click row of the **same** tracking URL (`Click_ID_Store::find_original_click()`, which uses the `(platform, value)` index). The same click ID on another tracking URL is not a repeat.
+
+**Non-unique click IDs prove nothing.** A capturer registered with `'unique' => false` (see [Click ID Capture](#click-id-capture)) captures a value that many clicks share, such as Google's `gbraid` or `wbraid`. Another visitor's click may carry the same value, so a match on it would resolve one visitor's click to another's and report the earlier click's IDs with the later visitor's conversion. Such values are left out of the repeat check. The consequence is accepted: a reload, bookmark or shared link that carries only non-unique click IDs is not recognised as a repeat, and is counted as a click unless deduplication applies. Over-counting such clicks is preferred to linking a conversion to someone else's click.
 
 A repeat:
 
 - inserts no click row and stores no click ID;
 - does not fire `kntnt_ad_attr_click`;
-- resolves to the **original click**, the earliest click row on the tracking URL carrying one of the request's click IDs;
+- resolves to the **original click**, the earliest click row on the tracking URL carrying one of the request's unique click IDs;
 - with consent granted, sets the cookie entry for the hash to whichever is more recent: the existing entry's click or the original click. The existing entry only counts if its click row exists (the invariant under [Click Deduplication](#click-deduplication)), so the entry never moves backwards in time and never points at a missing row;
 - with undetermined consent, passes the original click (hash and its `clicked_at`) through the [transport](#transport-mechanism-for-undefined-consent);
 - with consent denied, stores nothing;
 - redirects as usual, with query forwarding.
 
-**No capturers, no repeat detection.** Repeats are recognised only by platform click IDs. Without registered capturers (the default without ad-platform add-ons), or for a request without a click ID, there is nothing to compare, and the request is counted as a click unless deduplication applies.
+**No capturers, no repeat detection.** Repeats are recognised only by unique platform click IDs. Without registered capturers (the default without ad-platform add-ons), or for a request without a unique click ID, there is nothing to compare, and the request is counted as a click unless deduplication applies.
 
 ### Duplicate
 
@@ -123,13 +125,13 @@ When dedup is disabled (default `0`), the dedup check is skipped entirely.
 
 ## Click ID Capture
 
-Platform-specific click IDs (e.g. `gclid`, `fbclid`, `msclkid`) are captured via the `kntnt_ad_attr_click_id_capturers` filter, which returns an array mapping platform identifiers to GET parameter names.
+Platform-specific click IDs (e.g. `gclid`, `fbclid`, `msclkid`) are captured via the `kntnt_ad_attr_click_id_capturers` filter, which returns an array mapping platform identifiers to capturers. A capturer is either a GET parameter name, whose value identifies one click, or an array `[ 'parameter' => string, 'unique' => bool ]`, where `unique` defaults to `true`. `'unique' => false` declares a parameter whose value many clicks share, such as `gbraid` or `wbraid`. A capturer without a parameter name is ignored.
 
 If no capturers are registered (default), the filter returns `[]` and the foreach loop iterates zero times — no extra processing occurs.
 
-Each registered capturer maps a platform to a GET parameter. The core iterates the capturers, sanitizes the parameter value with `sanitize_text_field()`, validates it is non-empty and at most 255 characters, and stores it via `Click_ID_Store::store( $click_row_id, $platform, $value )`.
+Each registered capturer maps a platform to a GET parameter. The core iterates the capturers, sanitizes the parameter value with `sanitize_text_field()`, validates it is non-empty and at most 255 characters, and stores it via `Click_ID_Store::store( $click_row_id, $platform, $value )`. Unique and non-unique values are stored alike, so reporters get both; only the [repeat](#repeat) check tells them apart. A request that carries only non-unique click IDs is therefore never a repeat (see [Repeat](#repeat) for why that over-counting is accepted).
 
-The click IDs are read from the request before anything is recorded, because a value already recorded for the tracking URL makes the request a [repeat](#repeat). They are stored **after** the click row is inserted and are keyed by that row's ID (`$wpdb->insert_id`), so each click ID belongs to exactly one click. If a click carries no ID for a platform, that click has no ID for that platform; it does not inherit an earlier click's. If the click insert fails, nothing is captured. A conversion linked to a click reports that click's IDs, never those of a later visitor on the same tracking URL (see [conversion-handling.md](conversion-handling.md)).
+The click IDs are read from the request before anything is recorded, because a unique value already recorded for the tracking URL makes the request a [repeat](#repeat). They are stored **after** the click row is inserted and are keyed by that row's ID (`$wpdb->insert_id`), so each click ID belongs to exactly one click. If a click carries no ID for a platform, that click has no ID for that platform; it does not inherit an earlier click's. If the click insert fails, nothing is captured. A conversion linked to a click reports that click's IDs, never those of a later visitor on the same tracking URL (see [conversion-handling.md](conversion-handling.md)).
 
 Click ID capture happens **before** the `kntnt_ad_attr_click` action fires, so click IDs are already stored when companion plugins receive the click notification. Click ID capture occurs independently of consent — like click counting, it does not set any cookies or track individuals.
 
