@@ -860,10 +860,67 @@ describe('Click_Handler::handle_click()', function () {
         expect(fn () => $handler->handle_click())->toThrow(ExitException::class);
     });
 
-    it('skips DB insert on dedup hit when consent true and hash within dedup window', function () {
+    it('keeps the original cookie timestamp and skips DB insert on dedup hit with a matching click row', function () {
         [$handler, $cm, $con, $bd, $cis] = make_click_handler();
-        $hash = TestFactory::hash('dedup-hit');
-        $now  = 1700000000;
+        $hash     = TestFactory::hash('dedup-hit');
+        $now      = 1700000000;             // 2023-11-14 22:13:20 UTC
+        $original = $now - 1800;            // 2023-11-14 21:43:20 UTC
+
+        Functions\expect('get_query_var')->once()->andReturn($hash);
+        $cm->shouldReceive('validate_hash')->andReturn(true);
+
+        // Capture every prepared query so the click-row lookup can be inspected.
+        $prepared = [];
+        $wpdb = TestFactory::wpdb();
+        $row  = (object) ['ID' => 10, 'target_post_id' => '20'];
+        $wpdb->shouldReceive('prepare')->andReturnUsing(function (...$args) use (&$prepared) {
+            $prepared[] = $args;
+            return 'SQL';
+        });
+        $wpdb->shouldReceive('get_row')->once()->andReturn($row);
+        $GLOBALS['wpdb'] = $wpdb;
+
+        Functions\expect('get_permalink')->once()->andReturn('https://example.com/');
+        Functions\when('wp_parse_url')->alias(fn ($url, $comp) => parse_url($url, $comp));
+        Functions\when('wp_parse_str')->alias(function ($str, &$result) { parse_str($str, $result); });
+        Functions\when('add_query_arg')->alias(fn ($args, $url) => $url);
+        $bd->shouldReceive('is_bot')->andReturn(false);
+        Functions\when('time')->justReturn($now);
+
+        // Consent granted + dedup enabled.
+        $con->shouldReceive('check')->once()->andReturn(true);
+        Filters\expectApplied('kntnt_ad_attr_dedup_seconds')->once()->andReturn(3600);
+
+        // The visitor's entry for the hash is 30 minutes old (inside the window).
+        $cm->shouldReceive('parse')->andReturn([$hash => $original]);
+
+        // A click row exists for exactly (hash, original timestamp).
+        $wpdb->shouldReceive('get_var')->once()->andReturn('7');
+
+        // Dedup hit — DB insert should NOT happen.
+        $wpdb->shouldNotReceive('insert');
+
+        // The cookie is re-sent with the ORIGINAL timestamp, not the current time.
+        $cm->shouldReceive('add')->once()->with([$hash => $original], $hash, $original)->andReturn([$hash => $original]);
+        $cm->shouldReceive('set_clicks_cookie')->once()->with([$hash => $original]);
+
+        Functions\expect('nocache_headers')->once();
+        Functions\expect('wp_redirect')->once()->andReturnUsing(fn () => throw new ExitException());
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class);
+
+        // The existence check matches the hash and the entry's timestamp exactly.
+        $lookup = array_values(array_filter($prepared, fn ($args) => str_contains($args[0], 'clicked_at')));
+        expect($lookup)->toHaveCount(1);
+        expect($lookup[0][0])->toContain('wp_kntnt_ad_attr_clicks');
+        expect(array_slice($lookup[0], 1))->toBe([$hash, '2023-11-14 21:43:20']);
+    });
+
+    it('records a new click and sets the entry to the new row time when no click row matches the entry', function () {
+        [$handler, $cm, $con, $bd, $cis] = make_click_handler();
+        $hash     = TestFactory::hash('dedup-self-heal');
+        $now      = 1700000000;             // 2023-11-14 22:13:20 UTC
+        $original = $now - 1800;
 
         Functions\expect('get_query_var')->once()->andReturn($hash);
         $cm->shouldReceive('validate_hash')->andReturn(true);
@@ -880,22 +937,25 @@ describe('Click_Handler::handle_click()', function () {
         Functions\when('add_query_arg')->alias(fn ($args, $url) => $url);
         $bd->shouldReceive('is_bot')->andReturn(false);
         Functions\when('time')->justReturn($now);
+        Functions\when('get_post_meta')->justReturn('existing');
 
-        // Consent granted + dedup enabled.
+        // Consent granted + dedup enabled, entry inside the window.
         $con->shouldReceive('check')->once()->andReturn(true);
         Filters\expectApplied('kntnt_ad_attr_dedup_seconds')->once()->andReturn(3600);
+        $cm->shouldReceive('parse')->andReturn([$hash => $original]);
 
-        // parse() is called twice: once in dedup check, once in set_cookie().
-        $cm->shouldReceive('parse')->andReturn([
-            $hash => $now - 1800,
-        ]);
+        // No click row for the entry (e.g. a cookie rewritten by an older version).
+        $wpdb->shouldReceive('get_var')->once()->andReturn(null);
 
-        // Dedup hit — DB insert should NOT happen.
-        $wpdb->shouldNotReceive('insert');
+        // Handled as a new click: a row is inserted at the current time …
+        $wpdb->shouldReceive('insert')
+            ->once()
+            ->with('wp_kntnt_ad_attr_clicks', Mockery::on(fn ($data) => $data['hash'] === $hash && $data['clicked_at'] === '2023-11-14 22:13:20'))
+            ->andReturn(true);
 
-        // Cookie should be refreshed with new timestamp.
-        $cm->shouldReceive('add')->once()->andReturn([$hash => $now]);
-        $cm->shouldReceive('set_clicks_cookie')->once();
+        // … and the entry is moved to that row's timestamp.
+        $cm->shouldReceive('add')->once()->with([$hash => $original], $hash, $now)->andReturn([$hash => $now]);
+        $cm->shouldReceive('set_clicks_cookie')->once()->with([$hash => $now]);
 
         Functions\expect('nocache_headers')->once();
         Functions\expect('wp_redirect')->once()->andReturnUsing(fn () => throw new ExitException());
