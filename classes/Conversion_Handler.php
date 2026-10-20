@@ -117,9 +117,11 @@ final class Conversion_Handler {
 	/**
 	 * Processes a conversion through the attribution flow.
 	 *
-	 * Steps: cookie parse → hash validation → per-hash deduplication →
-	 * attribution calculation → conversions DB write → dedup cookie →
-	 * recorded hook → reporter enqueueing.
+	 * Steps: cookie parse → hash validation → internal-traffic restriction
+	 * to test clicks → per-hash deduplication → attribution calculation →
+	 * conversions DB write → dedup cookie → test flag → recorded hook →
+	 * reporter enqueueing (test conversions only to reporters with
+	 * `supports_test`).
 	 *
 	 * @return void
 	 * @since 1.0.0
@@ -148,6 +150,17 @@ final class Conversion_Handler {
 		$valid_entries = $this->filter_valid_entries( $entries );
 		if ( empty( $valid_entries ) ) {
 			return;
+		}
+
+		// Step 2b: Internal traffic (e.g. logged-in staff) converts only on
+		// test clicks. Their other entries are ignored rather than credited,
+		// so staff testing a form cannot create a real conversion.
+		if ( Internal_Detector::is_internal() ) {
+			$valid_entries = $this->filter_test_entries( $valid_entries );
+			if ( empty( $valid_entries ) ) {
+				$this->logger?->info( 'CORE', 'Internal conversion ignored: no cookie entry points at a test click.' );
+				return;
+			}
 		}
 
 		// Step 3: Per-hash deduplication — remove hashes converted recently.
@@ -269,15 +282,28 @@ final class Conversion_Handler {
 			$this->cookie_manager->set_dedup_cookie( $last_conv_entries, $dedup_seconds );
 		}
 
+		// A conversion inherits the test flag from its clicks: if any
+		// recorded attribution links to a test click, the whole conversion
+		// is a test.
+		$is_test = $this->links_test_click( $linked_clicks );
+
 		// Step 8: Notify other components that a conversion was recorded.
 		do_action( 'kntnt_ad_attr_conversion_recorded', $recorded, [
 			'timestamp'  => gmdate( 'c' ),
 			'ip'         => $_SERVER['REMOTE_ADDR'] ?? '',
 			'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
+			'test'       => $is_test,
 		] );
 
 		// Step 9: Enqueue conversion reports for registered reporters.
 		$reporters = apply_filters( 'kntnt_ad_attr_conversion_reporters', [] );
+
+		// A test conversion reaches only reporters that declare test support,
+		// so a reporter unaware of test mode can never upload one by accident.
+		if ( $is_test ) {
+			$reporters = array_filter( $reporters, fn ( $reporter ) => ( $reporter['supports_test'] ?? false ) === true );
+		}
+
 		if ( ! empty( $reporters ) ) {
 
 			// Report what the credited click carried: its click IDs and
@@ -291,6 +317,7 @@ final class Conversion_Handler {
 				'ip'         => $_SERVER['REMOTE_ADDR'] ?? '',
 				'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
 				'page_url'   => home_url( $_SERVER['REQUEST_URI'] ?? '' ),
+				'test'       => $is_test,
 			];
 
 			foreach ( $reporters as $reporter_id => $reporter ) {
@@ -319,6 +346,19 @@ final class Conversion_Handler {
 
 			$this->queue_processor->schedule();
 		}
+
+		// A test is meant to be checked, so say where it went.
+		if ( $is_test ) {
+			$this->logger?->info( 'CORE', sprintf(
+				'Test conversion recorded for %s; passed to reporters with test support: %s.',
+				implode( ', ', array_map(
+					fn ( $hash, $click_row_id ) => sprintf( 'hash %s... (click row %d)', substr( $hash, 0, 8 ), $click_row_id ),
+					array_keys( $linked_clicks ),
+					$linked_clicks,
+				) ),
+				$reporters === [] ? 'none' : implode( ', ', array_keys( $reporters ) ),
+			) );
+		}
 	}
 
 	/**
@@ -336,6 +376,62 @@ final class Conversion_Handler {
 		$valid_hashes = Post_Type::get_valid_hashes( array_keys( $entries ) );
 
 		return array_intersect_key( $entries, array_flip( $valid_hashes ) );
+	}
+
+	/**
+	 * Filters cookie entries to those that point at a test click row.
+	 *
+	 * Uses the exact `(hash, clicked_at)` match of the click lookup, so an
+	 * entry kept here is one whose conversion links to a test click.
+	 *
+	 * @param array<string, int> $entries Hash => timestamp map from the cookie.
+	 *
+	 * @return array<string, int> The entries whose click row is a test click.
+	 * @since 1.10.0
+	 */
+	private function filter_test_entries( array $entries ): array {
+		global $wpdb;
+
+		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
+		$hashes       = array_keys( $entries );
+		$placeholders = implode( ',', array_fill( 0, count( $hashes ), '%s' ) );
+
+		$test_clicks = $wpdb->get_results( $wpdb->prepare(
+			"SELECT hash, clicked_at FROM {$clicks_table} WHERE is_test = 1 AND hash IN ({$placeholders})",
+			...$hashes,
+		) );
+
+		$test_entries = [];
+		foreach ( $test_clicks as $click ) {
+			if ( gmdate( 'Y-m-d H:i:s', $entries[ $click->hash ] ) === $click->clicked_at ) {
+				$test_entries[ $click->hash ] = $entries[ $click->hash ];
+			}
+		}
+
+		return $test_entries;
+	}
+
+	/**
+	 * Checks whether any of the given click rows is a test click.
+	 *
+	 * @param array<string, int> $linked_clicks Hash => ID of the attributed click row.
+	 *
+	 * @return bool True if at least one of the click rows is flagged as a test.
+	 * @since 1.10.0
+	 */
+	private function links_test_click( array $linked_clicks ): bool {
+		global $wpdb;
+
+		$clicks_table  = $wpdb->prefix . 'kntnt_ad_attr_clicks';
+		$click_row_ids = array_values( $linked_clicks );
+		$placeholders  = implode( ',', array_fill( 0, count( $click_row_ids ), '%d' ) );
+
+		$test_click_ids = $wpdb->get_col( $wpdb->prepare(
+			"SELECT id FROM {$clicks_table} WHERE is_test = 1 AND id IN ({$placeholders})",
+			...$click_row_ids,
+		) );
+
+		return $test_click_ids !== [];
 	}
 
 	/**

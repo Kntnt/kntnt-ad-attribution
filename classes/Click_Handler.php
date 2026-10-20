@@ -27,6 +27,18 @@ namespace Kntnt\Ad_Attribution;
 final class Click_Handler {
 
 	/**
+	 * Query parameter that makes a tracking-URL request a test click.
+	 *
+	 * A test click is processed like any other click, but its click row is
+	 * flagged as a test, so it and its conversions stay out of the
+	 * statistics and away from reporters that do not support tests.
+	 *
+	 * @var string
+	 * @since 1.10.0
+	 */
+	public const TEST_PARAM = 'kntnt_ad_attr_test';
+
+	/**
 	 * Cookie manager for reading/writing tracking cookies.
 	 *
 	 * @var Cookie_Manager
@@ -59,20 +71,32 @@ final class Click_Handler {
 	private readonly Click_ID_Store $click_id_store;
 
 	/**
+	 * Logger for diagnostic output, such as test clicks and skipped
+	 * internal requests.
+	 *
+	 * @var Logger|null
+	 * @since 1.10.0
+	 */
+	private readonly ?Logger $logger;
+
+	/**
 	 * Initializes the click handler with its dependencies.
 	 *
 	 * @param Cookie_Manager $cookie_manager  Cookie read/write operations.
 	 * @param Consent        $consent         Consent state resolution.
 	 * @param Bot_Detector   $bot_detector    Bot traffic detection.
 	 * @param Click_ID_Store $click_id_store  Platform-specific click ID storage.
+	 * @param Logger|null    $logger          Optional diagnostic logger.
 	 *
 	 * @since 1.0.0
+	 * @since 1.10.0 Takes an optional Logger.
 	 */
-	public function __construct( Cookie_Manager $cookie_manager, Consent $consent, Bot_Detector $bot_detector, Click_ID_Store $click_id_store ) {
+	public function __construct( Cookie_Manager $cookie_manager, Consent $consent, Bot_Detector $bot_detector, Click_ID_Store $click_id_store, ?Logger $logger = null ) {
 		$this->cookie_manager = $cookie_manager;
 		$this->consent        = $consent;
 		$this->bot_detector   = $bot_detector;
 		$this->click_id_store = $click_id_store;
+		$this->logger         = $logger;
 	}
 
 	/**
@@ -123,6 +147,7 @@ final class Click_Handler {
 	 *
 	 * Implements the 12-step click flow: hash extraction → validation →
 	 * database lookup → target resolution → loop guard → bot check →
+	 * internal-traffic check (skipped for test clicks) →
 	 * stats logging → consent check → cookie/transport → redirect.
 	 *
 	 * @return void
@@ -174,8 +199,11 @@ final class Click_Handler {
 		// Forward incoming query parameters to the target URL. Target URL
 		// parameters take precedence over incoming ones so that the site
 		// owner's configuration cannot be overridden by the ad platform.
+		// The test parameter is the plugin's own and never reaches the
+		// landing page.
+		$is_test_click   = sanitize_text_field( $_GET[ self::TEST_PARAM ] ?? '' ) === '1';
 		$incoming_params = array_map( 'sanitize_text_field', $_GET );
-		unset( $incoming_params['kntnt_ad_attr_hash'] );
+		unset( $incoming_params['kntnt_ad_attr_hash'], $incoming_params[ self::TEST_PARAM ] );
 
 		$target_query  = wp_parse_url( $target_url, PHP_URL_QUERY ) ?? '';
 		$target_params = [];
@@ -215,6 +243,18 @@ final class Click_Handler {
 			$this->redirect( $target_url );
 		}
 
+		// Step 9b: Internal traffic (e.g. logged-in staff) is handled like a
+		// bot, so checking the site's own ads leaves no trace. A test click
+		// is the exception: it is how staff test the setup end to end.
+		if ( ! $is_test_click && Internal_Detector::is_internal() ) {
+			$this->logger?->info( 'CORE', sprintf(
+				'Internal request to hash %s... redirected without recording a click (append ?%s=1 to test).',
+				substr( $hash, 0, 8 ),
+				self::TEST_PARAM,
+			) );
+			$this->redirect( $target_url );
+		}
+
 		// Capture the current time once for consistent timestamps across
 		// click recording and cookie storage.
 		$now     = time();
@@ -226,10 +266,12 @@ final class Click_Handler {
 		// Step 10b: Click deduplication — skip DB insert when the same hash
 		// was already clicked within the dedup window and consent allows
 		// reading the cookie. Without consent we cannot read the cookie,
-		// so dedup is only possible when consent is granted.
+		// so dedup is only possible when consent is granted. A test click is
+		// never a duplicate: reusing an earlier ordinary click would leave no
+		// test row, and a conversion would then be reported as real.
 		$dedup_seconds = (int) apply_filters( 'kntnt_ad_attr_dedup_seconds', 0 );
 
-		if ( $consent_state === true && $dedup_seconds > 0 ) {
+		if ( $consent_state === true && $dedup_seconds > 0 && ! $is_test_click ) {
 			$existing = $this->cookie_manager->parse();
 			if ( isset( $existing[ $hash ] ) && ( $now - $existing[ $hash ] ) < $dedup_seconds ) {
 
@@ -267,8 +309,17 @@ final class Click_Handler {
 			'utm_term'            => $click_term !== '' ? mb_substr( $click_term, 0, 255 ) : null,
 			'utm_id'              => $click_id_val !== '' ? mb_substr( $click_id_val, 0, 255 ) : null,
 			'utm_source_platform' => $click_group !== '' ? mb_substr( $click_group, 0, 255 ) : null,
+			'is_test'             => $is_test_click ? 1 : 0,
 		] );
 		$click_row_id = $inserted ? (int) $wpdb->insert_id : 0;
+
+		if ( $is_test_click && $click_row_id > 0 ) {
+			$this->logger?->info( 'CORE', sprintf(
+				'Test click recorded for hash %s..., click row %d.',
+				substr( $hash, 0, 8 ),
+				$click_row_id,
+			) );
+		}
 
 		// Capture platform-specific click IDs via registered capturers. Each
 		// ID belongs to the click row just inserted, so a conversion linked

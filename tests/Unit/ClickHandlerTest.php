@@ -13,6 +13,7 @@ use Kntnt\Ad_Attribution\Cookie_Manager;
 use Kntnt\Ad_Attribution\Consent;
 use Kntnt\Ad_Attribution\Bot_Detector;
 use Kntnt\Ad_Attribution\Click_ID_Store;
+use Kntnt\Ad_Attribution\Logger;
 use Brain\Monkey\Functions;
 use Brain\Monkey\Actions;
 use Brain\Monkey\Filters;
@@ -1175,6 +1176,211 @@ describe('Click_Handler::handle_click()', function () {
 
         Functions\expect('nocache_headers')->once();
         Functions\expect('wp_redirect')->once()->andReturnUsing(fn () => throw new ExitException());
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class);
+    });
+
+});
+
+// ─── Internal traffic and test clicks ───
+
+/**
+ * Stubs a tracking-URL request up to the bot check, with the given query
+ * parameters, and captures the redirect URL instead of exiting.
+ *
+ * @param array<string, string> $query  Incoming query parameters ($_GET).
+ * @param Logger|null           $logger Logger to inject, if any.
+ *
+ * @return array{0: Click_Handler, 1: Mockery\MockInterface, 2: Mockery\MockInterface, 3: Mockery\MockInterface, 4: Mockery\MockInterface, 5: Mockery\MockInterface, 6: string, 7: \ArrayObject}
+ *         Handler, its four dependencies, wpdb, the hash, and ['url' => redirect URL].
+ */
+function setup_click_request(array $query = [], ?Logger $logger = null): array {
+    [, $cm, $con, $bd, $cis] = make_click_handler();
+    $handler = new Click_Handler($cm, $con, $bd, $cis, $logger);
+    $hash = TestFactory::hash('internal-or-test');
+
+    $_GET = $query;
+
+    Functions\expect('get_query_var')->once()->andReturn($hash);
+    $cm->shouldReceive('validate_hash')->andReturn(true);
+
+    $wpdb = TestFactory::wpdb();
+    $wpdb->shouldReceive('prepare')->andReturn('SQL');
+    $wpdb->shouldReceive('get_row')->once()->andReturn((object) ['ID' => 10, 'target_post_id' => '20']);
+    $GLOBALS['wpdb'] = $wpdb;
+
+    Functions\expect('get_permalink')->once()->andReturn('https://example.com/page/');
+    Functions\when('wp_parse_url')->alias(fn ($url, $comp) => parse_url($url, $comp));
+    Functions\when('add_query_arg')->alias(fn ($args, $url) => $url . '?' . http_build_query($args));
+    Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
+    Functions\when('get_post_meta')->justReturn('existing');
+
+    $bd->shouldReceive('is_bot')->andReturn(false);
+
+    $redirect = new \ArrayObject();
+    Functions\when('nocache_headers')->justReturn(null);
+    Functions\when('wp_redirect')->alias(function ($url) use ($redirect) {
+        $redirect['url'] = $url;
+        throw new ExitException('redirect');
+    });
+
+    return [$handler, $cm, $con, $bd, $cis, $wpdb, $hash, $redirect];
+}
+
+describe('Click_Handler::handle_click() internal traffic and test clicks', function () {
+
+    afterEach(function () {
+        unset($GLOBALS['wpdb']);
+        $_GET = [];
+    });
+
+    it('redirects an internal request with query forwarding and records nothing', function () {
+        [$handler, $cm, $con, , $cis, $wpdb, , $redirect] = setup_click_request(['gclid' => 'abc']);
+
+        Filters\expectApplied('kntnt_ad_attr_is_internal')->andReturn(true);
+
+        $wpdb->shouldNotReceive('insert');
+        $cis->shouldNotReceive('store');
+        $con->shouldNotReceive('check');
+        $cm->shouldNotReceive('set_clicks_cookie');
+        $cm->shouldNotReceive('set_transport_cookie');
+        Actions\expectDone('kntnt_ad_attr_click')->never();
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class);
+        expect($redirect['url'])->toBe('https://example.com/page/?gclid=abc');
+    });
+
+    it('records a test click by an external visitor as a test and does not forward the parameter', function () {
+        [$handler, $cm, $con, , , $wpdb, , $redirect] = setup_click_request(['kntnt_ad_attr_test' => '1', 'gclid' => 'abc']);
+
+        $con->shouldReceive('check')->andReturn(true);
+        $cm->shouldReceive('parse')->andReturn([]);
+        $cm->shouldReceive('add')->andReturn([]);
+        $cm->shouldReceive('set_clicks_cookie')->once();
+
+        $inserted = null;
+        $wpdb->shouldReceive('insert')->once()->andReturnUsing(function ($table, $data) use (&$inserted) {
+            $inserted = $data;
+            return 1;
+        });
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class);
+        expect($inserted['is_test'])->toBe(1)
+            ->and($redirect['url'])->toBe('https://example.com/page/?gclid=abc');
+    });
+
+    it('records a test click by an internal user like any test click', function () {
+        [$handler, $cm, $con, , , $wpdb, $hash, $redirect] = setup_click_request(['kntnt_ad_attr_test' => '1']);
+
+        Filters\expectApplied('kntnt_ad_attr_is_internal')->andReturn(true);
+
+        $con->shouldReceive('check')->andReturn(true);
+        $cm->shouldReceive('parse')->andReturn([]);
+        $cm->shouldReceive('add')->andReturn([]);
+        $cm->shouldReceive('set_clicks_cookie')->once();
+        Actions\expectDone('kntnt_ad_attr_click')->once();
+
+        $inserted = null;
+        $wpdb->shouldReceive('insert')->once()->andReturnUsing(function ($table, $data) use (&$inserted) {
+            $inserted = $data;
+            return 1;
+        });
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class);
+        expect($inserted['is_test'])->toBe(1)
+            ->and($redirect['url'])->toBe('https://example.com/page/');
+    });
+
+    it('records an ordinary click with the test flag off', function () {
+        [$handler, $cm, $con, , , $wpdb] = setup_click_request(['kntnt_ad_attr_test' => '0']);
+
+        $con->shouldReceive('check')->andReturn(true);
+        $cm->shouldReceive('parse')->andReturn([]);
+        $cm->shouldReceive('add')->andReturn([]);
+        $cm->shouldReceive('set_clicks_cookie')->once();
+
+        $inserted = null;
+        $wpdb->shouldReceive('insert')->once()->andReturnUsing(function ($table, $data) use (&$inserted) {
+            $inserted = $data;
+            return 1;
+        });
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class);
+        expect($inserted['is_test'])->toBe(0);
+    });
+
+    it('records a test click inside the dedup window instead of reusing the earlier click', function () {
+        [$handler, $cm, $con, , , $wpdb, $hash] = setup_click_request(['kntnt_ad_attr_test' => '1']);
+        $now = 1700000000;
+
+        Functions\when('time')->justReturn($now);
+        Filters\expectApplied('kntnt_ad_attr_dedup_seconds')->andReturn(86400);
+
+        // An ordinary click on the same hash ten minutes ago, with its row.
+        $con->shouldReceive('check')->andReturn(true);
+        $cm->shouldReceive('parse')->andReturn([$hash => $now - 600]);
+        $wpdb->shouldReceive('get_var')->andReturn('5');
+
+        $inserted = null;
+        $wpdb->shouldReceive('insert')->once()->andReturnUsing(function ($table, $data) use (&$inserted) {
+            $inserted = $data;
+            return 1;
+        });
+
+        // The cookie entry moves to the test click, so a conversion links to it.
+        $cm->shouldReceive('add')->once()->with([$hash => $now - 600], $hash, $now)->andReturn([$hash => $now]);
+        $cm->shouldReceive('set_clicks_cookie')->once()->with([$hash => $now]);
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class);
+        expect($inserted['is_test'])->toBe(1);
+    });
+
+    it('logs a recorded test click with its hash prefix and click row', function () {
+        $logger = Mockery::mock(Logger::class);
+        [$handler, $cm, $con, , , $wpdb, $hash] = setup_click_request(['kntnt_ad_attr_test' => '1'], $logger);
+
+        $con->shouldReceive('check')->andReturn(true);
+        $cm->shouldReceive('parse')->andReturn([]);
+        $cm->shouldReceive('add')->andReturn([]);
+        $cm->shouldReceive('set_clicks_cookie');
+        $wpdb->shouldReceive('insert')->once()->andReturnUsing(function () use ($wpdb) {
+            $wpdb->insert_id = 31;
+            return 1;
+        });
+
+        $logger->shouldReceive('info')->once()->with('CORE', Mockery::on(
+            fn ($message) => str_contains($message, 'Test click')
+                && str_contains($message, substr($hash, 0, 8))
+                && str_contains($message, '31'),
+        ));
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class);
+    });
+
+    it('logs an internal request that was not recorded', function () {
+        $logger = Mockery::mock(Logger::class);
+        [$handler, , , , , , $hash] = setup_click_request([], $logger);
+
+        Filters\expectApplied('kntnt_ad_attr_is_internal')->andReturn(true);
+
+        $logger->shouldReceive('info')->once()->with('CORE', Mockery::on(
+            fn ($message) => str_contains($message, 'Internal') && str_contains($message, substr($hash, 0, 8)),
+        ));
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class);
+    });
+
+    it('logs nothing for an ordinary click', function () {
+        $logger = Mockery::mock(Logger::class);
+        [$handler, $cm, $con, , , $wpdb] = setup_click_request([], $logger);
+
+        $con->shouldReceive('check')->andReturn(true);
+        $cm->shouldReceive('parse')->andReturn([]);
+        $cm->shouldReceive('add')->andReturn([]);
+        $cm->shouldReceive('set_clicks_cookie');
+        $wpdb->shouldReceive('insert')->once()->andReturn(1);
+
+        $logger->shouldNotReceive('info');
 
         expect(fn () => $handler->handle_click())->toThrow(ExitException::class);
     });

@@ -82,6 +82,14 @@ final class Plugin {
 	public readonly Bot_Detector $bot_detector;
 
 	/**
+	 * Internal traffic detector component instance.
+	 *
+	 * @var Internal_Detector
+	 * @since 1.10.0
+	 */
+	public readonly Internal_Detector $internal_detector;
+
+	/**
 	 * Click handler component instance.
 	 *
 	 * @var Click_Handler
@@ -211,10 +219,11 @@ final class Plugin {
 		$this->cookie_manager       = new Cookie_Manager();
 		$this->consent              = new Consent();
 		$this->bot_detector         = new Bot_Detector();
+		$this->internal_detector    = new Internal_Detector();
 		$this->click_id_store       = new Click_ID_Store();
 		$this->queue                = new Queue( $this->settings );
 		$this->queue_processor      = new Queue_Processor( $this->queue, $this->logger );
-		$this->click_handler        = new Click_Handler( $this->cookie_manager, $this->consent, $this->bot_detector, $this->click_id_store );
+		$this->click_handler        = new Click_Handler( $this->cookie_manager, $this->consent, $this->bot_detector, $this->click_id_store, $this->logger );
 		$this->conversion_handler   = new Conversion_Handler( $this->cookie_manager, $this->consent, $this->bot_detector, $this->click_id_store, $this->queue, $this->queue_processor, $this->logger );
 		$this->cron                 = new Cron( $this->click_id_store, $this->queue, $this->logger );
 		$this->admin_page           = new Admin_Page( $this->queue, $this->queue_processor, $this->settings, $this->logger );
@@ -422,6 +431,9 @@ final class Plugin {
 
 		// Register bot detection filters and robots.txt rule.
 		$this->bot_detector->register();
+
+		// Register the default internal traffic detection (logged-in staff).
+		$this->internal_detector->register();
 
 		// Register rewrite rule, query var, and click handler.
 		$this->click_handler->register();

@@ -22,6 +22,21 @@ use Brain\Monkey\Filters;
 use Tests\Helpers\TestFactory;
 
 /**
+ * Creates a mock $wpdb whose clicks table holds no test clicks.
+ *
+ * The handler asks whether a recorded conversion links to a test click
+ * (via get_col); here the answer is always "none", so tests of ordinary
+ * conversions need not stub it. Tests can still override get_col.
+ *
+ * @return Mockery\MockInterface Mock wpdb object.
+ */
+function wpdb_without_test_clicks(): Mockery\MockInterface {
+    $wpdb = TestFactory::wpdb();
+    $wpdb->shouldReceive('get_col')->andReturn([])->byDefault();
+    return $wpdb;
+}
+
+/**
  * Creates a Conversion_Handler with fresh mocked dependencies.
  *
  * The Bot_Detector mock defaults to is_bot() => false and the Consent mock
@@ -75,7 +90,7 @@ function setup_conversion_path(): array {
     );
 
     // Database mock.
-    $wpdb = TestFactory::wpdb();
+    $wpdb = wpdb_without_test_clicks();
     $GLOBALS['wpdb'] = $wpdb;
 
     // Transaction bookends.
@@ -223,7 +238,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
             ->once()
             ->andReturnUsing(fn ($attributions) => array_map(fn () => 0.5, $attributions));
 
-        $wpdb = TestFactory::wpdb();
+        $wpdb = wpdb_without_test_clicks();
         $GLOBALS['wpdb'] = $wpdb;
 
         $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
@@ -268,7 +283,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
 
         // Capture prepared queries to prove only the exact match is tried.
         $prepared = [];
-        $wpdb = TestFactory::wpdb();
+        $wpdb = wpdb_without_test_clicks();
         $GLOBALS['wpdb'] = $wpdb;
         $wpdb->shouldReceive('prepare')->andReturnUsing(function (...$args) use (&$prepared) {
             $prepared[] = $args;
@@ -331,7 +346,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
         $cm->shouldNotReceive('parse')->with('_ad_last_conv');
         $cm->shouldNotReceive('set_dedup_cookie');
 
-        $wpdb = TestFactory::wpdb();
+        $wpdb = wpdb_without_test_clicks();
         $GLOBALS['wpdb'] = $wpdb;
         $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
         $wpdb->shouldReceive('prepare')->andReturn('SQL');
@@ -376,7 +391,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
             $hash_a => $now - 1800,
         ]);
 
-        $wpdb = TestFactory::wpdb();
+        $wpdb = wpdb_without_test_clicks();
         $GLOBALS['wpdb'] = $wpdb;
         $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
         $wpdb->shouldReceive('prepare')->andReturn('SQL');
@@ -460,7 +475,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
             $hash => $now - 90000,
         ]);
 
-        $wpdb = TestFactory::wpdb();
+        $wpdb = wpdb_without_test_clicks();
         $GLOBALS['wpdb'] = $wpdb;
         $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
         $wpdb->shouldReceive('prepare')->andReturn('SQL');
@@ -500,7 +515,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
             fn (array $hashes) => array_filter($hashes, fn ($h) => str_contains($h, substr(hash('sha256', 'valid'), 0, 8))),
         );
 
-        $wpdb = TestFactory::wpdb();
+        $wpdb = wpdb_without_test_clicks();
         $GLOBALS['wpdb'] = $wpdb;
 
         $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
@@ -541,7 +556,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
             fn (array $hashes) => $hashes,
         );
 
-        $wpdb = TestFactory::wpdb();
+        $wpdb = wpdb_without_test_clicks();
         $GLOBALS['wpdb'] = $wpdb;
 
         $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
@@ -593,7 +608,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
             ->once()
             ->andReturnUsing(fn ($attributions) => array_map(fn () => 0.5, $attributions));
 
-        $wpdb = TestFactory::wpdb();
+        $wpdb = wpdb_without_test_clicks();
         $GLOBALS['wpdb'] = $wpdb;
 
         $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
@@ -636,7 +651,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
             fn (array $hashes) => $hashes,
         );
 
-        $wpdb = TestFactory::wpdb();
+        $wpdb = wpdb_without_test_clicks();
         $GLOBALS['wpdb'] = $wpdb;
 
         // Verify transaction ordering.
@@ -670,7 +685,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
             fn (array $hashes) => $hashes,
         );
 
-        $wpdb = TestFactory::wpdb();
+        $wpdb = wpdb_without_test_clicks();
         $GLOBALS['wpdb'] = $wpdb;
 
         $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
@@ -707,7 +722,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
             fn (array $hashes) => $hashes,
         );
 
-        $wpdb = TestFactory::wpdb();
+        $wpdb = wpdb_without_test_clicks();
         $GLOBALS['wpdb'] = $wpdb;
         $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
         $wpdb->shouldReceive('prepare')->andReturn('SQL');
@@ -747,7 +762,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
             fn (array $hashes) => $hashes,
         );
 
-        $wpdb = TestFactory::wpdb();
+        $wpdb = wpdb_without_test_clicks();
         $GLOBALS['wpdb'] = $wpdb;
         $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
         $wpdb->shouldReceive('prepare')->andReturn('SQL');
@@ -783,7 +798,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
             fn (array $hashes) => $hashes,
         );
 
-        $wpdb = TestFactory::wpdb();
+        $wpdb = wpdb_without_test_clicks();
         $GLOBALS['wpdb'] = $wpdb;
         $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
         $wpdb->shouldReceive('prepare')->andReturn('SQL');
@@ -843,7 +858,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
             fn (array $hashes) => $hashes,
         );
 
-        $wpdb = TestFactory::wpdb();
+        $wpdb = wpdb_without_test_clicks();
         $GLOBALS['wpdb'] = $wpdb;
         $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
         $wpdb->shouldReceive('prepare')->andReturn('SQL');
@@ -901,7 +916,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
             fn (array $hashes) => $hashes,
         );
 
-        $wpdb = TestFactory::wpdb();
+        $wpdb = wpdb_without_test_clicks();
         $GLOBALS['wpdb'] = $wpdb;
         $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
         $wpdb->shouldReceive('prepare')->andReturn('SQL');
@@ -967,7 +982,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
             fn (array $hashes) => $hashes,
         );
 
-        $wpdb = TestFactory::wpdb();
+        $wpdb = wpdb_without_test_clicks();
         $GLOBALS['wpdb'] = $wpdb;
         $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
         $wpdb->shouldReceive('prepare')->andReturn('SQL');
@@ -1073,7 +1088,7 @@ describe('Conversion_Handler::handle_conversion() recorded attributions', functi
         Filters\expectApplied('kntnt_ad_attr_dedup_seconds')->andReturn(3600);
         $cm->shouldReceive('parse')->with('_ad_last_conv')->andReturn([]);
 
-        $wpdb = TestFactory::wpdb();
+        $wpdb = wpdb_without_test_clicks();
         $GLOBALS['wpdb'] = $wpdb;
         $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
         $wpdb->shouldReceive('query')->with('COMMIT')->once();
@@ -1134,7 +1149,7 @@ describe('Conversion_Handler::handle_conversion() recorded attributions', functi
             ->once()
             ->andReturn([$hash_a => 0.5, $hash_b => 0.5]);
 
-        $wpdb = TestFactory::wpdb();
+        $wpdb = wpdb_without_test_clicks();
         $GLOBALS['wpdb'] = $wpdb;
         $wpdb->shouldReceive('query')->with('START TRANSACTION')->once();
         $wpdb->shouldReceive('query')->with('COMMIT')->once();
@@ -1270,7 +1285,7 @@ function make_per_click_conversion(array $cookie, array $clicks, array $click_id
 
     $by_id = array_column($clicks, null, 'id');
 
-    $wpdb = TestFactory::wpdb();
+    $wpdb = wpdb_without_test_clicks();
     $GLOBALS['wpdb'] = $wpdb;
     $wpdb->shouldReceive('query');
     $wpdb->shouldReceive('insert')->andReturn(1);
@@ -1440,6 +1455,324 @@ describe('Conversion_Handler::handle_conversion() per-click reporting', function
                 'utm_source_platform' => 'group-a',
             ],
         ]);
+    });
+
+});
+
+// ─── Internal traffic and test conversions ───
+
+/**
+ * Builds a Conversion_Handler backed by an in-memory fake of the clicks
+ * table, for conversions that may involve test clicks.
+ *
+ * The fake answers the click lookup by exact (hash, clicked_at), the
+ * test-click lookups by hash or by click row ID, and records the conversion
+ * rows written, the recorded action's arguments and every reporter's
+ * enqueue call. Click rows carry `is_test` (default 0).
+ *
+ * @param array<string, int>               $cookie    Hash => cookie timestamp.
+ * @param array<int, array<string, mixed>> $clicks    Click rows: id, hash, clicked_at, is_test.
+ * @param array<string, array>             $reporters Reporter ID => definition; enqueue is replaced by a recorder.
+ * @param Logger|null                      $logger    Logger to inject, if any.
+ *
+ * @return array{0: Conversion_Handler, 1: \ArrayObject} Handler and what it did:
+ *         'conversions' (inserted rows), 'transactions' (started), 'recorded'
+ *         (action calls: [attributions, context]), 'enqueued' (reporter ID => [attributions, context]).
+ */
+function make_test_mode_conversion(array $cookie, array $clicks, array $reporters = [], ?Logger $logger = null): array {
+    $cm  = Mockery::mock(Cookie_Manager::class);
+    $con = Mockery::mock(Consent::class);
+    $bd  = Mockery::mock(Bot_Detector::class);
+    $cis = Mockery::mock(Click_ID_Store::class);
+    $q   = Mockery::mock(Queue::class);
+    $qp  = Mockery::mock(Queue_Processor::class);
+
+    $bd->shouldReceive('is_bot')->andReturn(false);
+    $con->shouldReceive('check')->andReturn(true);
+    $cm->shouldReceive('parse')->with('_ad_clicks')->andReturn($cookie);
+    $cis->shouldReceive('get_for_clicks')->andReturn([]);
+    $q->shouldReceive('enqueue');
+    $qp->shouldReceive('schedule');
+
+    \Patchwork\redefine(
+        'Kntnt\Ad_Attribution\Post_Type::get_valid_hashes',
+        fn (array $hashes) => $hashes,
+    );
+
+    $clicks = array_map(fn ($click) => $click + ['is_test' => 0], $clicks);
+    $did    = new \ArrayObject(['conversions' => [], 'transactions' => 0, 'recorded' => [], 'enqueued' => []]);
+
+    $wpdb = wpdb_without_test_clicks();
+    $GLOBALS['wpdb'] = $wpdb;
+
+    $wpdb->shouldReceive('query')->andReturnUsing(function ($sql) use ($did) {
+        if ($sql === 'START TRANSACTION') {
+            $did['transactions']++;
+        }
+        return true;
+    });
+    $wpdb->shouldReceive('insert')->andReturnUsing(function ($table, $row) use ($did) {
+        $did['conversions'] = [...$did['conversions'], $row];
+        return 1;
+    });
+
+    $prepared = [];
+    $wpdb->shouldReceive('prepare')->andReturnUsing(function ($sql, ...$args) use (&$prepared) {
+        $prepared[] = [$sql, $args];
+        return count($prepared) - 1;
+    });
+
+    // The click lookup: exact (hash, clicked_at).
+    $wpdb->shouldReceive('get_var')->andReturnUsing(function ($token) use (&$prepared, $clicks) {
+        [, [$hash, $clicked_at]] = $prepared[$token];
+        foreach ($clicks as $click) {
+            if ($click['hash'] === $hash && $click['clicked_at'] === $clicked_at) {
+                return (string) $click['id'];
+            }
+        }
+        return null;
+    });
+
+    // Test click rows by hash; other row queries find nothing.
+    $wpdb->shouldReceive('get_results')->andReturnUsing(function ($token) use (&$prepared, $clicks) {
+        [$sql, $args] = $prepared[$token];
+        if (!str_contains($sql, 'is_test = 1')) {
+            return [];
+        }
+        return array_values(array_map(
+            fn ($click) => (object) ['hash' => $click['hash'], 'clicked_at' => $click['clicked_at']],
+            array_filter($clicks, fn ($click) => $click['is_test'] === 1 && in_array($click['hash'], $args, true)),
+        ));
+    });
+
+    // Test click row IDs among the given IDs.
+    $wpdb->shouldReceive('get_col')->andReturnUsing(function ($token) use (&$prepared, $clicks) {
+        [$sql, $args] = $prepared[$token];
+        if (!str_contains($sql, 'is_test = 1')) {
+            return [];
+        }
+        return array_values(array_map(
+            fn ($click) => (string) $click['id'],
+            array_filter($clicks, fn ($click) => $click['is_test'] === 1 && in_array($click['id'], $args, true)),
+        ));
+    });
+
+    Actions\expectDone('kntnt_ad_attr_conversion_recorded')->zeroOrMoreTimes()->whenHappen(
+        function ($attributions, $context) use ($did) {
+            $did['recorded'] = [...$did['recorded'], [$attributions, $context]];
+        },
+    );
+
+    foreach ($reporters as $id => $reporter) {
+        $reporters[$id]['enqueue'] = function ($attributions, $click_ids, $campaigns, $context) use ($did, $id) {
+            $did['enqueued'] = $did['enqueued'] + [$id => [$attributions, $context]];
+            return [];
+        };
+    }
+    Filters\expectApplied('kntnt_ad_attr_conversion_reporters')->andReturn($reporters);
+
+    $_SERVER['REMOTE_ADDR']     = '127.0.0.1';
+    $_SERVER['HTTP_USER_AGENT'] = 'TestAgent';
+    $_SERVER['REQUEST_URI']     = '/thank-you/';
+    Functions\when('home_url')->alias(fn ($path) => 'https://example.com' . $path);
+
+    return [new Conversion_Handler($cm, $con, $bd, $cis, $q, $qp, $logger), $did];
+}
+
+describe('Conversion_Handler::handle_conversion() internal traffic and test conversions', function () {
+
+    afterEach(function () {
+        unset($GLOBALS['wpdb']);
+        unset($_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], $_SERVER['REQUEST_URI']);
+    });
+
+    it('writes, announces and reports nothing for an internal conversion without test clicks', function () {
+        $hash = TestFactory::hash('internal-real');
+
+        [$handler, $did] = make_test_mode_conversion(
+            [$hash => strtotime('2024-03-01 10:00:00 UTC')],
+            [['id' => 1, 'hash' => $hash, 'clicked_at' => '2024-03-01 10:00:00']],
+            ['probe' => ['supports_test' => true]],
+        );
+        Filters\expectApplied('kntnt_ad_attr_is_internal')->andReturn(true);
+
+        $handler->handle_conversion();
+
+        expect($did['transactions'])->toBe(0)
+            ->and($did['conversions'])->toBe([])
+            ->and($did['recorded'])->toBe([])
+            ->and($did['enqueued'])->toBe([]);
+    });
+
+    it('credits only the test click for an internal conversion, even when an ordinary click is more recent', function () {
+        $test_hash = TestFactory::hash('internal-test');
+        $real_hash = TestFactory::hash('internal-later-real');
+
+        [$handler, $did] = make_test_mode_conversion(
+            [
+                $test_hash => strtotime('2024-03-01 10:00:00 UTC'),
+                $real_hash => strtotime('2024-03-01 11:00:00 UTC'),
+            ],
+            [
+                ['id' => 1, 'hash' => $test_hash, 'clicked_at' => '2024-03-01 10:00:00', 'is_test' => 1],
+                ['id' => 2, 'hash' => $real_hash, 'clicked_at' => '2024-03-01 11:00:00'],
+            ],
+        );
+        Filters\expectApplied('kntnt_ad_attr_is_internal')->andReturn(true);
+
+        $handler->handle_conversion();
+
+        expect(array_column($did['conversions'], 'click_id'))->toBe([1])
+            ->and($did['recorded'][0][0])->toBe([$test_hash => 1.0]);
+    });
+
+    it('records a conversion after a test click and announces it as a test', function () {
+        $hash = TestFactory::hash('external-test');
+
+        [$handler, $did] = make_test_mode_conversion(
+            [$hash => strtotime('2024-03-01 10:00:00 UTC')],
+            [['id' => 7, 'hash' => $hash, 'clicked_at' => '2024-03-01 10:00:00', 'is_test' => 1]],
+        );
+
+        $handler->handle_conversion();
+
+        expect(array_column($did['conversions'], 'click_id'))->toBe([7])
+            ->and($did['recorded'][0][1]['test'])->toBeTrue();
+    });
+
+    it('announces an ordinary conversion as not a test', function () {
+        $hash = TestFactory::hash('external-real');
+
+        [$handler, $did] = make_test_mode_conversion(
+            [$hash => strtotime('2024-03-01 10:00:00 UTC')],
+            [['id' => 8, 'hash' => $hash, 'clicked_at' => '2024-03-01 10:00:00']],
+        );
+
+        $handler->handle_conversion();
+
+        expect($did['recorded'][0][1]['test'])->toBeFalse();
+    });
+
+    it('treats a multi-touch conversion as a test when any recorded attribution links to a test click', function () {
+        $test_hash = TestFactory::hash('multi-test');
+        $real_hash = TestFactory::hash('multi-real');
+
+        [$handler, $did] = make_test_mode_conversion(
+            [
+                $test_hash => strtotime('2024-03-01 10:00:00 UTC'),
+                $real_hash => strtotime('2024-03-01 11:00:00 UTC'),
+            ],
+            [
+                ['id' => 1, 'hash' => $test_hash, 'clicked_at' => '2024-03-01 10:00:00', 'is_test' => 1],
+                ['id' => 2, 'hash' => $real_hash, 'clicked_at' => '2024-03-01 11:00:00'],
+            ],
+        );
+        Filters\expectApplied('kntnt_ad_attr_attribution')->andReturn([$test_hash => 0.5, $real_hash => 0.5]);
+
+        $handler->handle_conversion();
+
+        expect($did['recorded'][0][1]['test'])->toBeTrue();
+    });
+
+    it('reports a test conversion only to reporters that support tests, flagged as a test', function () {
+        $hash = TestFactory::hash('report-test');
+
+        [$handler, $did] = make_test_mode_conversion(
+            [$hash => strtotime('2024-03-01 10:00:00 UTC')],
+            [['id' => 7, 'hash' => $hash, 'clicked_at' => '2024-03-01 10:00:00', 'is_test' => 1]],
+            [
+                'unaware' => [],
+                'opted_out' => ['supports_test' => false],
+                'aware'   => ['supports_test' => true],
+            ],
+        );
+
+        $handler->handle_conversion();
+
+        expect(array_keys($did['enqueued']))->toBe(['aware'])
+            ->and($did['enqueued']['aware'][1]['test'])->toBeTrue();
+    });
+
+    it('reports an ordinary conversion to every reporter, flagged as not a test', function () {
+        $hash = TestFactory::hash('report-real');
+
+        [$handler, $did] = make_test_mode_conversion(
+            [$hash => strtotime('2024-03-01 10:00:00 UTC')],
+            [['id' => 8, 'hash' => $hash, 'clicked_at' => '2024-03-01 10:00:00']],
+            [
+                'unaware' => [],
+                'aware'   => ['supports_test' => true],
+            ],
+        );
+
+        $handler->handle_conversion();
+
+        expect(array_keys($did['enqueued']))->toBe(['unaware', 'aware'])
+            ->and($did['enqueued']['unaware'][1]['test'])->toBeFalse()
+            ->and($did['enqueued']['aware'][1]['test'])->toBeFalse();
+    });
+
+    it('logs a test conversion with its click and the reporters it was passed to', function () {
+        $hash   = TestFactory::hash('log-test');
+        $logger = Mockery::mock(Logger::class);
+
+        [$handler] = make_test_mode_conversion(
+            [$hash => strtotime('2024-03-01 10:00:00 UTC')],
+            [['id' => 7, 'hash' => $hash, 'clicked_at' => '2024-03-01 10:00:00', 'is_test' => 1]],
+            ['unaware' => [], 'aware' => ['supports_test' => true]],
+            $logger,
+        );
+
+        $logger->shouldReceive('info')->once()->with('CORE', Mockery::on(
+            fn ($message) => str_contains($message, 'Test conversion')
+                && str_contains($message, substr($hash, 0, 8))
+                && str_contains($message, 'aware')
+                && !str_contains($message, 'unaware'),
+        ));
+
+        $handler->handle_conversion();
+
+        // Mockery expectations alone don't count as assertions.
+        expect(true)->toBeTrue();
+    });
+
+    it('logs an internal conversion that was ignored', function () {
+        $hash   = TestFactory::hash('log-internal');
+        $logger = Mockery::mock(Logger::class);
+
+        [$handler] = make_test_mode_conversion(
+            [$hash => strtotime('2024-03-01 10:00:00 UTC')],
+            [['id' => 1, 'hash' => $hash, 'clicked_at' => '2024-03-01 10:00:00']],
+            [],
+            $logger,
+        );
+        Filters\expectApplied('kntnt_ad_attr_is_internal')->andReturn(true);
+
+        $logger->shouldReceive('info')->once()->with('CORE', Mockery::on(fn ($message) => str_contains($message, 'Internal conversion')));
+
+        $handler->handle_conversion();
+
+        // Mockery expectations alone don't count as assertions.
+        expect(true)->toBeTrue();
+    });
+
+    it('logs nothing for an ordinary conversion', function () {
+        $hash   = TestFactory::hash('log-real');
+        $logger = Mockery::mock(Logger::class);
+
+        [$handler] = make_test_mode_conversion(
+            [$hash => strtotime('2024-03-01 10:00:00 UTC')],
+            [['id' => 8, 'hash' => $hash, 'clicked_at' => '2024-03-01 10:00:00']],
+            ['unaware' => []],
+            $logger,
+        );
+
+        $logger->shouldNotReceive('info');
+
+        $handler->handle_conversion();
+
+        // Mockery expectations alone don't count as assertions.
+        expect(true)->toBeTrue();
     });
 
 });
