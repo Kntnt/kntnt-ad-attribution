@@ -221,7 +221,7 @@ WHERE cv.conversion_ref IN (%s, …)
 ORDER BY cv.fractional_conversion DESC, c.clicked_at DESC
 
 -- Report jobs per status (Queue::count_jobs_for_conversions)
-SELECT conversion_ref, status, COUNT(*) AS cnt
+SELECT conversion_ref, status, COUNT(*) AS job_count
 FROM {prefix}kntnt_ad_attr_queue
 WHERE conversion_ref IN (%s, …)
 GROUP BY conversion_ref, status

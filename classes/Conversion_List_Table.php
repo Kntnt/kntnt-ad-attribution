@@ -197,7 +197,7 @@ final class Conversion_List_Table extends WP_List_Table {
 				'conversion_ref' => $ref,
 				'converted_at'   => $row->converted_at,
 				'attributions'   => $rows,
-				'is_test'        => array_filter( $rows, fn ( object $r ) => (int) $r->is_test === 1 ) !== [],
+				'is_test'        => array_filter( $rows, fn ( object $attribution ) => (int) $attribution->is_test === 1 ) !== [],
 				'jobs'           => $jobs[ $ref ] ?? [],
 			];
 		}, $page );

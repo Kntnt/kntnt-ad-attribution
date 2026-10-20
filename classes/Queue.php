@@ -338,7 +338,7 @@ final class Queue {
 		$placeholders = implode( ',', array_fill( 0, count( $conversion_refs ), '%s' ) );
 
 		$rows = $wpdb->get_results( $wpdb->prepare(
-			"SELECT conversion_ref, status, COUNT(*) AS cnt
+			"SELECT conversion_ref, status, COUNT(*) AS job_count
 			 FROM {$table}
 			 WHERE conversion_ref IN ({$placeholders})
 			 GROUP BY conversion_ref, status",
@@ -347,7 +347,7 @@ final class Queue {
 
 		$counts = [];
 		foreach ( $rows ?: [] as $row ) {
-			$counts[ $row->conversion_ref ][ $row->status ] = (int) $row->cnt;
+			$counts[ $row->conversion_ref ][ $row->status ] = (int) $row->job_count;
 		}
 
 		return $counts;

@@ -754,9 +754,9 @@ describe('Queue::count_jobs_for_conversions()', function () {
             return 'q';
         });
         $wpdb->shouldReceive('get_results')->once()->with('q')->andReturn([
-            (object) ['conversion_ref' => 'ref-a', 'status' => 'pending', 'cnt' => '2'],
-            (object) ['conversion_ref' => 'ref-a', 'status' => 'done', 'cnt' => '1'],
-            (object) ['conversion_ref' => 'ref-b', 'status' => 'processing', 'cnt' => '1'],
+            (object) ['conversion_ref' => 'ref-a', 'status' => 'pending', 'job_count' => '2'],
+            (object) ['conversion_ref' => 'ref-a', 'status' => 'done', 'job_count' => '1'],
+            (object) ['conversion_ref' => 'ref-b', 'status' => 'processing', 'job_count' => '1'],
         ]);
 
         $counts = (new Queue(Mockery::mock(Settings::class)))->count_jobs_for_conversions(['ref-a', 'ref-b', 'ref-c']);
