@@ -14,7 +14,7 @@ All machine-readable names use `kntnt-ad-attr` (hyphens) / `kntnt_ad_attr` (unde
 |---------|------|
 | Text domain | `kntnt-ad-attr` |
 | Post type | `kntnt_ad_attr_url` |
-| Custom tables | `{prefix}kntnt_ad_attr_clicks`, `{prefix}kntnt_ad_attr_conversions`, `{prefix}kntnt_ad_attr_click_ids`, `{prefix}kntnt_ad_attr_queue` |
+| Custom tables | `{prefix}kntnt_ad_attr_clicks`, `{prefix}kntnt_ad_attr_conversions`, `{prefix}kntnt_ad_attr_click_ids`, `{prefix}kntnt_ad_attr_queue`; classes get them from the `Table` enum (`Table::Clicks->prefixed()`), migrations and `uninstall.php` spell them out |
 | Capability | `kntnt_ad_attr` |
 | DB version option | `kntnt_ad_attr_version` |
 | Settings option | `kntnt_ad_attr_settings` |

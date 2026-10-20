@@ -690,7 +690,7 @@ final class Admin_Page {
 
 			// Determine if this is a failed job (one-shot) or pending (normal retry).
 			global $wpdb;
-			$table  = $wpdb->prefix . 'kntnt_ad_attr_queue';
+			$table  = Table::Queue->prefixed();
 			$status = $wpdb->get_var( $wpdb->prepare(
 				"SELECT status FROM {$table} WHERE id = %d",
 				$job_id,
@@ -823,7 +823,7 @@ final class Admin_Page {
 	private function count_conversions( array $refs ): int {
 		global $wpdb;
 
-		$conv_table   = $wpdb->prefix . 'kntnt_ad_attr_conversions';
+		$conv_table   = Table::Conversions->prefixed();
 		$placeholders = implode( ',', array_fill( 0, count( $refs ), '%s' ) );
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
@@ -846,7 +846,7 @@ final class Admin_Page {
 	private function conversions_sharing_clicks( array $refs ): array {
 		global $wpdb;
 
-		$conv_table   = $wpdb->prefix . 'kntnt_ad_attr_conversions';
+		$conv_table   = Table::Conversions->prefixed();
 		$placeholders = implode( ',', array_fill( 0, count( $refs ), '%s' ) );
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
@@ -867,7 +867,7 @@ final class Admin_Page {
 	private function delete_conversions( array $refs ): void {
 		global $wpdb;
 
-		$conv_table   = $wpdb->prefix . 'kntnt_ad_attr_conversions';
+		$conv_table   = Table::Conversions->prefixed();
 		$placeholders = implode( ',', array_fill( 0, count( $refs ), '%s' ) );
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
@@ -893,8 +893,8 @@ final class Admin_Page {
 	private function flag_conversions_as_test( array $refs, bool $is_test ): void {
 		global $wpdb;
 
-		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
-		$conv_table   = $wpdb->prefix . 'kntnt_ad_attr_conversions';
+		$clicks_table = Table::Clicks->prefixed();
+		$conv_table   = Table::Conversions->prefixed();
 		$placeholders = implode( ',', array_fill( 0, count( $refs ), '%s' ) );
 
 		// A subquery rather than a multi-table UPDATE … JOIN, so the same
@@ -1054,9 +1054,9 @@ final class Admin_Page {
 
 		$hash = get_post_meta( $post_id, '_hash', true );
 		if ( $hash ) {
-			$clicks_table    = $wpdb->prefix . 'kntnt_ad_attr_clicks';
-			$conv_table      = $wpdb->prefix . 'kntnt_ad_attr_conversions';
-			$click_ids_table = $wpdb->prefix . 'kntnt_ad_attr_click_ids';
+			$clicks_table    = Table::Clicks->prefixed();
+			$conv_table      = Table::Conversions->prefixed();
+			$click_ids_table = Table::Click_Ids->prefixed();
 
 			// Delete conversions linked to this hash's clicks first. Subqueries
 			// rather than multi-table DELETE … JOIN, which the SQLite

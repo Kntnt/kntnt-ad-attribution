@@ -366,7 +366,7 @@ final class Rest_Endpoint {
 	 */
 	private function find_recorded_clicks( array $clicks ): array {
 		global $wpdb;
-		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
+		$clicks_table = Table::Clicks->prefixed();
 
 		$conditions = implode( ' OR ', array_fill( 0, count( $clicks ), '(hash = %s AND clicked_at = %s)' ) );
 		$args       = [];

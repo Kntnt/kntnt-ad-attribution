@@ -29,22 +29,6 @@ namespace Kntnt\Ad_Attribution;
 final class Click_ID_Store {
 
 	/**
-	 * Table name without the WordPress prefix.
-	 *
-	 * @var string
-	 * @since 1.10.0
-	 */
-	private const TABLE = 'kntnt_ad_attr_click_ids';
-
-	/**
-	 * Clicks table name without the WordPress prefix.
-	 *
-	 * @var string
-	 * @since 1.10.0
-	 */
-	private const CLICKS_TABLE = 'kntnt_ad_attr_clicks';
-
-	/**
 	 * Stores the click ID a platform attached to one recorded click.
 	 *
 	 * @param int    $click_id ID of the click row in the clicks table.
@@ -59,7 +43,7 @@ final class Click_ID_Store {
 		global $wpdb;
 
 		$wpdb->insert(
-			$wpdb->prefix . self::TABLE,
+			Table::Click_Ids->prefixed(),
 			[
 				'click_id' => $click_id,
 				'platform' => $platform,
@@ -89,8 +73,8 @@ final class Click_ID_Store {
 			return [];
 		}
 
-		$table        = $wpdb->prefix . self::TABLE;
-		$clicks_table = $wpdb->prefix . self::CLICKS_TABLE;
+		$table        = Table::Click_Ids->prefixed();
+		$clicks_table = Table::Clicks->prefixed();
 		$click_ids    = array_values( $linked_clicks );
 		$placeholders = implode( ',', array_fill( 0, count( $click_ids ), '%d' ) );
 
@@ -139,8 +123,8 @@ final class Click_ID_Store {
 	public function find_original_click( string $hash, string $platform, string $value ): ?array {
 		global $wpdb;
 
-		$table        = $wpdb->prefix . self::TABLE;
-		$clicks_table = $wpdb->prefix . self::CLICKS_TABLE;
+		$table        = Table::Click_Ids->prefixed();
+		$clicks_table = Table::Clicks->prefixed();
 
 		$row = $wpdb->get_row( $wpdb->prepare(
 			"SELECT c.id, c.clicked_at
@@ -182,8 +166,8 @@ final class Click_ID_Store {
 	public function delete_orphans(): int {
 		global $wpdb;
 
-		$table        = $wpdb->prefix . self::TABLE;
-		$clicks_table = $wpdb->prefix . self::CLICKS_TABLE;
+		$table        = Table::Click_Ids->prefixed();
+		$clicks_table = Table::Clicks->prefixed();
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery
 		$deleted = $wpdb->query(

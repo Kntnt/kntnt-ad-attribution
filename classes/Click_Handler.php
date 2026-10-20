@@ -350,7 +350,7 @@ final class Click_Handler {
 			?: sanitize_text_field( $_GET['mtm_group'] ?? '' );
 
 		// Insert the click record into the clicks table.
-		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
+		$clicks_table = Table::Clicks->prefixed();
 
 		$inserted = $wpdb->insert( $clicks_table, [
 			'hash'                => $hash,
@@ -591,7 +591,7 @@ final class Click_Handler {
 	private function click_row_exists( string $hash, int $timestamp ): bool {
 		global $wpdb;
 
-		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
+		$clicks_table = Table::Clicks->prefixed();
 
 		$click_id = $wpdb->get_var( $wpdb->prepare(
 			"SELECT id FROM {$clicks_table} WHERE hash = %s AND clicked_at = %s LIMIT 1",

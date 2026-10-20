@@ -118,8 +118,8 @@ final class Cron {
 		/** @var int $days Number of days to retain click records. */
 		$days = (int) apply_filters( 'kntnt_ad_attr_click_retention_days', 365 );
 
-		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
-		$conv_table   = $wpdb->prefix . 'kntnt_ad_attr_conversions';
+		$clicks_table = Table::Clicks->prefixed();
+		$conv_table   = Table::Conversions->prefixed();
 		$cutoff       = gmdate( 'Y-m-d H:i:s', time() - ( $days * DAY_IN_SECONDS ) );
 
 		// Delete conversions linked to expired clicks first. Subqueries
@@ -160,8 +160,8 @@ final class Cron {
 	private function cleanup_conversions(): void {
 		global $wpdb;
 
-		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
-		$conv_table   = $wpdb->prefix . 'kntnt_ad_attr_conversions';
+		$clicks_table = Table::Clicks->prefixed();
+		$conv_table   = Table::Conversions->prefixed();
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery
 		$deleted = $wpdb->query(
@@ -188,8 +188,8 @@ final class Cron {
 	private function delete_orphaned_clicks(): void {
 		global $wpdb;
 
-		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
-		$conv_table   = $wpdb->prefix . 'kntnt_ad_attr_conversions';
+		$clicks_table = Table::Clicks->prefixed();
+		$conv_table   = Table::Conversions->prefixed();
 
 		// A click is orphaned when no tracking URL post carries its hash.
 		// Correlated on the clicks table, as a condition for both deletes.

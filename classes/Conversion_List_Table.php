@@ -146,8 +146,8 @@ final class Conversion_List_Table extends WP_List_Table {
 	public function prepare_items(): void {
 		global $wpdb;
 
-		$conv_table   = $wpdb->prefix . 'kntnt_ad_attr_conversions';
-		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
+		$conv_table   = Table::Conversions->prefixed();
+		$clicks_table = Table::Clicks->prefixed();
 
 		$from_where = "FROM {$conv_table} cv
 			INNER JOIN {$clicks_table} c ON c.id = cv.click_id
@@ -513,8 +513,8 @@ final class Conversion_List_Table extends WP_List_Table {
 	private function fetch_attributions( array $refs ): array {
 		global $wpdb;
 
-		$conv_table   = $wpdb->prefix . 'kntnt_ad_attr_conversions';
-		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
+		$conv_table   = Table::Conversions->prefixed();
+		$clicks_table = Table::Clicks->prefixed();
 		$placeholders = implode( ',', array_fill( 0, count( $refs ), '%s' ) );
 
 		// The tracking URL is found by its hash; LEFT JOINs keep conversions

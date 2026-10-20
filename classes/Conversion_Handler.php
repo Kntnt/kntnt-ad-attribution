@@ -207,8 +207,8 @@ final class Conversion_Handler {
 		$attributions = apply_filters( 'kntnt_ad_attr_attribution', $attributions, $clicks );
 
 		// Step 6: Look up click records and write conversion rows.
-		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
-		$conv_table   = $wpdb->prefix . 'kntnt_ad_attr_conversions';
+		$clicks_table = Table::Clicks->prefixed();
+		$conv_table   = Table::Conversions->prefixed();
 		$converted_at = gmdate( 'Y-m-d H:i:s' );
 
 		// One reference for the whole conversion. A multi-touch model writes
@@ -401,7 +401,7 @@ final class Conversion_Handler {
 	private function filter_test_entries( array $entries ): array {
 		global $wpdb;
 
-		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
+		$clicks_table = Table::Clicks->prefixed();
 		$hashes       = array_keys( $entries );
 		$placeholders = implode( ',', array_fill( 0, count( $hashes ), '%s' ) );
 
@@ -431,7 +431,7 @@ final class Conversion_Handler {
 	private function links_test_click( array $linked_clicks ): bool {
 		global $wpdb;
 
-		$clicks_table  = $wpdb->prefix . 'kntnt_ad_attr_clicks';
+		$clicks_table  = Table::Clicks->prefixed();
 		$click_row_ids = array_values( $linked_clicks );
 		$placeholders  = implode( ',', array_fill( 0, count( $click_row_ids ), '%d' ) );
 
@@ -489,7 +489,7 @@ final class Conversion_Handler {
 		}
 
 		// Fetch Content/Term/Id/Group from the attributed click rows.
-		$clicks_table    = $wpdb->prefix . 'kntnt_ad_attr_clicks';
+		$clicks_table    = Table::Clicks->prefixed();
 		$click_row_ids   = array_values( $linked_clicks );
 		$id_placeholders = implode( ',', array_fill( 0, count( $click_row_ids ), '%d' ) );
 
