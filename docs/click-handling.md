@@ -19,7 +19,7 @@ The click handler is registered on `template_redirect` — the conventional hook
 10b. Click deduplication: if consent=true and dedup_seconds>0 and hash in cookie within window → refresh cookie, redirect (skip insert)
 11. Extract per-click UTM fields (Content, Term, Id, Group) from incoming parameters
 11b. Insert click record into kntnt_ad_attr_clicks table
-11c. Capture platform-specific click IDs via registered kntnt_ad_attr_click_id_capturers filter
+11c. Capture platform-specific click IDs via registered kntnt_ad_attr_click_id_capturers filter, keyed by the inserted click row's ID (skipped if the insert failed)
 11d. Populate empty postmeta fields (Source, Medium, Campaign only) from incoming UTM/MTM query parameters
 11e. Fire kntnt_ad_attr_click action (hash, target URL, campaign data) — allows companion plugins to capture platform-specific parameters (e.g. gclid)
 12. Handle consent for cookie storage → three outcomes (see Consent below)
@@ -46,9 +46,13 @@ Platform-specific click IDs (e.g. `gclid`, `fbclid`, `msclkid`) are captured via
 
 If no capturers are registered (default), the filter returns `[]` and the foreach loop iterates zero times — no extra processing occurs.
 
-Each registered capturer maps a platform to a GET parameter. The core iterates the capturers, sanitizes the parameter value with `sanitize_text_field()`, validates it is non-empty and at most 255 characters, and stores it via `Click_ID_Store::store()`.
+Each registered capturer maps a platform to a GET parameter. The core iterates the capturers, sanitizes the parameter value with `sanitize_text_field()`, validates it is non-empty and at most 255 characters, and stores it via `Click_ID_Store::store( $click_row_id, $platform, $value )`.
+
+Capture happens **after** the click row is inserted and is keyed by that row's ID (`$wpdb->insert_id`), so each click ID belongs to exactly one click. If a click carries no ID for a platform, that click has no ID for that platform; it does not inherit an earlier click's. If the click insert fails, nothing is captured. A conversion linked to a click reports that click's IDs, never those of a later visitor on the same tracking URL (see [conversion-handling.md](conversion-handling.md)).
 
 Click ID capture happens **before** the `kntnt_ad_attr_click` action fires, so click IDs are already stored when companion plugins receive the click notification. Click ID capture occurs independently of consent — like click counting, it does not set any cookies or track individuals.
+
+Click IDs live exactly as long as their click row: retention cleanup, orphan cleanup and permanent deletion of a tracking URL delete them together with the clicks (see [lifecycle.md](lifecycle.md)).
 
 ## Per-Click UTM Fields
 

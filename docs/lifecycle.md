@@ -49,7 +49,8 @@ migrations/
 ├── 1.2.0.php    ← click ID and queue tables
 ├── 1.5.0.php    ← clicks + conversions tables, drops stats
 ├── 1.8.0.php    ← per-job retry columns and index on queue table
-└── 1.9.0.php    ← deferred processing (not_before, last_attempt_at) columns
+├── 1.9.0.php    ← deferred processing (not_before, last_attempt_at) columns
+└── 1.10.0.php   ← click-ID table keyed by click row (replaces the per-hash table)
 ```
 
 Each file returns a callable:
@@ -60,6 +61,8 @@ return function( \wpdb $wpdb ): void {
 };
 ```
 
+Schema changes go in a migration named for the next unreleased version, and the plugin header is raised to that version so that the Migrator runs it. If that file already exists, extend it instead of adding another. The Migrator records only the version reached, not which files or sections completed, so the whole file runs again whenever the stored version is set back below it: every section must be safe to run twice (guard each change on the current schema, e.g. check whether a column exists before adding it).
+
 ## Daily Cron Job
 
 Hook: `kntnt_ad_attr_daily_cleanup`. Performs:
@@ -68,7 +71,7 @@ Hook: `kntnt_ad_attr_daily_cleanup`. Performs:
 2. Deletes orphaned conversion records whose click no longer exists (cascade cleanup).
 3. Deletes click records whose hash has no published tracking URL post, and their linked conversions.
 4. Checks if tracking URLs point to pages that no longer exist. If so: changes post status to `draft` and stores an admin notice.
-5. Cleans up click IDs older than 120 days from `kntnt_ad_attr_click_ids`.
+5. Deletes the click IDs whose click row no longer exists (`Click_ID_Store::delete_orphans()`). Click IDs live exactly as long as their click row, so this removes the IDs of every click deleted in steps 1 and 3, and any left by another path. There is no age-based click ID cleanup. Permanently deleting a tracking URL in the admin deletes its click IDs together with its clicks.
 6. Cleans up queue jobs: `done` older than 30 days, `failed` older than 90 days from `kntnt_ad_attr_queue`.
 
 Diagnostic output is written to the shared log file via `Logger`.

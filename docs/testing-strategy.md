@@ -198,6 +198,7 @@ kntnt-ad-attribution/
 │       ├── test-bot-detection.sh
 │       ├── test-campaign-report.sh
 │       ├── test-click-flow.sh
+│       ├── test-click-ids.sh
 │       ├── test-consent-states.sh
 │       ├── test-conversion-attribution.sh
 │       ├── test-cookie-limits.sh
@@ -271,9 +272,10 @@ Stateless data manipulation class. Tests cover:
 
 #### Click_ID_Store (`ClickIdStoreTest.php`)
 
-- **`store()`** — correct INSERT...ON DUPLICATE KEY UPDATE SQL, GMT timestamp.
-- **`get_for_hashes()`** — empty input returns empty, groups results by `hash => [platform => click_id]`.
-- **`cleanup()`** — DELETE with correct cutoff date.
+- **`store()`** — inserts one row keyed by click row ID and platform.
+- **`get_for_clicks()`** — empty input returns empty without a query; looks up the given click rows and keys their IDs by hash, with `captured_at` from the click's `clicked_at`.
+- **`find_original_click()`** — earliest click row on the hash carrying the value; null when never recorded.
+- **`delete_orphans()`** — deletes click IDs whose click row is gone (NOT EXISTS, not a multi-table DELETE) and returns the count.
 
 ---
 
@@ -310,7 +312,7 @@ The most complex class. Tests cover the full click flow:
 - Query parameter forwarding and collision handling.
 - Redirect loop guard.
 - `kntnt_ad_attr_click` action fires for all non-bot clicks, before consent check.
-- Click ID capturer integration, value length validation.
+- Click ID capturer integration: stored on the inserted click row's ID, nothing stored when the insert fails, value length validation.
 - Postmeta backfill from UTM/MTM params, existing values not overwritten.
 
 ---
@@ -327,6 +329,7 @@ The most complex class. Tests cover the full click flow:
 - `kntnt_ad_attr_conversion_recorded` action fires with attributions and context.
 - Only recorded, positive-weight attributions reach the action and reporters, with click IDs and campaigns for those hashes only; nothing fires or is enqueued when no conversion row was written.
 - Reporter enqueueing (including payload structure), no-op when no reporters.
+- Per-click reporting, with a real `Click_ID_Store` over an in-memory fake of the clicks, click-ID and postmeta tables: reporters get the click ID of the attributed click (not a later click on the same hash) with that click's `clicked_at`, no ID when the attributed click carried none, and the attributed click's per-click campaign fields.
 
 ---
 
@@ -359,7 +362,7 @@ The most complex class. Tests cover the full click flow:
 
 #### Cron (`CronTest.php`)
 
-- **`run_daily_cleanup()`** — click retention from filter, orphaned conversions, orphaned clicks, draft tracking URLs with missing/unpublished target, orphaned URL transient, Click_ID_Store and Queue cleanup.
+- **`run_daily_cleanup()`** — click retention from filter, orphaned conversions, orphaned clicks, draft tracking URLs with missing/unpublished target, orphaned URL transient, click IDs of deleted clicks swept after both click deletions (`Click_ID_Store::delete_orphans()`, no age-based cleanup), Queue cleanup.
 - **`warn_on_target_trash()`** — ignores own CPT, finds affected URLs, no-op when none.
 - **`display_admin_notices()`** — shows orphaned/trashed target notices, respects capability, deletes transients after display.
 
@@ -470,6 +473,16 @@ Two mu-plugins provide test infrastructure:
   | `/test-delete-transient` | POST | Delete a transient |
   | `/test-nonce` | GET | Get REST nonce (public, bootstraps auth) |
 
+  The same mu-plugin registers **probe adapters**, off unless their option is set (all string options, so `test-set-option` can set them):
+
+  | Option | Effect |
+  |--------|--------|
+  | `test_probe_capturers` | `platform=param[,platform=param…]` (e.g. `google_ads=gclid`) adds those `kntnt_ad_attr_click_id_capturers` entries. |
+  | `test_probe_reporter` | `on` registers reporter `probe`; `supports_test` also sets `'supports_test' => true`. Its `enqueue` appends everything it receives (`attributions`, `click_ids`, `campaigns`, `context`) to `test_probe_calls` and returns one job per attribution with `not_before` a day ahead, so WP-Cron leaves the jobs pending; its `process` returns `true`. |
+  | `test_probe_calls` | The list of recorded `enqueue` calls. |
+
+  Suites switch them on with `set_probe_capturers` and `set_probe_reporter`, read calls with `get_probe_calls`, and must call `reset_probes` at the end.
+
 ### 7.3 Bootstrap Flow
 
 `run-tests.sh` sources `tests/Integration/helpers/setup.sh` after starting Playground. Setup:
@@ -483,7 +496,7 @@ Two mu-plugins provide test infrastructure:
 
 **`helpers/assertions.sh`** provides: `assert_status`, `assert_contains`, `assert_not_contains`, `assert_equals`, `assert_greater_than`, `assert_json_field`, `print_summary`. Each assertion increments `TESTS_RUN` and optionally `TESTS_FAILED`.
 
-**`helpers/fixtures.sh`** provides: `create_tracking_url`, `create_target_page`, `simulate_click`, `get_click_cookies`, `extract_cookie_value`, `set_consent_state`, `get_click_count`, `query_db`, `query_db_rows`, `execute_sql`, `flush_rewrites`, `trigger_conversion`, `clear_cookies`, `strip_secure_flag`.
+**`helpers/fixtures.sh`** provides: `create_tracking_url`, `create_target_page`, `simulate_click`, `get_click_cookies`, `extract_cookie_value`, `set_consent_state`, `get_click_count`, `query_db`, `query_db_rows`, `execute_sql`, `flush_rewrites`, `trigger_conversion`, `clear_cookies`, `strip_secure_flag`, `set_option`, and the probe adapter switches `set_probe_capturers`, `set_probe_reporter` (`on`|`supports_test`|`off`), `get_probe_calls` (JSON array of recorded `enqueue` calls), `reset_probe_calls` and `reset_probes`.
 
 ### 7.5 Integration Test Coverage
 
@@ -614,7 +627,19 @@ Each test script sources `helpers/assertions.sh` and `helpers/fixtures.sh`, crea
 #### `test-migration.sh` — Database Migration
 
 - Version option matches plugin header version.
-- All four tables have correct schema (columns and types).
+- All four tables have correct schema (columns and types), including the per-click click-ID table and its `(platform, value)` index.
+- Upgrade from v1.9.1: rebuilds the old per-hash click-ID table with a row, sets `kntnt_ad_attr_version` to `1.9.1`, makes a request, and asserts the version, the new table and that the old rows are dropped.
+- Re-running 1.10.0 keeps the new table and its rows.
+
+---
+
+#### `test-click-ids.sh` — Per-click Click IDs
+
+Uses the probe capturer (`google_ads=gclid`) and probe reporter.
+
+- Visitor A clicks with `gclid=AAA&utm_term=kwA`, visitor B with `gclid=BBB&utm_term=kwB`; A converts. The reporter receives `AAA` with A's `clicked_at` and `kwA`.
+- A click without `gclid` converts with no click ID for the hash.
+- Retention cleanup, the daily orphan sweep and permanent deletion of a tracking URL (via the admin trash view's nonce link) leave no click-ID rows for deleted clicks.
 
 ---
 
@@ -777,6 +802,10 @@ helper_name() {
 
 The WordPress SQLite compatibility plugin cannot reliably handle date comparisons beyond ~2027. For example, `clicked_at < '9999-12-31 23:59:59'` returns FALSE even for 2026 dates. Use realistic date ranges (e.g., `2020-01-01` to `2027-12-31`) in test assertions.
 
+### Multi-table DELETE in SQLite
+
+The SQLite translator accepts MySQL's multi-table `DELETE x FROM a x JOIN b … WHERE …` (with `INNER` or `LEFT JOIN`) and reports success, but deletes nothing. Code paths that must be verified in Playground use single-table deletes with subqueries instead: `DELETE FROM a WHERE col IN (SELECT …)` or `DELETE FROM a WHERE NOT EXISTS (SELECT 1 FROM b WHERE b.id = a.col)`. Both are valid MySQL.
+
 ### Cookie Secure flag over HTTP
 
 The plugin hardcodes `secure: true` on cookies. curl won't send Secure cookies over plain HTTP (which Playground uses). The `strip_secure_flag` fixture helper patches cookie jar files by replacing `TRUE` with `FALSE` in the secure column. It uses `perl -i -pe` for portability across GNU/BSD sed.
@@ -809,7 +838,7 @@ curl ... | grep -i '^set-cookie:' || true
 | Click_Handler | ~25 | click-flow, query-forwarding |
 | Conversion_Handler | ~18 | conversion-attribution, deduplication |
 | Post_Type | ~8 | activation, admin-crud |
-| Click_ID_Store | ~5 | click-flow |
+| Click_ID_Store | ~6 | click-ids, migration |
 | Queue | ~10 | cron-cleanup |
 | Queue_Processor | ~8 | conversion-attribution |
 | Cron | ~12 | cron-cleanup |
@@ -823,4 +852,4 @@ curl ... | grep -i '^set-cookie:' || true
 | Plugin | ~6 | activation |
 | pending-consent.js | ~16 | — |
 | admin.js | ~10 | — |
-| **Totals** | **~214 PHP + 28 JS** | **14 suites** |
+| **Totals** | **~214 PHP + 28 JS** | **15 suites** |
