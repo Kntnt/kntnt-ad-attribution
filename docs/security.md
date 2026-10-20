@@ -53,6 +53,7 @@ Selected via the page selector — always a valid WordPress post ID. No free-tex
 
 - **Admin page forms (create URL, trash/restore/delete, bulk actions):** Custom nonce via `wp_nonce_field` / `wp_verify_nonce`.
 - **CSV export:** Custom nonce `kntnt_ad_attr_export` (POST request).
+- **Conversion actions (v1.10.0):** Delete, Mark as test and Unmark as test on the conversion list are GET requests checked with `check_admin_referer()`: a row action with nonce `{action}_{conversion_ref}` (e.g. `conversion_delete_<ref>`), a bulk action with `bulk-conversions`. Both also require `kntnt_ad_attr` via `Plugin::authorize()`. See [admin-ui.md](admin-ui.md#conversions).
 - **REST endpoint (set-cookie):** WordPress REST nonce via `X-WP-Nonce` header.
 - **REST endpoint (search-posts):** WordPress REST nonce via `X-WP-Nonce` header + `kntnt_ad_attr` capability check.
 

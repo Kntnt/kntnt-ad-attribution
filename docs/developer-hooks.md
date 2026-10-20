@@ -202,6 +202,8 @@ If an item lacks a `payload` key, the entire array is treated as the raw payload
 
 `enqueue` is called only when at least one conversion row was written, and for a test conversion only on reporters with `'supports_test' => true`.
 
+Every item returned is queued with a reference to the conversion that produced it (v1.10.0). The reference is internal: the item format is unchanged and `process` never sees it. It lets an administrator delete or mark a conversion as a test in the admin's conversion list, which deletes the conversion's `pending` and `failed` jobs; `processing` and `done` jobs are left alone (see [admin-ui.md](admin-ui.md#conversions)). A job that already reached the platform is not retracted; that is up to the add-on.
+
 ```php
 add_filter( 'kntnt_ad_attr_conversion_reporters', function ( array $reporters ): array {
     $reporters['my_platform'] = [

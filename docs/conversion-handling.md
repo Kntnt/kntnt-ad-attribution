@@ -17,13 +17,13 @@ Conversions are triggered via the action hook `kntnt_ad_attr_conversion` from th
    b. Remove hashes whose last conversion is within the dedup window
    c. If no hashes remain → exit
 6. Apply attribution model (default: last-click) via kntnt_ad_attr_attribution filter
-7. Look up click records and write conversion rows to the database (in a transaction). The hashes that got a row, each with the weight written, are the recorded attributions.
+7. Look up click records and write conversion rows to the database (in a transaction), all with one conversion reference (a UUID). The hashes that got a row, each with the weight written, are the recorded attributions.
 7b. If no conversion row was written → exit (no dedup cookie, no recorded action, no reporters)
 8. Write per-hash dedup cookie for the recorded hashes (only when dedup is enabled)
 8b. Test flag: the conversion is a test if any linked click row has is_test = 1
 9. Trigger kntnt_ad_attr_conversion_recorded with the recorded attributions and context (timestamp, IP, user-agent, test)
 10. Look up the click IDs and per-click campaign fields of the click row each recorded hash is linked to
-11. Call registered reporters' enqueue callbacks with the recorded attributions, insert payloads into queue. A test conversion goes only to reporters with 'supports_test' => true
+11. Call registered reporters' enqueue callbacks with the recorded attributions, insert payloads into queue with the conversion reference. A test conversion goes only to reporters with 'supports_test' => true
 12. Schedule queue processing
 13. Log a test conversion with its click rows and the reporters it was passed to
 ```
@@ -65,6 +65,8 @@ The handler looks up the click record whose hash and `clicked_at` exactly match 
 The match is exact on purpose, with no fallback to the nearest earlier click row: the clicks table is shared by everyone who clicks the tracking URL, so the nearest earlier row is often another visitor's click. The click handler keeps the matching row in place by never writing an `_ad_clicks` entry without one (see [Click Deduplication](click-handling.md#click-deduplication)). If an entry still has no matching row, for example a cookie written by a version before 1.10.0, that hash is skipped and one warning is written through `Logger` (prefix `CORE`) with the first eight characters of the hash and the entry's timestamp. The IP address and user agent are not logged.
 
 ```php
+$conversion_ref = wp_generate_uuid4();
+
 $wpdb->query( 'START TRANSACTION' );
 
 $linked_clicks = [];
@@ -94,6 +96,7 @@ foreach ( $attributions as $hash => $value ) {
         'click_id'              => (int) $click_id,
         'converted_at'          => $converted_at,
         'fractional_conversion' => $value,
+        'conversion_ref'        => $conversion_ref,
     ] );
 
     if ( $result === false ) {
@@ -112,6 +115,8 @@ if ( $recorded === [] ) {
     return;
 }
 ```
+
+**Conversion reference (v1.10.0).** All rows written by one call share `$conversion_ref`. Under a multi-touch model one conversion is several rows, and their shared `converted_at` has one-second resolution, so the reference is what makes them one conversion. The admin's conversion list groups by it, and the report jobs of the conversion carry it (see [Conversion Reporting](#conversion-reporting)).
 
 ## Recorded Attributions
 
@@ -142,7 +147,7 @@ After the `kntnt_ad_attr_conversion_recorded` action fires, the handler checks f
 Both lookups use the exact click the conversion was credited for, so a reporter never receives another visitor's click ID or per-click fields, provided the visitor's `_ad_clicks` entry points at the visitor's own click.
 3. **Build context** — assembles timestamp, IP, user-agent, page URL and the test flag (`test`).
 4. **Call each reporter's `enqueue` callback** — passes the recorded attributions, `$click_ids`, `$campaigns`, and `$context`. Each reporter returns an array of structured items (with `payload`, optional `label`, optional `retry_params`, and optional `not_before` keys) or raw payload arrays (legacy format).
-5. **Enqueue items** — each item's payload is JSON-encoded and inserted into the `kntnt_ad_attr_queue` table with `status = 'pending'`, along with optional `label`, per-job retry parameters, and optional `not_before` timestamp for deferred processing.
+5. **Enqueue items** — each item's payload is JSON-encoded and inserted into the `kntnt_ad_attr_queue` table with `status = 'pending'`, along with optional `label`, per-job retry parameters, optional `not_before` timestamp for deferred processing, and the conversion reference (v1.10.0). The handler passes the reference to `Queue::enqueue( …, conversion_ref: $conversion_ref )` for structured and legacy items alike; the item format reporters return is unchanged, and reporters never see the reference. It lets the admin find a conversion's jobs when the conversion is deleted or marked as a test (see [admin-ui.md](admin-ui.md#conversions)).
 6. **Schedule processing** — calls `Queue_Processor::schedule()` to trigger a cron event.
 
 If no reporters are registered (default), the filter returns `[]`, the `! empty()` check exits immediately, and no database queries are made against the click_ids or queue tables.

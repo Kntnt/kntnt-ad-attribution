@@ -157,7 +157,7 @@ kntnt-ad-attribution/
 │   │   ├── WpStubs.php                 # Stub WP classes (WP_Post, WP_REST_*, WP_List_Table, etc.)
 │   │   └── TestFactory.php             # Factory methods for creating test doubles
 │   │
-│   ├── Unit/                           # Level 1: PHP unit tests (19 files)
+│   ├── Unit/                           # Level 1: PHP unit tests (21 files)
 │   │   ├── AdminPageTest.php
 │   │   ├── BotDetectorTest.php
 │   │   ├── CampaignListTableTest.php
@@ -165,9 +165,11 @@ kntnt-ad-attribution/
 │   │   ├── ClickIdStoreTest.php
 │   │   ├── ConsentTest.php
 │   │   ├── ConversionHandlerTest.php
+│   │   ├── ConversionListTableTest.php
 │   │   ├── CookieManagerTest.php
 │   │   ├── CronTest.php
 │   │   ├── CsvExporterTest.php
+│   │   ├── InternalDetectorTest.php
 │   │   ├── MigratorTest.php
 │   │   ├── PluginTest.php
 │   │   ├── PostTypeTest.php
@@ -211,6 +213,7 @@ kntnt-ad-attribution/
 │       ├── test-internal-traffic.sh
 │       ├── test-migration.sh
 │       ├── test-query-forwarding.sh
+│       ├── test-recorded-conversions.sh
 │       └── test-rest-api.sh
 ```
 
@@ -301,7 +304,9 @@ Stateless data manipulation class. Tests cover:
 
 #### Queue (`QueueTest.php`)
 
-- **`enqueue()`** — inserts with status 'pending' and attempts 0, JSON-encoded payload.
+- **`enqueue()`** — inserts with status 'pending' and attempts 0, JSON-encoded payload; stores the conversion reference (`%s`), NULL when none is given.
+- **`delete_unfinished_for_conversions()`** — deletes only `pending` and `failed` jobs of the given references, then counts their `processing` jobs; no query for an empty list.
+- **`count_jobs_for_conversions()`** — jobs per status for each reference (`GROUP BY conversion_ref, status`); no query for an empty list.
 - **`dequeue()`** — empty result, atomic status update to 'processing', JSON-decoded payload, respects limit.
 - **`complete()`** — sets status 'done' with timestamp.
 - **`fail()`** — increments attempts, retries when < MAX_ATTEMPTS, marks 'failed' at max, stores error message.
@@ -355,6 +360,7 @@ The most complex class. Tests cover the full click flow:
 - `kntnt_ad_attr_conversion_recorded` action fires with attributions and context.
 - Only recorded, positive-weight attributions reach the action and reporters, with click IDs and campaigns for those hashes only; nothing fires or is enqueued when no conversion row was written.
 - Reporter enqueueing (including payload structure), no-op when no reporters.
+- Conversion reference: a file-level `beforeEach` stubs `wp_generate_uuid4()` with a new value per call, so the tests can tell one reference per conversion from one per row. Every row of a multi-touch conversion gets the same reference, and it reaches `Queue::enqueue()` for structured and legacy items.
 - `wpdb_without_test_clicks()` answers the post-write test-click lookup (`get_col`) with "none", so tests of ordinary conversions need not stub it.
 - Internal traffic and test conversions, with `make_test_mode_conversion()` (an in-memory fake of the clicks table with `is_test`, recording conversion rows, the recorded action and each reporter's `enqueue`): an internal conversion without test clicks writes, announces and reports nothing (no transaction); an internal conversion credits only the test click even when an ordinary click is more recent; a conversion after a test click is written and announced with `context['test']` true, an ordinary one with `false`; a multi-touch conversion with any test click is a test; a test conversion reaches only reporters with `'supports_test' => true`, with `context['test']` true, while an ordinary one reaches every reporter with `false`; test and ignored internal conversions are logged, ordinary ones are not.
 - Per-click reporting, with a real `Click_ID_Store` over an in-memory fake of the clicks, click-ID and postmeta tables: reporters get the click ID of the attributed click (not a later click on the same hash) with that click's `clicked_at`, no ID when the attributed click carried none, and the attributed click's per-click campaign fields.
@@ -404,6 +410,16 @@ The most complex class. Tests cover the full click flow:
 - **Nonce verification** — invalid/missing nonce rejected.
 - **Tab extensibility** — `kntnt_ad_attr_admin_tabs` filter, custom tab dispatch via action.
 - **SRI attributes** — integrity/crossorigin on Select2, other handles unchanged.
+- **Conversion actions** — `run_conversion_action()` drives `add_screen_options()` with a request in `$_GET`, a fake `$wpdb` and `wp_safe_redirect`/`wp_die` throwing, and records nonces checked, statements run, conversions passed to the queue and the redirect. Delete runs one `DELETE … conversion_ref IN (…)` on conversions only and cleans up the jobs; Mark/Unmark run one `UPDATE clicks SET is_test = 1/0 WHERE id IN (SELECT click_id …)`, and only Mark cleans up jobs; a bulk action checks `bulk-conversions` and drops malformed and duplicate references; every row and bulk action is refused, with nothing written, without a valid nonce or without `kntnt_ad_attr`.
+- **Conversions section** — rendered on the main view; the notice reports conversions and deleted jobs, with a warning for processing jobs left alone.
+
+---
+
+#### Conversion_List_Table (`ConversionListTableTest.php`)
+
+- `make_conversion_list()` fakes `$wpdb`: the page query (with `GROUP BY`) returns the given page, the row query returns the rows of the requested references, and every prepared statement is recorded.
+- **`prepare_items()`** — one item per conversion, newest first, with its rows, test flag (any test click) and job counts; the page query groups by `cv.conversion_ref`, orders by `converted_at DESC` and selects on `c.clicked_at BETWEEN` the range; pages with `conversions_paged`, not `paged`; no row or job query for an empty page.
+- **Rendering** (protected column methods through reflection, as WordPress calls them) — `conversion[]` checkbox and `conversion_*` bulk slugs; row actions under the primary column only, Mark as test or Unmark (for a test conversion) and Delete, each with an `{action}_{ref}` nonce and the date range; one line per attributed click; *(deleted)* for a missing tracking URL; job counts per status or a dash; page links with `conversions_paged` that drop notice arguments.
 
 ---
 
@@ -693,6 +709,7 @@ Uses the probe capturer (`google_ads=gclid`) and logging (`set_logging on`, `get
 - Upgrade from v1.9.1: rebuilds the old per-hash click-ID table with a row, sets `kntnt_ad_attr_version` to `1.9.1`, makes a request, and asserts the version, the new table and that the old rows are dropped.
 - Re-running 1.10.0 keeps the new table and its rows.
 - After the re-runs, `clicks.is_test` exists exactly once (checked through `pragma_table_info`, because SQLite records a column added by `ALTER TABLE` unquoted in the `CREATE` statement), and a row inserted without it is `0`.
+- `conversions.conversion_ref` and `queue.conversion_ref` each exist exactly once with one index after the re-runs; another re-run gives a conversion row without a reference its row ID and leaves a job without a reference NULL.
 
 ---
 
@@ -707,6 +724,18 @@ Switches the internal default on (`set_internal_default on`) and uses the probe 
 - A conversion after the admin's test click writes a conversion row and is announced with `context.test` true; the reporter without `supports_test` is not called, the one with it receives `context.test` true.
 - The main view's totals and the CSV row count for the suite's campaign are unchanged by the test clicks and test conversions.
 - With logging enabled, both test clicks are logged as `outcome=recorded … test=1` and the test conversions as `Test conversion recorded …`, naming the reporter.
+
+---
+
+#### `test-recorded-conversions.sh` — Recorded Conversions
+
+Uses the probe reporter, whose jobs are deferred a day so WP-Cron leaves them `pending`. Other statuses are inserted directly. The campaign name is unique per run, so the campaign-filtered numbers count only this run.
+
+- Two conversions through the normal flow get distinct UUID references, carried by their probe jobs, and are listed newest first with checkbox, tracking URL (source / medium / campaign), weight, test flag, content and job status columns and the row actions.
+- Delete with a forged or missing nonce gets 403 and changes nothing. Delete removes the conversion's rows and its `pending` and `failed` jobs, keeps the click rows, its `done` and `processing` jobs and the other conversion's jobs, lowers the main view's conversions by one, returns to the same date range, and the notice reports the deleted jobs and the processing job left alone.
+- Mark as test flags the attributed click, deletes the pending job and removes the click and the conversion from the main view, its totals and the CSV export; the conversion stays listed, flagged, with Unmark. Unmark restores the numbers.
+- The bulk actions with the list's `bulk-conversions` nonce mark and unmark; a forged bulk nonce gets 403.
+- The capability refusal is covered by the unit tests: the Playground cookie store makes every request carry the admin login.
 
 ---
 
@@ -927,20 +956,21 @@ curl ... | grep -i '^set-cookie:' || true
 | Speculation_Detector | ~9 | counting-rules |
 | Internal_Detector | ~8 | internal-traffic |
 | Click_Handler | ~60 | click-flow, query-forwarding, deferred-consent, counting-rules, internal-traffic |
-| Conversion_Handler | ~30 | conversion-attribution, deduplication, internal-traffic |
+| Conversion_Handler | ~33 | conversion-attribution, deduplication, internal-traffic, recorded-conversions |
 | Post_Type | ~8 | activation, admin-crud |
 | Click_ID_Store | ~6 | click-ids, migration |
-| Queue | ~10 | cron-cleanup |
+| Queue | ~14 | cron-cleanup, recorded-conversions |
 | Queue_Processor | ~8 | conversion-attribution |
 | Cron | ~12 | cron-cleanup |
 | Migrator | ~5 | migration |
 | Rest_Endpoint | ~16 | rest-api, deferred-consent |
-| Admin_Page | ~15 | admin-crud |
+| Admin_Page | ~26 | admin-crud, recorded-conversions |
 | Csv_Exporter | ~7 | csv-export |
-| Campaign_List_Table | ~9 | campaign-report, csv-export, internal-traffic |
+| Campaign_List_Table | ~9 | campaign-report, csv-export, internal-traffic, recorded-conversions |
+| Conversion_List_Table | ~12 | recorded-conversions |
 | Utm_Options | ~3 | — |
 | Updater | ~4 | — |
 | Plugin | ~6 | activation |
 | pending-consent.js | ~29 | — |
 | admin.js | ~10 | — |
-| **Totals** | **~317 PHP + 39 JS** | **18 suites** |
+| **Totals** | **~352 PHP + 39 JS** | **19 suites** |
