@@ -2,9 +2,8 @@
 # Integration test: Cron cleanup operations.
 #
 # Verifies that the daily cleanup deletes old clicks, preserves recent ones,
-# and drafts tracking URLs with missing targets. The orphaned conversion
-# cleanup uses MySQL-specific JOIN DELETE syntax that SQLite cannot translate,
-# so it is tested indirectly via click deletion cascade.
+# and drafts tracking URLs with missing targets. test-click-ids.sh covers the
+# deletion of the click IDs and conversions of deleted clicks on every path.
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

@@ -750,7 +750,7 @@ Uses the probe capturer (`google_ads=gclid`) and probe reporter.
 
 - Visitor A clicks with `gclid=AAA&utm_term=kwA`, visitor B with `gclid=BBB&utm_term=kwB`, each without plugin cookies (`plugin_cookies`); A's cookie holds only A's click. A converts. The reporter receives `AAA` with A's `clicked_at` and `kwA`.
 - A click without `gclid` converts with no click ID for the hash.
-- Retention cleanup, the daily orphan sweep and permanent deletion of a tracking URL (via the admin trash view's nonce link) leave no click-ID rows for deleted clicks.
+- Every path that deletes click rows leaves no click-ID or conversion rows for them: retention cleanup of an expired click, the daily cleanup of the clicks of a deleted tracking URL, the daily orphan sweep after a click row is deleted by other means, and permanent deletion of a tracking URL (via the admin trash view's nonce link).
 
 ---
 
@@ -927,7 +927,7 @@ Playground swaps its PHP runtime after 400 requests, and the new runtime loses t
 
 ### Multi-table DELETE in SQLite
 
-The SQLite translator accepts MySQL's multi-table `DELETE x FROM a x JOIN b … WHERE …` (with `INNER` or `LEFT JOIN`) and reports success, but deletes nothing. Code paths that must be verified in Playground use single-table deletes with subqueries instead: `DELETE FROM a WHERE col IN (SELECT …)` or `DELETE FROM a WHERE NOT EXISTS (SELECT 1 FROM b WHERE b.id = a.col)`. Both are valid MySQL.
+The SQLite translator accepts MySQL's multi-table `DELETE x FROM a x JOIN b … WHERE …` (with `INNER` or `LEFT JOIN`) and reports success, but deletes nothing. The same goes for a single-table `DELETE` whose subquery contains a `JOIN`. The plugin's deletes therefore use single-table deletes with JOIN-free subqueries: `DELETE FROM a WHERE col IN (SELECT …)` or `DELETE FROM a WHERE NOT EXISTS (SELECT 1 FROM b WHERE b.id = a.col)`, nesting a further `IN (SELECT …)` where a join would be needed. Both are valid MySQL.
 
 ### Cookie Secure flag over HTTP
 

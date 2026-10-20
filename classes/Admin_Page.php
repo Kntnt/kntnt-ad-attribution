@@ -1058,18 +1058,17 @@ final class Admin_Page {
 			$conv_table      = $wpdb->prefix . 'kntnt_ad_attr_conversions';
 			$click_ids_table = $wpdb->prefix . 'kntnt_ad_attr_click_ids';
 
-			// Delete conversions linked to this hash's clicks first.
+			// Delete conversions linked to this hash's clicks first. Subqueries
+			// rather than multi-table DELETE … JOIN, which the SQLite
+			// translator used by WordPress Playground silently ignores.
 			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
 			$wpdb->query( $wpdb->prepare(
-				"DELETE cv FROM {$conv_table} cv
-				 INNER JOIN {$clicks_table} c ON c.id = cv.click_id
-				 WHERE c.hash = %s",
+				"DELETE FROM {$conv_table}
+				 WHERE click_id IN (SELECT id FROM {$clicks_table} WHERE hash = %s)",
 				$hash,
 			) );
 
-			// Click IDs live exactly as long as their click row. A subquery
-			// rather than a multi-table DELETE … JOIN, which the SQLite
-			// translator used by WordPress Playground silently ignores.
+			// Click IDs live exactly as long as their click row.
 			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
 			$wpdb->query( $wpdb->prepare(
 				"DELETE FROM {$click_ids_table}
