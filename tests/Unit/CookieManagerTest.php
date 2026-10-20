@@ -363,7 +363,7 @@ describe('Cookie_Manager::set_transport_cookie()', function () {
                 return true;
             });
 
-        (new Cookie_Manager())->set_transport_cookie($hash);
+        (new Cookie_Manager())->set_transport_cookie($hash, 1700000000);
     });
 
     it('sets httponly to false', function () {
@@ -376,7 +376,7 @@ describe('Cookie_Manager::set_transport_cookie()', function () {
                 return true;
             });
 
-        (new Cookie_Manager())->set_transport_cookie($hash);
+        (new Cookie_Manager())->set_transport_cookie($hash, 1700000000);
     });
 
     it('sets 60-second lifetime', function () {
@@ -393,20 +393,20 @@ describe('Cookie_Manager::set_transport_cookie()', function () {
                 return true;
             });
 
-        (new Cookie_Manager())->set_transport_cookie($hash);
+        (new Cookie_Manager())->set_transport_cookie($hash, 1700000000);
     });
 
-    it('sets value to the hash argument', function () {
+    it('sets value to the hash and the click timestamp as hash:timestamp', function () {
         $hash = str_repeat('a', 64);
 
         Functions\expect('setcookie')
             ->once()
             ->andReturnUsing(function (string $name, string $value) use ($hash) {
-                expect($value)->toBe($hash);
+                expect($value)->toBe($hash . ':1700000000');
                 return true;
             });
 
-        (new Cookie_Manager())->set_transport_cookie($hash);
+        (new Cookie_Manager())->set_transport_cookie($hash, 1700000000);
     });
 
 });
