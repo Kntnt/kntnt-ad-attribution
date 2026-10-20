@@ -127,7 +127,7 @@ add_filter( 'kntnt_ad_attr_click_id_capturers', function ( array $capturers ): a
 } );
 ```
 
-The core iterates the returned array, reads each GET parameter, sanitizes it with `sanitize_text_field()`, validates length (max 255), and stores it in the `kntnt_ad_attr_click_ids` table. Capture happens before the `kntnt_ad_attr_click` action fires.
+The core iterates the returned array, reads each GET parameter, sanitizes it with `sanitize_text_field()`, validates length (max 255), and stores it in the `kntnt_ad_attr_click_ids` table. Click IDs are stored per click: capture happens after the click row is inserted and is keyed by that row, so each click ID belongs to exactly one click, and a click without the parameter has no ID for that platform. Capture happens before the `kntnt_ad_attr_click` action fires. Click IDs are deleted together with their click rows.
 
 **`kntnt_ad_attr_conversion_reporters`**
 
@@ -155,8 +155,8 @@ If an item lacks a `payload` key, the entire array is treated as the raw payload
 `enqueue` callback parameters:
 
 - `$attributions`: `[ hash => fractional_value, … ]` — the recorded attributions only: hashes that got a conversion row, each with a weight above 0, as written. The weights are not renormalised, so under a multi-touch model they can sum to less than 1.0 when a click row was missing.
-- `$click_ids`: `[ hash => [ platform => ['id' => click_id, 'captured_at' => unix_timestamp], … ], … ]` — structured format with click ID and capture time. Keyed by the hashes in `$attributions` only. May be empty for a given hash.
-- `$campaigns`: `[ hash => [ 'utm_source' => …, 'utm_medium' => …, 'utm_campaign' => …, 'utm_content' => …, 'utm_term' => …, 'utm_id' => …, 'utm_source_platform' => … ], … ]`. Keyed by the hashes in `$attributions` only.
+- `$click_ids`: `[ hash => [ platform => ['id' => click_id, 'captured_at' => unix_timestamp], … ], … ]` — the click IDs captured on the click the conversion is attributed to (the click row its conversion row links to), not the latest click on the tracking URL. `captured_at` is that click's `clicked_at`. Keyed by the hashes in `$attributions` only. A hash whose attributed click carried no ID for a platform has no entry for that platform, and a hash whose click carried none has no entry at all.
+- `$campaigns`: `[ hash => [ 'utm_source' => …, 'utm_medium' => …, 'utm_campaign' => …, 'utm_content' => …, 'utm_term' => …, 'utm_id' => …, 'utm_source_platform' => … ], … ]`. Source, medium and campaign come from the tracking URL; content, term, id and source platform come from the attributed click. Keyed by the hashes in `$attributions` only.
 
 `enqueue` is called only when at least one conversion row was written.
 - `$context`: `[ 'timestamp' => ISO-8601, 'ip' => string, 'user_agent' => string, 'page_url' => string ]`.
@@ -168,7 +168,7 @@ add_filter( 'kntnt_ad_attr_conversion_reporters', function ( array $reporters ):
         'enqueue' => function ( array $attributions, array $click_ids, array $campaigns, array $context ): array {
             $items = [];
             foreach ( $attributions as $hash => $value ) {
-                $click_id = $click_ids[ $hash ]['my_platform'] ?? '';
+                $click_id = $click_ids[ $hash ]['my_platform']['id'] ?? '';
                 if ( $click_id === '' ) {
                     continue;
                 }

@@ -21,6 +21,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PLAYGROUND_PORT="${PLAYGROUND_PORT:-9400}"
 PLAYGROUND_PID=""
+PLAYGROUND_HOME=""
 UNIT_PHP_EXIT=0
 UNIT_JS_EXIT=0
 INTEGRATION_PASS=0
@@ -361,13 +362,27 @@ run_unit_js() {
 # ─── Level 2: Integration Tests ───
 
 start_playground() {
-    echo ""
-    echo "═══ Level 2: Integration Tests ═══"
-    echo ""
+    # A server already answering on the port would pass the readiness probe
+    # below, and the suite would silently run against the wrong code.
+    if curl -s -o /dev/null "http://localhost:$PLAYGROUND_PORT/" 2>/dev/null; then
+        echo "ERROR: Port $PLAYGROUND_PORT is already in use. Stop that server or set PLAYGROUND_PORT." >&2
+        exit 1
+    fi
+
     echo "Starting WordPress Playground on port $PLAYGROUND_PORT..."
 
+    # Playground caches the WordPress build it boots from, database
+    # included, in $HOME/.wordpress-playground and rewrites it on every
+    # boot. Every Playground run on the machine shares that cache, and
+    # booting from a build another run wrote can leave WordPress in
+    # maintenance mode (HTTP 503). This run gets a private cache, shared
+    # only by its own boots.
+    if [[ -z "$PLAYGROUND_HOME" ]]; then
+        PLAYGROUND_HOME="$(mktemp -d)"
+    fi
+
     # Playground always runs on the host (needs host ports and mount paths)
-    $LOCAL_NPX @wp-playground/cli server \
+    HOME="$PLAYGROUND_HOME" $LOCAL_NPX @wp-playground/cli server \
         --port="$PLAYGROUND_PORT" \
         --mount="$SCRIPT_DIR:/wordpress/wp-content/plugins/kntnt-ad-attribution" \
         --mount="$SCRIPT_DIR/tests/Integration/fake-consent-plugin:/wordpress/wp-content/mu-plugins/fake-consent-plugin" \
@@ -376,10 +391,15 @@ start_playground() {
         --login &
     PLAYGROUND_PID=$!
 
-    # Wait for server readiness (max 60 seconds)
+    # Wait until the blueprint has finished (max 60 seconds). The server
+    # answers before the blueprint has activated the plugin, so probe for
+    # one of the plugin's own REST routes rather than for any response.
     local max_wait=60
     local waited=0
-    while ! curl -sf "http://localhost:$PLAYGROUND_PORT/" > /dev/null 2>&1; do
+    local routes=""
+    while true; do
+        routes=$(curl -s "http://localhost:$PLAYGROUND_PORT/?rest_route=/kntnt-ad-attribution/v1" 2>/dev/null || true)
+        [[ "$routes" == *set-cookie* ]] && break
         sleep 1
         waited=$((waited + 1))
         if [[ $waited -ge $max_wait ]]; then
@@ -396,7 +416,27 @@ stop_playground() {
         kill "$PLAYGROUND_PID" 2>/dev/null || true
         wait "$PLAYGROUND_PID" 2>/dev/null || true
         PLAYGROUND_PID=""
+
+        # Wait for the port to be released, so the next start cannot take
+        # a dying instance for a ready one.
+        local waited=0
+        while curl -s -o /dev/null "http://localhost:$PLAYGROUND_PORT/" 2>/dev/null; do
+            sleep 1
+            waited=$((waited + 1))
+            if [[ $waited -ge 30 ]]; then
+                echo "WARNING: Port $PLAYGROUND_PORT still answers after stopping Playground." >&2
+                break
+            fi
+        done
         echo "Playground stopped."
+    fi
+}
+
+cleanup() {
+    stop_playground
+    if [[ -n "$PLAYGROUND_HOME" ]]; then
+        rm -rf "$PLAYGROUND_HOME"
+        PLAYGROUND_HOME=""
     fi
 }
 
@@ -406,6 +446,9 @@ bootstrap_integration() {
 }
 
 run_integration() {
+    echo ""
+    echo "═══ Level 2: Integration Tests ═══"
+
     local test_files=("$SCRIPT_DIR"/tests/Integration/test-*.sh)
 
     # Check that integration tests exist
@@ -415,6 +458,13 @@ run_integration() {
         return 0
     fi
 
+    # Suites share one Playground, restarted every suites_per_playground
+    # suites. Playground swaps its PHP runtime after 400 requests, and the
+    # swapped runtime loses the SQLite driver ("Error establishing a database
+    # connection"), so one instance cannot serve every suite.
+    local suites_per_playground=8
+    local suites_on_playground=0
+
     for test_file in "${test_files[@]}"; do
         local test_name
         test_name=$(basename "$test_file")
@@ -423,6 +473,17 @@ run_integration() {
         if [[ -n "$FILTER" ]] && [[ "$test_name" != *"$FILTER"* ]]; then
             continue
         fi
+
+        if [[ $suites_on_playground -ge $suites_per_playground ]]; then
+            teardown_integration
+            stop_playground
+            suites_on_playground=0
+        fi
+        if [[ $suites_on_playground -eq 0 ]]; then
+            start_playground
+            bootstrap_integration
+        fi
+        suites_on_playground=$((suites_on_playground + 1))
 
         echo ""
         echo "--- Running $test_name ---"
@@ -434,6 +495,11 @@ run_integration() {
             echo "FAILED: $test_name"
         fi
     done
+
+    if [[ $suites_on_playground -gt 0 ]]; then
+        teardown_integration
+        stop_playground
+    fi
 }
 
 teardown_integration() {
@@ -495,8 +561,8 @@ main() {
     verify_environment
     install_deps
 
-    # Ensure Playground is stopped on exit
-    trap stop_playground EXIT
+    # Ensure Playground is stopped and its private cache removed on exit
+    trap cleanup EXIT
 
     case "$MODE" in
         unit)
@@ -504,18 +570,12 @@ main() {
             run_unit_js
             ;;
         integration)
-            start_playground
-            bootstrap_integration
             run_integration
-            teardown_integration
             ;;
         all)
             run_unit_php
             run_unit_js
-            start_playground
-            bootstrap_integration
             run_integration
-            teardown_integration
             ;;
     esac
 

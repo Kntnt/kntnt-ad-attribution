@@ -135,20 +135,27 @@ Aggregated statistics (total clicks, total conversions per tracking URL) are com
 
 ### Click IDs — Custom Table
 
-Platform-specific click IDs (e.g. `gclid`, `fbclid`, `msclkid`) are captured by registered adapters via the `kntnt_ad_attr_click_id_capturers` filter and stored in `kntnt_ad_attr_click_ids`. Each hash/platform combination has exactly one row.
+Platform-specific click IDs (e.g. `gclid`, `fbclid`, `msclkid`) are captured by registered adapters via the `kntnt_ad_attr_click_id_capturers` filter and stored in `kntnt_ad_attr_click_ids` (v1.10.0 layout). Each click ID belongs to exactly one click row: the row inserted for the click that carried it.
 
 ```sql
 CREATE TABLE {prefix}kntnt_ad_attr_click_ids (
-    hash       CHAR(64)     NOT NULL,
-    platform   VARCHAR(50)  NOT NULL,
-    click_id   VARCHAR(255) NOT NULL,
-    clicked_at DATETIME     NOT NULL,
-    PRIMARY KEY (hash, platform),
-    INDEX idx_clicked_at (clicked_at)
+    click_id BIGINT UNSIGNED NOT NULL,
+    platform VARCHAR(50)     NOT NULL,
+    value    VARCHAR(255)    NOT NULL,
+    PRIMARY KEY (click_id, platform),
+    INDEX idx_platform_value (platform, value(100))
 ) {charset}
 ```
 
-The composite PK `(hash, platform)` allows a single click to carry IDs from multiple platforms (e.g. a Google Ads ad that also has `fbclid` in the URL). `INSERT … ON DUPLICATE KEY UPDATE` is used for atomic upserts. Rows older than 120 days are cleaned up by the daily cron job.
+- `click_id` is the ID of the row in `kntnt_ad_attr_clicks`, as in the conversions table. `value` holds the platform's click ID.
+- The composite PK `(click_id, platform)` lets one click carry IDs from several platforms (e.g. a Google Ads ad that also has `fbclid` in the URL). A click without an ID for a platform has no row for it.
+- There is no `clicked_at` column: the capture time is the click row's `clicked_at`, read through a join.
+- The `(platform, value)` index answers "has this click ID value already been recorded for this tracking URL?": it narrows the click-ID rows to those carrying the value, and the join on `clicks.id` keeps those with the tracking URL's hash (`Click_ID_Store::find_original_click()`). The 100-character prefix keeps the key under InnoDB's 767-byte limit on older MySQL versions with utf8mb4.
+- Click IDs live exactly as long as their click row. Whenever click rows are deleted (retention cleanup, orphan cleanup, permanent deletion of a tracking URL), their click IDs are deleted too. There is no separate age-based cleanup.
+
+When a conversion is recorded, reporters receive the click IDs captured on the click row the conversion was linked to (`Click_ID_Store::get_for_clicks()`), not the latest IDs on the tracking URL.
+
+Before v1.10.0 the table held one row per `(hash, platform)`, overwritten by every click. The 1.10.0 migration drops it, since its rows cannot be mapped to click rows, and creates the per-click table.
 
 ### Report Queue — Custom Table
 

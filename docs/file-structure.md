@@ -38,7 +38,8 @@ kntnt-ad-attribution/
 │   ├── 1.2.0.php                 ← Click ID and queue tables
 │   ├── 1.5.0.php                 ← Clicks + conversions tables, drops stats
 │   ├── 1.8.0.php                 ← Per-job retry columns and index on queue table
-│   └── 1.9.0.php                 ← Deferred processing (not_before, last_attempt_at) columns
+│   ├── 1.9.0.php                 ← Deferred processing (not_before, last_attempt_at) columns
+│   └── 1.10.0.php                ← Click-ID table keyed by click row (replaces the per-hash table)
 ├── js/
 │   ├── pending-consent.js        ← Client-side: pending consent, sessionStorage, REST call
 │   └── admin.js                  ← Admin: select2, page selector, UTM field auto-fill

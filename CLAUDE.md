@@ -57,7 +57,7 @@ All machine-readable names use `kntnt-ad-attr` (hyphens) / `kntnt_ad_attr` (unde
 
 **Migrator pattern:** Version-based migrations in `migrations/X.Y.Z.php`. Each file returns `function(\wpdb $wpdb): void`. Migrator compares `kntnt_ad_attr_version` option with the plugin header version on `plugins_loaded` and runs pending files in order.
 
-**Data model:** Tracking URLs are stored as CPT `kntnt_ad_attr_url` (with meta `_hash`, `_target_post_id`, `_utm_source`, `_utm_medium`, `_utm_campaign`). Individual clicks are stored in `{prefix}kntnt_ad_attr_clicks` with per-click UTM fields (`utm_content`, `utm_term`, `utm_id`, `utm_source_platform`). Conversions are stored in `{prefix}kntnt_ad_attr_conversions` linked to specific clicks via `click_id`, with fractional attribution values. Platform-specific click IDs are stored in `{prefix}kntnt_ad_attr_click_ids` with composite PK `(hash, platform)`. Async report jobs are stored in `{prefix}kntnt_ad_attr_queue` with auto-increment PK and status-based processing.
+**Data model:** Tracking URLs are stored as CPT `kntnt_ad_attr_url` (with meta `_hash`, `_target_post_id`, `_utm_source`, `_utm_medium`, `_utm_campaign`). Individual clicks are stored in `{prefix}kntnt_ad_attr_clicks` with per-click UTM fields (`utm_content`, `utm_term`, `utm_id`, `utm_source_platform`). Conversions are stored in `{prefix}kntnt_ad_attr_conversions` linked to specific clicks via `click_id`, with fractional attribution values. Platform-specific click IDs are stored per click in `{prefix}kntnt_ad_attr_click_ids` (v1.10.0): composite PK `(click_id, platform)` where `click_id` is the click row's ID (as in conversions) and `value` is the platform's ID, plus an index on `(platform, value)` for the "click ID already recorded for this tracking URL?" lookup (`Click_ID_Store::find_original_click()`). Click IDs live exactly as long as their click row: `Cron` sweeps orphans after its click cleanups (`Click_ID_Store::delete_orphans()`) and `Admin_Page::permanently_delete_url()` deletes them with the clicks; there is no age-based cleanup. Async report jobs are stored in `{prefix}kntnt_ad_attr_queue` with auto-increment PK and status-based processing.
 
 **Shared utility methods (v1.5.1):** `Post_Type::get_valid_hashes(array $hashes)` returns hashes with published tracking URL posts (used by both `Conversion_Handler` and `Rest_Endpoint`). `Post_Type::get_distinct_meta_values(string $meta_key)` returns sorted distinct meta values for filter dropdowns (used by `Campaign_List_Table`).
 
@@ -69,7 +69,9 @@ All machine-readable names use `kntnt-ad-attr` (hyphens) / `kntnt_ad_attr` (unde
 
 **Deferred queue processing (v1.9.0):** Jobs can specify a `not_before` Unix timestamp via `Queue::enqueue()`. The `dequeue()` method filters out jobs where `not_before` is in the future (NULL = immediately eligible). "Run Now" bypasses `not_before`. The `last_attempt_at` column tracks when each job was last processed, displayed in the admin queue table. `get_next_retry_time()` considers both `retry_after` and `not_before` to schedule the next cron run.
 
-**Click ID structured format (v1.9.0):** `Click_ID_Store::get_for_hashes()` returns structured arrays `['id' => string, 'captured_at' => int]` per platform instead of bare click ID strings. The `captured_at` field is derived from the existing `clicked_at` column. This is a breaking change for consumers of the `kntnt_ad_attr_conversion_reporters` filter that access click IDs.
+**Click ID structured format (v1.9.0):** Reporters receive click IDs as structured arrays `['id' => string, 'captured_at' => int]` per platform instead of bare click ID strings. This is a breaking change for consumers of the `kntnt_ad_attr_conversion_reporters` filter that access click IDs.
+
+**Per-click click IDs (v1.10.0):** `Click_Handler` captures click IDs after the click insert, keyed by `$wpdb->insert_id` (`Click_ID_Store::store( $click_row_id, $platform, $value )`), and skips capture if the insert failed. `Conversion_Handler` passes its `$linked_clicks` map (hash ⇒ attributed click row ID) to `Click_ID_Store::get_for_clicks()` and `get_campaign_data()`, so reporters get the click IDs and per-click fields (`utm_content`, `utm_term`, `utm_id`, `utm_source_platform`) of the attributed click, with `captured_at` = that click's `clicked_at`; a hash whose click carried no ID for a platform gets no entry for it. `get_for_hashes()` and `cleanup()` were removed. Multi-table `DELETE x FROM … JOIN …` statements silently delete nothing in Playground's SQLite translator; new deletes use subqueries (`IN (SELECT …)`, `NOT EXISTS`).
 
 **Default date filter (v1.8.0):** `Campaign_List_Table::get_default_date_range()` computes the two most recent complete calendar weeks based on the WordPress "Week Starts On" setting. Used as the default when no date filter is provided.
 
@@ -103,7 +105,7 @@ The test suite has three levels. See `docs/testing-strategy.md` for full details
 |-------|-----------|-------|----------------|
 | PHP unit | Pest + Brain Monkey + Mockery | 252 | Individual class methods in isolation |
 | JS unit | Vitest + happy-dom | 39 | `pending-consent.js` and `admin.js` |
-| Integration | Bash + curl + WordPress Playground | 15 suites | End-to-end flows: click, conversion, deferred consent, admin, REST, cron |
+| Integration | Bash + curl + WordPress Playground | 16 suites | End-to-end flows: click, click IDs, conversion, deferred consent, admin, REST, cron |
 
 ### Running tests
 
@@ -158,7 +160,7 @@ GitHub Actions workflow (`.github/workflows/tests.yml`) runs all three levels on
 Integration tests run against a disposable WordPress Playground instance (WASM-based SQLite, no MySQL needed). Two mu-plugins provide test infrastructure:
 
 - `tests/Integration/fake-consent-plugin/` — simulates consent states via WP option
-- `tests/Integration/test-helpers-plugin/` — REST endpoints for fixtures, DB queries, cookie manipulation
+- `tests/Integration/test-helpers-plugin/` — REST endpoints for fixtures, DB queries, cookie manipulation, plus probe adapters switched on by option: a click-ID capturer (`set_probe_capturers "google_ads=gclid"`) and a conversion reporter (`set_probe_reporter on|supports_test`) that records every `enqueue` call (`get_probe_calls`). Suites using them call `reset_probes` at the end. See `docs/testing-strategy.md` §7.2.
 
 **Known WASM PHP gotcha:** Playground reuses the PHP process between requests. Manual `$_COOKIE`/`$_GET`/`$_POST` modifications persist across requests. The `test-clear-cookies` endpoint and `clear_cookies` fixture helper reset this state between tests.
 

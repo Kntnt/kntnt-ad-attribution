@@ -20,7 +20,7 @@ Conversions are triggered via the action hook `kntnt_ad_attr_conversion` from th
 7b. If no conversion row was written → exit (no dedup cookie, no recorded action, no reporters)
 8. Write per-hash dedup cookie for the recorded hashes (only when dedup is enabled)
 9. Trigger kntnt_ad_attr_conversion_recorded with the recorded attributions and context (timestamp, IP, user-agent)
-10. Look up click IDs and campaign data for the recorded hashes
+10. Look up the click IDs and per-click campaign fields of the click row each recorded hash is linked to
 11. Call registered reporters' enqueue callbacks with the recorded attributions, insert payloads into queue
 12. Schedule queue processing
 ```
@@ -120,8 +120,10 @@ Everything after the write uses `$recorded`, not `$attributions`: the dedup cook
 
 After the `kntnt_ad_attr_conversion_recorded` action fires, the handler checks for registered reporters via `apply_filters('kntnt_ad_attr_conversion_reporters', [])`. If reporters are registered:
 
-1. **Look up click IDs** — calls `Click_ID_Store::get_for_hashes()` to retrieve platform-specific click IDs for the recorded hashes only. Returns structured arrays: `[ hash => [ platform => ['id' => string, 'captured_at' => int] ] ]`.
-2. **Look up campaign data** — calls `get_campaign_data()` to retrieve Source/Medium/Campaign from postmeta and Content/Term/Id/Group from the clicks table for the recorded hashes only.
+1. **Look up click IDs** — calls `Click_ID_Store::get_for_clicks( $linked_clicks )` to retrieve the platform-specific click IDs captured on the click row each recorded hash is linked to. Returns structured arrays: `[ hash => [ platform => ['id' => string, 'captured_at' => int] ] ]`, where `captured_at` is that click's `clicked_at`. A hash whose linked click carried no ID for a platform has no entry for that platform, even if a later click on the same tracking URL carried one.
+2. **Look up campaign data** — calls `get_campaign_data( $linked_clicks )` to retrieve Source/Medium/Campaign from the tracking URL's postmeta and Content/Term/Id/Group from the linked click row, for the recorded hashes only.
+
+Both lookups use the exact click the conversion was credited for, so a reporter never receives another visitor's click ID or per-click fields, provided the visitor's `_ad_clicks` entry points at the visitor's own click.
 3. **Build context** — assembles timestamp, IP, user-agent, and page URL.
 4. **Call each reporter's `enqueue` callback** — passes the recorded attributions, `$click_ids`, `$campaigns`, and `$context`. Each reporter returns an array of structured items (with `payload`, optional `label`, optional `retry_params`, and optional `not_before` keys) or raw payload arrays (legacy format).
 5. **Enqueue items** — each item's payload is JSON-encoded and inserted into the `kntnt_ad_attr_queue` table with `status = 'pending'`, along with optional `label`, per-job retry parameters, and optional `not_before` timestamp for deferred processing.

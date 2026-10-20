@@ -260,7 +260,7 @@ final class Click_Handler {
 		// Insert the click record into the clicks table.
 		$clicks_table = $wpdb->prefix . 'kntnt_ad_attr_clicks';
 
-		$wpdb->insert( $clicks_table, [
+		$inserted = $wpdb->insert( $clicks_table, [
 			'hash'                => $hash,
 			'clicked_at'          => gmdate( 'Y-m-d H:i:s', $now ),
 			'utm_content'         => $click_content !== '' ? mb_substr( $click_content, 0, 255 ) : null,
@@ -268,14 +268,19 @@ final class Click_Handler {
 			'utm_id'              => $click_id_val !== '' ? mb_substr( $click_id_val, 0, 255 ) : null,
 			'utm_source_platform' => $click_group !== '' ? mb_substr( $click_group, 0, 255 ) : null,
 		] );
+		$click_row_id = $inserted ? (int) $wpdb->insert_id : 0;
 
-		// Capture platform-specific click IDs via registered capturers.
-		// Returns early with no overhead if no capturers are registered.
-		$capturers = apply_filters( 'kntnt_ad_attr_click_id_capturers', [] );
-		foreach ( $capturers as $platform => $parameter ) {
-			$value = sanitize_text_field( $_GET[ $parameter ] ?? '' );
-			if ( $value !== '' && strlen( $value ) <= 255 ) {
-				$this->click_id_store->store( $hash, (string) $platform, $value );
+		// Capture platform-specific click IDs via registered capturers. Each
+		// ID belongs to the click row just inserted, so a conversion linked
+		// to this click reports this click's IDs and no other visitor's.
+		// Without a click row there is nothing to attach them to.
+		if ( $click_row_id > 0 ) {
+			$capturers = apply_filters( 'kntnt_ad_attr_click_id_capturers', [] );
+			foreach ( $capturers as $platform => $parameter ) {
+				$value = sanitize_text_field( $_GET[ $parameter ] ?? '' );
+				if ( $value !== '' && strlen( $value ) <= 255 ) {
+					$this->click_id_store->store( $click_row_id, (string) $platform, $value );
+				}
 			}
 		}
 

@@ -801,7 +801,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
         Functions\when('home_url')->alias(fn ($path) => 'https://example.com' . $path);
 
         // Click ID store.
-        $cis->shouldReceive('get_for_hashes')->once()->andReturn([]);
+        $cis->shouldReceive('get_for_clicks')->once()->andReturn([]);
 
         // Register a reporter.
         $enqueueCalled = false;
@@ -858,7 +858,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
 
         Functions\when('home_url')->alias(fn ($path) => 'https://example.com' . $path);
 
-        $cis->shouldReceive('get_for_hashes')->once()->andReturn(['platform_ids']);
+        $cis->shouldReceive('get_for_clicks')->once()->andReturn(['platform_ids']);
 
         // Verify the callback receives correct argument types.
         Filters\expectApplied('kntnt_ad_attr_conversion_reporters')
@@ -916,7 +916,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
 
         Functions\when('home_url')->alias(fn ($path) => 'https://example.com' . $path);
 
-        $cis->shouldReceive('get_for_hashes')->once()->andReturn([]);
+        $cis->shouldReceive('get_for_clicks')->once()->andReturn([]);
 
         // Register a reporter returning structured items with not_before.
         $not_before_ts = 1700021600;
@@ -981,7 +981,7 @@ describe('Conversion_Handler::handle_conversion()', function () {
         $_SERVER['REQUEST_URI']    = '/';
 
         Functions\when('home_url')->alias(fn ($path) => 'https://example.com' . $path);
-        $cis->shouldReceive('get_for_hashes')->once()->andReturn([]);
+        $cis->shouldReceive('get_for_clicks')->once()->andReturn([]);
 
         // Reporter with missing enqueue — should be skipped.
         Filters\expectApplied('kntnt_ad_attr_conversion_reporters')
@@ -1029,7 +1029,7 @@ describe('Conversion_Handler::handle_conversion() recorded attributions', functi
 
         $wpdb->shouldReceive('get_results')->andReturn([]);
         Functions\when('home_url')->alias(fn ($path) => 'https://example.com' . $path);
-        $cis->shouldReceive('get_for_hashes')->andReturn([]);
+        $cis->shouldReceive('get_for_clicks')->andReturn([]);
         $qp->shouldReceive('schedule')->once();
 
         $received = null;
@@ -1087,7 +1087,7 @@ describe('Conversion_Handler::handle_conversion() recorded attributions', functi
 
         Functions\when('home_url')->alias(fn ($path) => 'https://example.com' . $path);
         $wpdb->shouldReceive('get_results')->andReturn([]);
-        $cis->shouldReceive('get_for_hashes')->andReturn([]);
+        $cis->shouldReceive('get_for_clicks')->andReturn([]);
         $qp->shouldReceive('schedule');
 
         $enqueue_called = false;
@@ -1151,7 +1151,7 @@ describe('Conversion_Handler::handle_conversion() recorded attributions', functi
         $_SERVER['REQUEST_URI']     = '/';
 
         Functions\when('home_url')->alias(fn ($path) => 'https://example.com' . $path);
-        $cis->shouldReceive('get_for_hashes')->andReturn([]);
+        $cis->shouldReceive('get_for_clicks')->andReturn([]);
         $qp->shouldReceive('schedule')->once();
 
         $action_received = null;
@@ -1183,8 +1183,8 @@ describe('Conversion_Handler::handle_conversion() recorded attributions', functi
         [$handler, , , , $cis, $q, $qp, $wpdb, $hash1, $hash2] = setup_conversion_path();
 
         // Fake stores that answer for whichever hashes they are asked about.
-        $cis->shouldReceive('get_for_hashes')->andReturnUsing(
-            fn (array $hashes) => array_fill_keys($hashes, ['google_ads' => ['id' => 'gclid', 'captured_at' => 1]]),
+        $cis->shouldReceive('get_for_clicks')->andReturnUsing(
+            fn (array $linked_clicks) => array_fill_keys(array_keys($linked_clicks), ['google_ads' => ['id' => 'gclid', 'captured_at' => 1]]),
         );
 
         $prepared = [];
@@ -1229,6 +1229,217 @@ describe('Conversion_Handler::handle_conversion() recorded attributions', functi
 
         expect(array_keys($received_click_ids))->toBe([$hash2])
             ->and(array_keys($received_campaigns))->toBe([$hash2]);
+    });
+
+});
+
+// ─── Per-click reporting ───
+
+/**
+ * Builds a Conversion_Handler backed by a real Click_ID_Store and an
+ * in-memory fake of the clicks, click-ID and postmeta tables.
+ *
+ * The fake answers each query from the table it names, filtered by the
+ * prepared arguments: the click lookup by (hash, clicked_at), the click-ID
+ * and per-click field lookups by click row ID, and postmeta by hash. One
+ * probe reporter records what enqueue() receives.
+ *
+ * @param array<string, int>                $cookie    Hash => cookie timestamp.
+ * @param array<int, array<string, mixed>>  $clicks    Click rows: id, hash, clicked_at, utm_*.
+ * @param array<int, array<string, mixed>>  $click_ids Click-ID rows: click_id, platform, value.
+ * @param array<string, array<string, string>> $meta   Hash => [meta_key => meta_value].
+ *
+ * @return array{0: Conversion_Handler, 1: \ArrayObject} Handler and the reporter's received arguments.
+ */
+function make_per_click_conversion(array $cookie, array $clicks, array $click_ids, array $meta = []): array {
+    $cm  = Mockery::mock(Cookie_Manager::class);
+    $con = Mockery::mock(Consent::class);
+    $bd  = Mockery::mock(Bot_Detector::class);
+    $q   = Mockery::mock(Queue::class);
+    $qp  = Mockery::mock(Queue_Processor::class);
+
+    $bd->shouldReceive('is_bot')->andReturn(false);
+    $con->shouldReceive('check')->andReturn(true);
+    $cm->shouldReceive('parse')->with('_ad_clicks')->andReturn($cookie);
+    $qp->shouldReceive('schedule');
+
+    \Patchwork\redefine(
+        'Kntnt\Ad_Attribution\Post_Type::get_valid_hashes',
+        fn (array $hashes) => $hashes,
+    );
+
+    $by_id = array_column($clicks, null, 'id');
+
+    $wpdb = TestFactory::wpdb();
+    $GLOBALS['wpdb'] = $wpdb;
+    $wpdb->shouldReceive('query');
+    $wpdb->shouldReceive('insert')->andReturn(1);
+
+    $prepared = [];
+    $wpdb->shouldReceive('prepare')->andReturnUsing(function ($sql, ...$args) use (&$prepared) {
+        $prepared[] = [$sql, $args];
+        return count($prepared) - 1;
+    });
+
+    $wpdb->shouldReceive('get_var')->andReturnUsing(function ($token) use (&$prepared, $clicks) {
+        [, [$hash, $clicked_at]] = $prepared[$token];
+        foreach ($clicks as $click) {
+            if ($click['hash'] === $hash && $click['clicked_at'] === $clicked_at) {
+                return (string) $click['id'];
+            }
+        }
+        return null;
+    });
+
+    $wpdb->shouldReceive('get_results')->andReturnUsing(function ($token) use (&$prepared, $by_id, $click_ids, $meta) {
+        [$sql, $args] = $prepared[$token];
+
+        if (str_contains($sql, 'kntnt_ad_attr_click_ids')) {
+            $rows = [];
+            foreach ($click_ids as $row) {
+                if (in_array($row['click_id'], $args, true)) {
+                    $rows[] = (object) ($row + ['clicked_at' => $by_id[$row['click_id']]['clicked_at']]);
+                }
+            }
+            return $rows;
+        }
+
+        if (str_contains($sql, 'postmeta')) {
+            $rows = [];
+            foreach ($meta as $hash => $pairs) {
+                if (in_array($hash, $args, true)) {
+                    foreach ($pairs as $key => $value) {
+                        $rows[] = (object) ['hash' => $hash, 'meta_key' => $key, 'meta_value' => $value];
+                    }
+                }
+            }
+            return $rows;
+        }
+
+        if (str_contains($sql, 'kntnt_ad_attr_clicks')) {
+            return array_values(array_map(
+                fn ($click) => (object) $click,
+                array_filter($by_id, fn ($click) => in_array($click['id'], $args, true)),
+            ));
+        }
+
+        return [];
+    });
+
+    $_SERVER['REMOTE_ADDR']     = '127.0.0.1';
+    $_SERVER['HTTP_USER_AGENT'] = 'TestAgent';
+    $_SERVER['REQUEST_URI']     = '/thank-you/';
+    Functions\when('home_url')->alias(fn ($path) => 'https://example.com' . $path);
+
+    $received = new \ArrayObject();
+    Filters\expectApplied('kntnt_ad_attr_conversion_reporters')->andReturn([
+        'probe' => [
+            'enqueue' => function ($attributions, $click_ids, $campaigns) use ($received) {
+                $received['click_ids'] = $click_ids;
+                $received['campaigns'] = $campaigns;
+                return [];
+            },
+        ],
+    ]);
+
+    $handler = new Conversion_Handler($cm, $con, $bd, new Click_ID_Store(), $q, $qp);
+
+    return [$handler, $received];
+}
+
+describe('Conversion_Handler::handle_conversion() per-click reporting', function () {
+
+    afterEach(function () {
+        unset($GLOBALS['wpdb']);
+        unset($_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], $_SERVER['REQUEST_URI']);
+    });
+
+    it('reports the click ID of the attributed click, not a later click on the same hash', function () {
+        $hash   = TestFactory::hash('per-click-ids');
+        $first  = strtotime('2024-03-01 10:00:00 UTC');
+        $second = strtotime('2024-03-01 10:05:00 UTC');
+
+        // The visitor's cookie points at the first click.
+        [$handler, $received] = make_per_click_conversion(
+            [$hash => $first],
+            [
+                ['id' => 1, 'hash' => $hash, 'clicked_at' => '2024-03-01 10:00:00'],
+                ['id' => 2, 'hash' => $hash, 'clicked_at' => '2024-03-01 10:05:00'],
+            ],
+            [
+                ['click_id' => 1, 'platform' => 'google_ads', 'value' => 'AAA'],
+                ['click_id' => 2, 'platform' => 'google_ads', 'value' => 'BBB'],
+            ],
+        );
+
+        $handler->handle_conversion();
+
+        expect($received['click_ids'])->toBe([
+            $hash => ['google_ads' => ['id' => 'AAA', 'captured_at' => $first]],
+        ]);
+    });
+
+    it('reports no click ID when the attributed click carried none, even if a later click did', function () {
+        $hash = TestFactory::hash('per-click-no-id');
+
+        [$handler, $received] = make_per_click_conversion(
+            [$hash => strtotime('2024-03-01 10:00:00 UTC')],
+            [
+                ['id' => 1, 'hash' => $hash, 'clicked_at' => '2024-03-01 10:00:00'],
+                ['id' => 2, 'hash' => $hash, 'clicked_at' => '2024-03-01 10:05:00'],
+            ],
+            [
+                ['click_id' => 2, 'platform' => 'google_ads', 'value' => 'BBB'],
+            ],
+        );
+
+        $handler->handle_conversion();
+
+        expect($received['click_ids'])->toBe([]);
+    });
+
+    it('reports the per-click campaign fields of the attributed click', function () {
+        $hash = TestFactory::hash('per-click-fields');
+
+        [$handler, $received] = make_per_click_conversion(
+            [$hash => strtotime('2024-03-01 10:00:00 UTC')],
+            [
+                [
+                    'id'                  => 1,
+                    'hash'                => $hash,
+                    'clicked_at'          => '2024-03-01 10:00:00',
+                    'utm_content'         => 'banner-a',
+                    'utm_term'            => 'kwA',
+                    'utm_id'              => 'id-a',
+                    'utm_source_platform' => 'group-a',
+                ],
+                [
+                    'id'                  => 2,
+                    'hash'                => $hash,
+                    'clicked_at'          => '2024-03-01 10:05:00',
+                    'utm_content'         => 'banner-b',
+                    'utm_term'            => 'kwB',
+                    'utm_id'              => 'id-b',
+                    'utm_source_platform' => 'group-b',
+                ],
+            ],
+            [],
+            [$hash => ['_utm_source' => 'google', '_utm_medium' => 'cpc', '_utm_campaign' => 'spring']],
+        );
+
+        $handler->handle_conversion();
+
+        expect($received['campaigns'])->toBe([
+            $hash => [
+                'utm_source'          => 'google',
+                'utm_medium'          => 'cpc',
+                'utm_campaign'        => 'spring',
+                'utm_content'         => 'banner-a',
+                'utm_term'            => 'kwA',
+                'utm_id'              => 'id-a',
+                'utm_source_platform' => 'group-a',
+            ],
+        ]);
     });
 
 });

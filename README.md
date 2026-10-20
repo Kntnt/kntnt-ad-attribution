@@ -710,13 +710,13 @@ add_filter( 'kntnt_ad_attr_click_id_capturers', function ( array $capturers ): a
 } );
 ```
 
-The core handles sanitization, validation, and storage. Click IDs are stored in a dedicated database table and associated with the tracking URL hash.
+The core handles sanitization, validation, and storage. Click IDs are stored per click in a dedicated database table: each click ID belongs to the click row it arrived with, and is deleted together with that click.
 
 #### Conversion Reporters
 
 A *conversion reporter* tells the core how to report a conversion to an external service. Each reporter defines two callbacks:
 
-- **`enqueue`** — called synchronously at conversion time, only when at least one conversion row was written. Receives the recorded attributions, plus click IDs and campaign data for those hashes only, and context. Returns an array of structured items (with `payload`, optional `label`, optional `retry_params`, and optional `not_before` keys) to be queued for async processing.
+- **`enqueue`** — called synchronously at conversion time, only when at least one conversion row was written. Receives the recorded attributions, plus the click IDs and per-click campaign fields of the click each of those hashes is attributed to, and context. Returns an array of structured items (with `payload`, optional `label`, optional `retry_params`, and optional `not_before` keys) to be queued for async processing.
 - **`process`** — called asynchronously by the queue processor. Receives a single payload and performs the actual API call. Returns `true` on success, `false` on failure.
 
 ```php
@@ -849,13 +849,13 @@ Requires `zip` and `msgfmt` (GNU gettext). With `--tag`: `git`. With `--update` 
 16. `Rest_Endpoint(Cookie_Manager, Consent)` — REST API routes
 17. `Settings_Page(Settings, Logger)` — settings page under Settings > Ad Attribution
 
-**Data model:** Tracking URLs are stored as a custom post type `kntnt_ad_attr_url` (with meta `_hash`, `_target_post_id`, `_utm_source`, `_utm_medium`, `_utm_campaign`). Individual clicks are stored in `{prefix}kntnt_ad_attr_clicks` with per-click UTM fields. Conversions are stored in `{prefix}kntnt_ad_attr_conversions` linked to specific clicks via `click_id`, with fractional attribution values. Platform-specific click IDs are stored in `{prefix}kntnt_ad_attr_click_ids` with composite PK `(hash, platform)`. Async report jobs are stored in `{prefix}kntnt_ad_attr_queue` with auto-increment PK and status-based processing.
+**Data model:** Tracking URLs are stored as a custom post type `kntnt_ad_attr_url` (with meta `_hash`, `_target_post_id`, `_utm_source`, `_utm_medium`, `_utm_campaign`). Individual clicks are stored in `{prefix}kntnt_ad_attr_clicks` with per-click UTM fields. Conversions are stored in `{prefix}kntnt_ad_attr_conversions` linked to specific clicks via `click_id`, with fractional attribution values. Platform-specific click IDs are stored per click in `{prefix}kntnt_ad_attr_click_ids` with composite PK `(click_id, platform)`, where `click_id` is the click row's ID, and an index on `(platform, value)` for looking up whether a click ID was already recorded for a tracking URL; they are deleted together with their click rows. Async report jobs are stored in `{prefix}kntnt_ad_attr_queue` with auto-increment PK and status-based processing.
 
 **Lifecycle:** On activation, the plugin grants capabilities, runs migrations, registers rewrite rules, schedules cron, and creates the log directory (`wp-content/uploads/kntnt-ad-attribution/`) with `.htaccess` protection. On deactivation, it clears cron, transients, and rewrite rules but preserves all data. On uninstallation, it performs complete data removal — dropping all custom tables, deleting CPT posts, removing capabilities, clearing options (including `kntnt_ad_attr_settings`), and removing the log directory.
 
 **Migrator pattern:** Version-based migrations in `migrations/X.Y.Z.php`. Each file returns `function(\wpdb $wpdb): void`. The Migrator compares `kntnt_ad_attr_version` option with the plugin header version on `plugins_loaded` and runs pending files in order.
 
-**Daily cron job** (`kntnt_ad_attr_daily_cleanup`) performs six cleanup tasks: deleting expired click records and their linked conversions, removing orphaned conversions, cleaning up records for deleted tracking URLs, detecting tracking URLs whose target pages no longer exist (setting them to draft with an admin notice), cleaning up old click IDs, and purging completed/failed queue jobs. Diagnostic output is written to the shared log file via `Logger`.
+**Daily cron job** (`kntnt_ad_attr_daily_cleanup`) performs six cleanup tasks: deleting expired click records and their linked conversions, removing orphaned conversions, cleaning up records for deleted tracking URLs, detecting tracking URLs whose target pages no longer exist (setting them to draft with an admin notice), deleting the click IDs of deleted clicks, and purging completed/failed queue jobs. Diagnostic output is written to the shared log file via `Logger`.
 
 ### File Structure
 
@@ -895,7 +895,8 @@ kntnt-ad-attribution/
 │   ├── 1.2.0.php                 ← Click ID and queue tables
 │   ├── 1.5.0.php                 ← Clicks + conversions tables, drops stats
 │   ├── 1.8.0.php                 ← Per-job retry columns and index on queue table
-│   └── 1.9.0.php                 ← Deferred processing (not_before, last_attempt_at) columns
+│   ├── 1.9.0.php                 ← Deferred processing (not_before, last_attempt_at) columns
+│   └── 1.10.0.php                ← Click-ID table keyed by click row (replaces the per-hash table)
 ├── js/
 │   ├── pending-consent.js        ← Client-side: pending consent, sessionStorage, REST call
 │   └── admin.js                  ← Admin: select2, page selector, UTM field auto-fill

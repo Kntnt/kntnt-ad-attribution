@@ -4,6 +4,18 @@
  * Description: REST endpoints for test setup, fixtures, and inspection.
  */
 
+// No update checks. Every fresh Playground otherwise asks wordpress.org (and
+// the plugin's Updater asks GitHub) for updates on its first admin page load.
+// Playground caches the booted site, database included, for later boots, and
+// a site that has received update offers can boot into WordPress maintenance
+// mode (HTTP 503 on every request). Tests never update anything.
+add_filter('pre_http_request', function ($response, $args, $url) {
+    $host = wp_parse_url($url, PHP_URL_HOST);
+    return in_array($host, ['api.wordpress.org', 'api.github.com'], true)
+        ? new WP_Error('http_request_blocked', 'Blocked in integration tests.')
+        : $response;
+}, 10, 3);
+
 // Dedup window toggle. The plugin's own override lives in the array option
 // kntnt_ad_attr_settings, which test-set-option cannot write, so suites set
 // the plain string option test_dedup_seconds instead. 0 or unset keeps the
@@ -12,6 +24,76 @@
 add_filter('kntnt_ad_attr_dedup_seconds', function ($seconds) {
     $override = (int) get_option('test_dedup_seconds', 0);
     return $override > 0 ? $override : $seconds;
+});
+
+/*
+ * Probe adapters: a click-ID capturer and a conversion reporter that suites
+ * switch on through string options (test-set-option), so no add-on plugin
+ * is needed. Both are off unless their option is set. The fixtures.sh
+ * helpers set_probe_capturers, set_probe_reporter, get_probe_calls,
+ * reset_probe_calls and reset_probes wrap the options.
+ *
+ *   test_probe_capturers  "platform=param[,platform=param…]", e.g.
+ *                         "google_ads=gclid", adds those capturers.
+ *   test_probe_reporter   "on" registers reporter "probe";
+ *                         "supports_test" also sets 'supports_test' => true.
+ *   test_probe_calls      List of everything probe's enqueue received, one
+ *                         entry per call: attributions, click_ids,
+ *                         campaigns, context.
+ */
+
+add_filter('kntnt_ad_attr_click_id_capturers', function (array $capturers): array {
+    $spec = (string) get_option('test_probe_capturers', '');
+    foreach (array_filter(array_map('trim', explode(',', $spec))) as $pair) {
+        [$platform, $parameter] = array_pad(explode('=', $pair, 2), 2, '');
+        if ($platform !== '' && $parameter !== '') {
+            $capturers[$platform] = $parameter;
+        }
+    }
+    return $capturers;
+});
+
+add_filter('kntnt_ad_attr_conversion_reporters', function (array $reporters): array {
+    $mode = (string) get_option('test_probe_reporter', '');
+    if (!in_array($mode, ['on', 'supports_test'], true)) {
+        return $reporters;
+    }
+
+    $probe = [
+        'enqueue' => function (array $attributions, array $click_ids, array $campaigns, array $context): array {
+            $calls = get_option('test_probe_calls', []);
+            if (!is_array($calls)) {
+                $calls = [];
+            }
+            $calls[] = [
+                'attributions' => $attributions,
+                'click_ids'    => $click_ids,
+                'campaigns'    => $campaigns,
+                'context'      => $context,
+            ];
+            update_option('test_probe_calls', $calls, false);
+
+            // One job per attribution, deferred a day so WP-Cron leaves it
+            // pending for the rest of the run.
+            $items = [];
+            foreach ($attributions as $hash => $value) {
+                $items[] = [
+                    'payload'    => ['hash' => $hash, 'value' => $value],
+                    'label'      => 'Probe ' . substr((string) $hash, 0, 8),
+                    'not_before' => time() + DAY_IN_SECONDS,
+                ];
+            }
+            return $items;
+        },
+        'process' => fn ($payload): bool => true,
+    ];
+
+    if ($mode === 'supports_test') {
+        $probe['supports_test'] = true;
+    }
+
+    $reporters['probe'] = $probe;
+    return $reporters;
 });
 
 add_action('rest_api_init', function () {

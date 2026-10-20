@@ -569,7 +569,7 @@ describe('Click_Handler::handle_click()', function () {
         expect(fn () => $handler->handle_click())->toThrow(ExitException::class);
     });
 
-    it('stores click ID via Click_ID_Store when capturer registered', function () {
+    it('stores the captured click ID on the click row it just inserted', function () {
         [$handler, $cm, $con, $bd, $cis] = make_click_handler();
         $hash = TestFactory::hash('click-id-test');
 
@@ -591,7 +591,12 @@ describe('Click_Handler::handle_click()', function () {
         $bd->shouldReceive('is_bot')->andReturn(false);
         $con->shouldReceive('check')->andReturn(true);
         Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
-        $wpdb->shouldReceive('insert')->once()->andReturn(true);
+
+        // The click insert assigns row ID 77, the way wpdb sets insert_id.
+        $wpdb->shouldReceive('insert')->once()->andReturnUsing(function () use ($wpdb) {
+            $wpdb->insert_id = 77;
+            return 1;
+        });
         Functions\when('get_post_meta')->justReturn('existing');
 
         // Return click ID capturers via filter.
@@ -599,8 +604,48 @@ describe('Click_Handler::handle_click()', function () {
             ->once()
             ->andReturn(['google' => 'gclid']);
 
-        // Assert store() called with correct args.
-        $cis->shouldReceive('store')->once()->with($hash, 'google', 'abc123');
+        // The click ID belongs to click row 77, not to the tracking URL.
+        $cis->shouldReceive('store')->once()->with(77, 'google', 'abc123');
+
+        $cm->shouldReceive('parse')->andReturn([]);
+        $cm->shouldReceive('add')->andReturn([$hash => time()]);
+        $cm->shouldReceive('set_clicks_cookie')->once();
+        Functions\expect('nocache_headers')->once();
+        Functions\expect('wp_redirect')->once()->andReturnUsing(fn () => throw new ExitException());
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class);
+    });
+
+    it('stores no click ID when the click row could not be inserted', function () {
+        [$handler, $cm, $con, $bd, $cis] = make_click_handler();
+        $hash = TestFactory::hash('click-id-insert-failed');
+
+        $_GET['gclid'] = 'abc123';
+
+        Functions\expect('get_query_var')->once()->andReturn($hash);
+        $cm->shouldReceive('validate_hash')->andReturn(true);
+
+        $wpdb = TestFactory::wpdb();
+        $row  = (object) ['ID' => 10, 'target_post_id' => '20'];
+        $wpdb->shouldReceive('prepare')->andReturn('SQL');
+        $wpdb->shouldReceive('get_row')->once()->andReturn($row);
+        $GLOBALS['wpdb'] = $wpdb;
+
+        Functions\expect('get_permalink')->once()->andReturn('https://example.com/');
+        Functions\when('wp_parse_url')->alias(fn ($url, $comp) => parse_url($url, $comp));
+        Functions\when('wp_parse_str')->alias(function ($str, &$result) { parse_str($str, $result); });
+        Functions\when('add_query_arg')->alias(fn ($args, $url) => $url);
+        $bd->shouldReceive('is_bot')->andReturn(false);
+        $con->shouldReceive('check')->andReturn(true);
+        Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
+        $wpdb->shouldReceive('insert')->once()->andReturn(false);
+        Functions\when('get_post_meta')->justReturn('existing');
+
+        Filters\expectApplied('kntnt_ad_attr_click_id_capturers')
+            ->andReturn(['google' => 'gclid']);
+
+        // Without a click row there is nothing to attach the click ID to.
+        $cis->shouldNotReceive('store');
 
         $cm->shouldReceive('parse')->andReturn([]);
         $cm->shouldReceive('add')->andReturn([$hash => time()]);
@@ -633,7 +678,10 @@ describe('Click_Handler::handle_click()', function () {
         $bd->shouldReceive('is_bot')->andReturn(false);
         $con->shouldReceive('check')->andReturn(true);
         Functions\when('gmdate')->justReturn('2024-01-01 12:00:00');
-        $wpdb->shouldReceive('insert')->once()->andReturn(true);
+        $wpdb->shouldReceive('insert')->once()->andReturnUsing(function () use ($wpdb) {
+            $wpdb->insert_id = 77;
+            return 1;
+        });
         Functions\when('get_post_meta')->justReturn('existing');
 
         Filters\expectApplied('kntnt_ad_attr_click_id_capturers')

@@ -45,6 +45,10 @@ final class TestFactory {
             $wpdb->{$prop} = $value;
         }
 
+        // The real wpdb always has insert_id; 0 means "no row inserted yet".
+        // Tests that need a row ID set it from their insert() expectation.
+        $wpdb->insert_id = 0;
+
         return $wpdb;
     }
 
