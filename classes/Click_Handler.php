@@ -132,9 +132,11 @@ final class Click_Handler {
 	/**
 	 * Processes a tracking URL visit.
 	 *
-	 * Implements the 12-step click flow: hash extraction → validation →
-	 * database lookup → target resolution → loop guard → bot check →
-	 * stats logging → consent check → cookie/transport → redirect.
+	 * Implements the click flow: hash extraction → validation → database
+	 * lookup → target resolution → loop guard → bot check → speculative
+	 * check → consent check → repeat check → deduplication → click
+	 * recording → cookie/transport → redirect. Each check that ends the
+	 * request records no click; see docs/click-handling.md, "Counting rules".
 	 *
 	 * @return void
 	 * @since 1.0.0
@@ -242,6 +244,24 @@ final class Click_Handler {
 		// Step 10: Check consent early — needed for click deduplication.
 		$consent_state = $this->consent->check();
 
+		// Platform click IDs are read before anything is recorded, because a
+		// value already recorded for this tracking URL makes the request a
+		// repeat rather than a click.
+		$click_ids = $this->capture_click_ids();
+
+		// Repeat check — a reload, back/forward navigation, bookmark or shared
+		// link carries a click ID that an earlier click of this tracking URL
+		// already recorded. It is not a new click.
+		$original_click = $this->find_original_click( $hash, $click_ids );
+		if ( $original_click !== null ) {
+			match ( $consent_state ) {
+				true  => $this->set_cookie( $hash, $this->repeat_entry_timestamp( $hash, $original_click['clicked_at'] ) ),
+				false => null,
+				null  => $this->handle_pending_consent( $hash, $original_click['clicked_at'], $target_url ),
+			};
+			$this->redirect( $target_url );
+		}
+
 		// Step 10b: Click deduplication — skip DB insert when the same hash
 		// was already clicked within the dedup window and consent allows
 		// reading the cookie. Without consent we cannot read the cookie,
@@ -289,17 +309,13 @@ final class Click_Handler {
 		] );
 		$click_row_id = $inserted ? (int) $wpdb->insert_id : 0;
 
-		// Capture platform-specific click IDs via registered capturers. Each
-		// ID belongs to the click row just inserted, so a conversion linked
-		// to this click reports this click's IDs and no other visitor's.
-		// Without a click row there is nothing to attach them to.
+		// Store the captured platform click IDs. Each ID belongs to the click
+		// row just inserted, so a conversion linked to this click reports
+		// this click's IDs and no other visitor's. Without a click row there
+		// is nothing to attach them to.
 		if ( $click_row_id > 0 ) {
-			$capturers = apply_filters( 'kntnt_ad_attr_click_id_capturers', [] );
-			foreach ( $capturers as $platform => $parameter ) {
-				$value = sanitize_text_field( $_GET[ $parameter ] ?? '' );
-				if ( $value !== '' && strlen( $value ) <= 255 ) {
-					$this->click_id_store->store( $click_row_id, (string) $platform, $value );
-				}
+			foreach ( $click_ids as $platform => $value ) {
+				$this->click_id_store->store( $click_row_id, $platform, $value );
 			}
 		}
 
@@ -365,6 +381,81 @@ final class Click_Handler {
 		$entries = $this->cookie_manager->parse();
 		$entries = $this->cookie_manager->add( $entries, $hash, $timestamp );
 		$this->cookie_manager->set_clicks_cookie( $entries );
+	}
+
+	/**
+	 * Reads the platform click IDs carried by the request.
+	 *
+	 * Asks the registered capturers (`kntnt_ad_attr_click_id_capturers`)
+	 * which query parameter holds each platform's click ID. Empty values and
+	 * values longer than the column (255 characters) are ignored.
+	 *
+	 * @return array<string, string> Platform => click ID value.
+	 * @since 1.10.0
+	 */
+	private function capture_click_ids(): array {
+		$click_ids = [];
+
+		$capturers = apply_filters( 'kntnt_ad_attr_click_id_capturers', [] );
+		foreach ( $capturers as $platform => $parameter ) {
+			$value = sanitize_text_field( $_GET[ $parameter ] ?? '' );
+			if ( $value !== '' && strlen( $value ) <= 255 ) {
+				$click_ids[ (string) $platform ] = $value;
+			}
+		}
+
+		return $click_ids;
+	}
+
+	/**
+	 * Finds the click a repeat request resolves to.
+	 *
+	 * A request is a repeat if any of its click IDs was already recorded on
+	 * a click of the same tracking URL. The original click is the earliest
+	 * click row carrying any of those values. Without click IDs, for example
+	 * when no capturers are registered, there is nothing to compare.
+	 *
+	 * @param string                $hash      The tracking URL hash.
+	 * @param array<string, string> $click_ids Platform => click ID value carried by the request.
+	 *
+	 * @return array{click_id: int, clicked_at: int}|null The original click, or null if the request is not a repeat.
+	 * @since 1.10.0
+	 */
+	private function find_original_click( string $hash, array $click_ids ): ?array {
+		$original = null;
+
+		foreach ( $click_ids as $platform => $value ) {
+			$match = $this->click_id_store->find_original_click( $hash, $platform, $value );
+			if ( $match !== null && ( $original === null || [ $match['clicked_at'], $match['click_id'] ] < [ $original['clicked_at'], $original['click_id'] ] ) ) {
+				$original = $match;
+			}
+		}
+
+		return $original;
+	}
+
+	/**
+	 * Returns the click time a repeat leaves in the visitor's cookie entry.
+	 *
+	 * The entry ends up at the more recent of the existing entry's click and
+	 * the original click, so a repeat never moves it backwards in time. The
+	 * existing entry only counts if its click row exists, which keeps every
+	 * entry the plugin writes pointing at a click row.
+	 *
+	 * @param string $hash                The tracking URL hash.
+	 * @param int    $original_clicked_at Unix timestamp of the original click.
+	 *
+	 * @return int Unix timestamp for the cookie entry.
+	 * @since 1.10.0
+	 */
+	private function repeat_entry_timestamp( string $hash, int $original_clicked_at ): int {
+		$existing = $this->cookie_manager->parse()[ $hash ] ?? null;
+
+		if ( $existing !== null && $existing > $original_clicked_at && $this->click_row_exists( $hash, $existing ) ) {
+			return $existing;
+		}
+
+		return $original_clicked_at;
 	}
 
 	/**

@@ -644,6 +644,9 @@ describe('Click_Handler::handle_click()', function () {
             ->once()
             ->andReturn(['google' => 'gclid']);
 
+        // The value is new for this tracking URL, so this is a new click.
+        $cis->shouldReceive('find_original_click')->with($hash, 'google', 'abc123')->andReturn(null);
+
         // The click ID belongs to click row 77, not to the tracking URL.
         $cis->shouldReceive('store')->once()->with(77, 'google', 'abc123');
 
@@ -683,6 +686,7 @@ describe('Click_Handler::handle_click()', function () {
 
         Filters\expectApplied('kntnt_ad_attr_click_id_capturers')
             ->andReturn(['google' => 'gclid']);
+        $cis->shouldReceive('find_original_click')->andReturn(null);
 
         // Without a click row there is nothing to attach the click ID to.
         $cis->shouldNotReceive('store');
@@ -1273,6 +1277,205 @@ describe('Click_Handler::handle_click() speculative requests', function () {
         Functions\expect('status_header')->never();
         Functions\expect('nocache_headers')->once();
         Functions\expect('wp_redirect')->once()->andReturnUsing(fn () => throw new ExitException('redirect'));
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class, 'redirect');
+    });
+
+});
+
+// ─── handle_click(): repeat click IDs ───
+
+/**
+ * Stubs a request whose gclid was recorded on an earlier click of the
+ * tracking URL, at $original_at, and that ends in a redirect.
+ *
+ * @return Mockery\MockInterface The mock wpdb, which expects no insert.
+ */
+function stub_repeat_request(Mockery\MockInterface $cm, Mockery\MockInterface $bd, Mockery\MockInterface $cis, string $hash, int $original_at): Mockery\MockInterface {
+    $wpdb = stub_tracking_url_request($cm, $hash);
+
+    $_GET['gclid'] = 'RRR';
+    Filters\expectApplied('kntnt_ad_attr_click_id_capturers')->andReturn(['google_ads' => 'gclid']);
+    $bd->shouldReceive('is_bot')->andReturn(false);
+    $cis->shouldReceive('find_original_click')
+        ->with($hash, 'google_ads', 'RRR')
+        ->andReturn(['click_id' => 7, 'clicked_at' => $original_at]);
+
+    $wpdb->shouldNotReceive('insert');
+    $cis->shouldNotReceive('store');
+
+    Functions\expect('nocache_headers')->once();
+    Functions\expect('wp_redirect')->once()->andReturnUsing(fn () => throw new ExitException('redirect'));
+
+    return $wpdb;
+}
+
+describe('Click_Handler::handle_click() repeat click IDs', function () {
+
+    afterEach(function () {
+        unset($GLOBALS['wpdb']);
+        $_GET = [];
+    });
+
+    it('points the cookie entry at the original click when consent is granted and the hash has no entry', function () {
+        [$handler, $cm, $con, $bd, $cis] = make_click_handler();
+        $hash     = TestFactory::hash('repeat-no-entry');
+        $original = 1699990000;
+        stub_repeat_request($cm, $bd, $cis, $hash, $original);
+        $con->shouldReceive('check')->andReturn(true);
+
+        $cm->shouldReceive('parse')->andReturn([]);
+        $cm->shouldReceive('add')->once()->with([], $hash, $original)->andReturn([$hash => $original]);
+        $cm->shouldReceive('set_clicks_cookie')->once()->with([$hash => $original]);
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class, 'redirect');
+    });
+
+    it('moves an older cookie entry forward to the original click when consent is granted', function () {
+        [$handler, $cm, $con, $bd, $cis] = make_click_handler();
+        $hash     = TestFactory::hash('repeat-older-entry');
+        $original = 1699990000;
+        $older    = $original - 3600;
+        stub_repeat_request($cm, $bd, $cis, $hash, $original);
+        $con->shouldReceive('check')->andReturn(true);
+
+        $cm->shouldReceive('parse')->andReturn([$hash => $older]);
+        $cm->shouldReceive('add')->once()->with([$hash => $older], $hash, $original)->andReturn([$hash => $original]);
+        $cm->shouldReceive('set_clicks_cookie')->once()->with([$hash => $original]);
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class, 'redirect');
+    });
+
+    it('leaves a newer cookie entry unchanged when consent is granted and its click row exists', function () {
+        [$handler, $cm, $con, $bd, $cis] = make_click_handler();
+        $hash     = TestFactory::hash('repeat-newer-entry');
+        $original = 1699990000;
+        $newer    = $original + 3600;       // 2023-11-14 20:26:40 UTC
+        $wpdb     = stub_repeat_request($cm, $bd, $cis, $hash, $original);
+        $con->shouldReceive('check')->andReturn(true);
+
+        $cm->shouldReceive('parse')->andReturn([$hash => $newer]);
+
+        // The newer entry's click row exists, so the entry can be trusted.
+        $wpdb->shouldReceive('prepare')
+            ->with(Mockery::pattern('/clicked_at = %s/'), $hash, '2023-11-14 20:26:40')
+            ->andReturn('SQL');
+        $wpdb->shouldReceive('get_var')->once()->andReturn('9');
+
+        $cm->shouldReceive('add')->once()->with([$hash => $newer], $hash, $newer)->andReturn([$hash => $newer]);
+        $cm->shouldReceive('set_clicks_cookie')->once()->with([$hash => $newer]);
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class, 'redirect');
+    });
+
+    it('transports the original click when consent is undetermined', function () {
+        [$handler, $cm, $con, $bd, $cis] = make_click_handler();
+        $hash     = TestFactory::hash('repeat-pending');
+        $original = 1699990000;
+        stub_repeat_request($cm, $bd, $cis, $hash, $original);
+        $con->shouldReceive('check')->andReturn(null);
+
+        $cm->shouldReceive('set_transport_cookie')->once()->with($hash, $original);
+        $cm->shouldNotReceive('set_clicks_cookie');
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class, 'redirect');
+    });
+
+    it('resolves to the earliest original click when several click IDs were recorded', function () {
+        [$handler, $cm, $con, $bd, $cis] = make_click_handler();
+        $hash = TestFactory::hash('repeat-two-platforms');
+        $wpdb = stub_tracking_url_request($cm, $hash);
+
+        $_GET['gclid']  = 'GGG';
+        $_GET['msclkid'] = 'MMM';
+        Filters\expectApplied('kntnt_ad_attr_click_id_capturers')->andReturn(['google_ads' => 'gclid', 'microsoft_ads' => 'msclkid']);
+        $bd->shouldReceive('is_bot')->andReturn(false);
+        $con->shouldReceive('check')->andReturn(null);
+
+        $cis->shouldReceive('find_original_click')->with($hash, 'google_ads', 'GGG')->andReturn(['click_id' => 9, 'clicked_at' => 1699995000]);
+        $cis->shouldReceive('find_original_click')->with($hash, 'microsoft_ads', 'MMM')->andReturn(['click_id' => 4, 'clicked_at' => 1699990000]);
+        $wpdb->shouldNotReceive('insert');
+
+        $cm->shouldReceive('set_transport_cookie')->once()->with($hash, 1699990000);
+
+        Functions\expect('nocache_headers')->once();
+        Functions\expect('wp_redirect')->once()->andReturnUsing(fn () => throw new ExitException('redirect'));
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class, 'redirect');
+    });
+
+    it('records the same click ID on another tracking URL as a new click', function () {
+        [$handler, $cm, $con, $bd, $cis] = make_click_handler();
+        $hash = TestFactory::hash('repeat-other-url');
+        $wpdb = stub_tracking_url_request($cm, $hash);
+
+        $_GET['gclid'] = 'RRR';
+        Filters\expectApplied('kntnt_ad_attr_click_id_capturers')->andReturn(['google_ads' => 'gclid']);
+        $bd->shouldReceive('is_bot')->andReturn(false);
+        $con->shouldReceive('check')->andReturn(false);
+
+        // RRR is recorded only on another tracking URL, so the lookup on this
+        // one finds nothing.
+        $cis->shouldReceive('find_original_click')->with($hash, 'google_ads', 'RRR')->andReturn(null);
+
+        $wpdb->shouldReceive('insert')->once()->andReturnUsing(function () use ($wpdb) {
+            $wpdb->insert_id = 31;
+            return 1;
+        });
+        $cis->shouldReceive('store')->once()->with(31, 'google_ads', 'RRR');
+        Actions\expectDone('kntnt_ad_attr_click')->once();
+
+        Functions\expect('nocache_headers')->once();
+        Functions\expect('wp_redirect')->once()->andReturnUsing(fn () => throw new ExitException('redirect'));
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class, 'redirect');
+    });
+
+    it('points a newer cookie entry without a click row at the original click when consent is granted', function () {
+        [$handler, $cm, $con, $bd, $cis] = make_click_handler();
+        $hash     = TestFactory::hash('repeat-newer-entry-no-row');
+        $original = 1699990000;
+        $newer    = $original + 3600;
+        $wpdb     = stub_repeat_request($cm, $bd, $cis, $hash, $original);
+        $con->shouldReceive('check')->andReturn(true);
+
+        $cm->shouldReceive('parse')->andReturn([$hash => $newer]);
+
+        // Every entry the plugin writes must point at a click row (#2).
+        $wpdb->shouldReceive('get_var')->once()->andReturn(null);
+
+        $cm->shouldReceive('add')->once()->with([$hash => $newer], $hash, $original)->andReturn([$hash => $original]);
+        $cm->shouldReceive('set_clicks_cookie')->once()->with([$hash => $original]);
+
+        expect(fn () => $handler->handle_click())->toThrow(ExitException::class, 'redirect');
+    });
+
+    it('records nothing for a click ID already recorded on the tracking URL, and redirects', function () {
+        [$handler, $cm, $con, $bd, $cis] = make_click_handler();
+        $hash = TestFactory::hash('repeat');
+        $wpdb = stub_tracking_url_request($cm, $hash);
+
+        $_GET['gclid'] = 'RRR';
+        Filters\expectApplied('kntnt_ad_attr_click_id_capturers')->andReturn(['google_ads' => 'gclid']);
+
+        $bd->shouldReceive('is_bot')->andReturn(false);
+        $con->shouldReceive('check')->andReturn(false);
+
+        // The value was recorded on an earlier click of this tracking URL.
+        $cis->shouldReceive('find_original_click')
+            ->with($hash, 'google_ads', 'RRR')
+            ->andReturn(['click_id' => 7, 'clicked_at' => 1699990000]);
+
+        $wpdb->shouldNotReceive('insert');
+        $cis->shouldNotReceive('store');
+        Actions\expectDone('kntnt_ad_attr_click')->never();
+
+        // Redirected as usual, with query forwarding.
+        Functions\expect('nocache_headers')->once();
+        Functions\expect('wp_redirect')
+            ->once()
+            ->with('https://example.com/?gclid=RRR', 302)
+            ->andReturnUsing(fn () => throw new ExitException('redirect'));
 
         expect(fn () => $handler->handle_click())->toThrow(ExitException::class, 'redirect');
     });
