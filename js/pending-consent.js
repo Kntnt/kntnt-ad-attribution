@@ -1,9 +1,10 @@
 /**
  * Client-side pending consent handler.
  *
- * Picks up ad click hashes from the transport cookie (_aah_pending) or
- * URL fragment (#_aah=<hash>), stores them in sessionStorage, and sends
- * them to the REST set-cookie endpoint when consent is granted.
+ * Picks up ad clicks as `<hash>:<timestamp>` pairs from the transport cookie
+ * (_aah_pending) or URL fragment (#_aah=<hash>:<timestamp>), stores them in
+ * sessionStorage, and sends them to the REST set-cookie endpoint when consent
+ * is granted.
  *
  * @package Kntnt\Ad_Attribution
  * @since   1.0.0
@@ -14,9 +15,15 @@
 (function () {
     'use strict';
 
-    const STORAGE_KEY_HASHES = 'kntnt_ad_attr_hashes';
+    // The key name predates the pair format; it is kept so that bare hashes
+    // stored by the previous script are found and discarded on read.
+    const STORAGE_KEY_CLICKS = 'kntnt_ad_attr_hashes';
     const STORAGE_KEY_RETRIES = 'kntnt_ad_attr_retries';
     const MAX_RETRIES = 3;
+
+    // One click: a SHA-256 hash and the Unix timestamp of its click row,
+    // the same syntax as an _ad_clicks cookie entry.
+    const CLICK_PATTERN = /^[a-f0-9]{64}:\d{1,10}$/;
 
     // Define the default consent function if the site hasn't provided one.
     // Sites integrate their consent plugin by defining this function before
@@ -48,27 +55,36 @@
     };
 
     /**
-     * Gets the stored hashes from sessionStorage.
+     * Tells whether a value is a well-formed `<hash>:<timestamp>` click.
      *
-     * @returns {string[]} Array of hash strings.
+     * @param {*} value - Value to check.
+     * @returns {boolean} True for a well-formed click.
      */
-    const getHashes = () => {
+    const isClick = (value) => typeof value === 'string' && CLICK_PATTERN.test(value);
+
+    /**
+     * Gets the stored clicks from sessionStorage, discarding malformed ones.
+     *
+     * @returns {string[]} Array of `<hash>:<timestamp>` strings.
+     */
+    const getClicks = () => {
         try {
-            const raw = sessionStorage.getItem(STORAGE_KEY_HASHES);
-            return raw ? JSON.parse(raw) : [];
+            const raw = sessionStorage.getItem(STORAGE_KEY_CLICKS);
+            const stored = raw ? JSON.parse(raw) : [];
+            return Array.isArray(stored) ? stored.filter(isClick) : [];
         } catch {
             return [];
         }
     };
 
     /**
-     * Saves hashes to sessionStorage, deduplicating entries.
+     * Saves clicks to sessionStorage, deduplicating entries.
      *
-     * @param {string[]} hashes - Hash strings to store.
+     * @param {string[]} clicks - `<hash>:<timestamp>` strings to store.
      */
-    const setHashes = (hashes) => {
-        const unique = [...new Set(hashes)];
-        sessionStorage.setItem(STORAGE_KEY_HASHES, JSON.stringify(unique));
+    const setClicks = (clicks) => {
+        const unique = [...new Set(clicks)];
+        sessionStorage.setItem(STORAGE_KEY_CLICKS, JSON.stringify(unique));
     };
 
     /**
@@ -91,7 +107,7 @@
      * Clears all plugin keys from sessionStorage.
      */
     const clearStorage = () => {
-        sessionStorage.removeItem(STORAGE_KEY_HASHES);
+        sessionStorage.removeItem(STORAGE_KEY_CLICKS);
         sessionStorage.removeItem(STORAGE_KEY_RETRIES);
     };
 
@@ -99,30 +115,36 @@
      * Main logic — runs on DOMContentLoaded (or immediately if DOM is ready).
      */
     const init = () => {
-        const existing = getHashes();
+        const existing = getClicks();
+        let discovered = false;
 
-        // Collect hash from transport cookie.
-        const cookieHash = getCookie('_aah_pending');
-        if (cookieHash) {
-            existing.push(cookieHash);
+        // Collect the click from the transport cookie. The cookie is expired
+        // even when malformed, so it cannot linger.
+        const cookieClick = getCookie('_aah_pending');
+        if (cookieClick !== null) {
             expireCookie('_aah_pending');
+            if (isClick(cookieClick)) {
+                existing.push(cookieClick);
+                discovered = true;
+            }
         }
 
-        // Collect hash from URL fragment.
-        const fragmentMatch = window.location.hash.match(/^#_aah=([a-f0-9]{64})$/);
+        // Collect the click from the URL fragment.
+        const fragmentMatch = window.location.hash.match(/^#_aah=([a-f0-9]{64}:\d{1,10})$/);
         if (fragmentMatch) {
             existing.push(fragmentMatch[1]);
+            discovered = true;
             history.replaceState(null, '', window.location.pathname + window.location.search);
         }
 
-        // Persist any newly discovered hashes.
-        if (cookieHash || fragmentMatch) {
-            setHashes(existing);
+        // Persist any newly discovered clicks.
+        if (discovered) {
+            setClicks(existing);
         }
 
         // Nothing to process — exit early.
-        const hashes = getHashes();
-        if (hashes.length === 0) {
+        const clicks = getClicks();
+        if (clicks.length === 0) {
             return;
         }
 
@@ -132,11 +154,11 @@
         const { restUrl, nonce } = kntntAdAttribution;
 
         /**
-         * Sends hashes to the REST endpoint and clears sessionStorage.
+         * Sends clicks to the REST endpoint and clears sessionStorage.
          *
-         * @param {string[]} hashesToSend - Validated hashes.
+         * @param {string[]} clicksToSend - Validated `<hash>:<timestamp>` strings.
          */
-        const postHashes = async (hashesToSend) => {
+        const postClicks = async (clicksToSend) => {
             try {
                 await fetch(restUrl, {
                     method: 'POST',
@@ -144,7 +166,7 @@
                         'Content-Type': 'application/json',
                         'X-WP-Nonce': nonce,
                     },
-                    body: JSON.stringify({ hashes: hashesToSend }),
+                    body: JSON.stringify({ hashes: clicksToSend }),
                 });
                 clearStorage();
             } catch {
@@ -162,12 +184,12 @@
 
             if (state === 'yes') {
                 handled = true;
-                postHashes(hashes);
+                postClicks(clicks);
             } else if (state === 'no') {
                 handled = true;
                 clearStorage();
             }
-            // 'unknown' — do nothing, hashes stay in sessionStorage.
+            // 'unknown' — do nothing, clicks stay in sessionStorage.
         });
     };
 
