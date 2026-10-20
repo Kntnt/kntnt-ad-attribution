@@ -107,6 +107,18 @@ set_consent_state() {
         -d "{\"option\":\"test_consent_state\",\"value\":\"$state\"}" > /dev/null
 }
 
+# Set the click and conversion dedup window (kntnt_ad_attr_dedup_seconds).
+# Usage: set_dedup_seconds <seconds>   (0 restores the plugin default)
+set_dedup_seconds() {
+    local seconds="$1"
+    curl -sf "${WP_BASE_URL}/?rest_route=/kntnt-ad-attribution/v1/test-set-option" \
+        -X POST \
+        -H "Content-Type: application/json" \
+        -H "X-WP-Nonce: ${WP_NONCE}" \
+        -b "${ADMIN_COOKIE}" \
+        -d "{\"option\":\"test_dedup_seconds\",\"value\":\"$seconds\"}" > /dev/null
+}
+
 # Query a single row from the database.
 # Usage: query_db "SELECT ..."
 # Returns: JSON object

@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
-# Integration test: Conversion deduplication.
+# Integration test: Conversion and click deduplication.
 #
 # Verifies that dedup_seconds=0 (default) allows repeated conversions
 # for the same hash, since per-hash deduplication is disabled by default.
+#
+# With dedup enabled and consent granted, verifies that a re-click within
+# the window keeps the cookie's original timestamp, so a later conversion
+# links to the one recorded click, and that a cookie entry without a
+# matching click row is repaired by recording the click.
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -45,8 +50,78 @@ conv_count2=$(query_db "SELECT COUNT(*) AS cnt FROM wp_kntnt_ad_attr_conversions
 cnt2=$(echo "$conv_count2" | jq -r '.cnt')
 assert_greater_than "$cnt1" "$cnt2" "Second conversion recorded (dedup disabled by default)"
 
+# --- Click dedup: re-click within the window keeps the original click ---
+
+# Dedup reads _ad_clicks on click, and earlier trigger_conversion calls
+# leave it in WASM PHP's persistent $_COOKIE.
+clear_cookies
+set_dedup_seconds 86400
+
+HASH_DEDUP=$(create_tracking_url "$TARGET_ID" "google" "cpc" "click-dedup-test")
+flush_rewrites
+
+# First click: no cookie sent, so a click row is recorded.
+cookies_first=$(get_click_cookies "$HASH_DEDUP")
+ad_clicks_first=$(extract_cookie_value "$cookies_first" "_ad_clicks")
+ts_first=$(echo "$ad_clicks_first" | grep -oP "${HASH_DEDUP}:\K[0-9]+" || true)
+assert_greater_than "0" "${ts_first:-0}" "First click sets an _ad_clicks entry for the hash"
+
+# clicked_at has one-second resolution; make sure a rewritten timestamp
+# would differ from the original.
+sleep 2
+
+# Second click within the window, carrying the first click's cookie.
+headers_second=$(curl -sS -D - -o /dev/null \
+    -A "Mozilla/5.0 Chrome/120" \
+    --max-redirs 0 \
+    -b "_ad_clicks=${ad_clicks_first}" \
+    "${WP_BASE_URL}/ad/${HASH_DEDUP}/" 2>/dev/null || true)
+assert_contains "$headers_second" "302" "Deduplicated re-click still redirects"
+
+ad_clicks_second=$(extract_cookie_value "$headers_second" "_ad_clicks")
+ts_second=$(echo "$ad_clicks_second" | grep -oP "${HASH_DEDUP}:\K[0-9]+" || true)
+assert_equals "$ts_first" "$ts_second" "Re-click re-sends the cookie with the original timestamp"
+
+click_rows=$(query_db "SELECT COUNT(*) AS cnt FROM wp_kntnt_ad_attr_clicks WHERE hash='${HASH_DEDUP}'")
+assert_equals "1" "$(echo "$click_rows" | jq -r '.cnt')" "Re-click within the window records no second click row"
+
+# Conversion with the cookie the browser now holds.
+trigger_conversion "$ad_clicks_second" > /dev/null
+
+click_row=$(query_db "SELECT id FROM wp_kntnt_ad_attr_clicks WHERE hash='${HASH_DEDUP}'")
+click_row_id=$(echo "$click_row" | jq -r '.id')
+conv_rows=$(query_db_rows "SELECT cv.click_id FROM wp_kntnt_ad_attr_conversions cv JOIN wp_kntnt_ad_attr_clicks c ON c.id = cv.click_id WHERE c.hash='${HASH_DEDUP}'")
+assert_equals "1" "$(echo "$conv_rows" | jq 'length')" "Conversion after a re-click records exactly one conversion row"
+assert_equals "$click_row_id" "$(echo "$conv_rows" | jq -r '.[0].click_id')" "Conversion is linked to the original click row"
+
+# --- Click dedup: entry without a click row is repaired ---
+
+clear_cookies
+
+HASH_HEAL=$(create_tracking_url "$TARGET_ID" "google" "cpc" "click-dedup-heal")
+flush_rewrites
+
+# An entry inside the window that no click row matches, as written by
+# versions that rewrote the timestamp on dedup.
+ts_stale=$(( $(date +%s) - 60 ))
+headers_heal=$(curl -sS -D - -o /dev/null \
+    -A "Mozilla/5.0 Chrome/120" \
+    --max-redirs 0 \
+    -b "_ad_clicks=${HASH_HEAL}:${ts_stale}" \
+    "${WP_BASE_URL}/ad/${HASH_HEAL}/" 2>/dev/null || true)
+
+heal_rows=$(query_db_rows "SELECT clicked_at FROM wp_kntnt_ad_attr_clicks WHERE hash='${HASH_HEAL}'")
+assert_equals "1" "$(echo "$heal_rows" | jq 'length')" "Entry without a click row is handled as a new click"
+
+ad_clicks_heal=$(extract_cookie_value "$headers_heal" "_ad_clicks")
+ts_heal=$(echo "$ad_clicks_heal" | grep -oP "${HASH_HEAL}:\K[0-9]+" || true)
+heal_clicked_at=$(echo "$heal_rows" | jq -r '.[0].clicked_at')
+ts_heal_utc=$(jq -rn --argjson t "${ts_heal:-0}" '$t | strftime("%Y-%m-%d %H:%M:%S")')
+assert_equals "$heal_clicked_at" "$ts_heal_utc" "Repaired entry points at the new click row"
+
 # --- Cleanup ---
 
+set_dedup_seconds 0
 set_consent_state "default"
 
 print_summary
