@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
-# Builds release-assets/kntnt-ad-attribution.zip: the plugin's runtime files,
-# and nothing else, under a single top-level directory named for the plugin slug
-# so WordPress unpacks an update in place over the existing installation.
+# Builds release-assets/<slug>.zip, where <slug> is PLUGIN_DIR below: the
+# plugin's runtime files, and nothing else, under a single top-level directory
+# named for the slug so WordPress unpacks an update in place over the existing
+# installation.
 #
 # Follows the release-assets convention /release relies on: an executable
 # bin/build-release-assets writes the finished files to release-assets/, and
@@ -19,8 +20,8 @@
 # Only the block marked "Plugin-specific" differs between plugins. Everything
 # else is the same in every copy, so a fix made here belongs in all of them.
 #
-# The zip name carries no version, because the Updater picks the release's zip
-# asset and WordPress expects the plugin directory to be named for the slug.
+# The zip name carries no version, so the asset keeps one name from release to
+# release, which is what an update checker or a latest/download link relies on.
 #
 # Exit codes:
 #   0  success
