@@ -944,7 +944,7 @@ The WordPress SQLite compatibility plugin cannot reliably handle date comparison
 
 ### Playground breaks after 400 requests
 
-Playground swaps its PHP runtime after 400 requests, and the new runtime loses the SQLite driver: every request then fails with "Error establishing a database connection". `run-tests.sh` therefore restarts Playground every 8 suites. It also gives each run a private Playground cache (`HOME` for the CLI), because the shared `~/.wordpress-playground` cache, which other Playground runs rewrite on every boot, could boot WordPress into maintenance mode (HTTP 503). The test-helpers mu-plugin blocks update checks against `api.wordpress.org` and `api.github.com` for the same reason.
+Playground swaps its PHP runtime after 400 requests, and the new runtime loses the SQLite driver: every request then fails with "Error establishing a database connection". `run-tests.sh` therefore restarts Playground every 8 suites. A restart stops the Playground job's whole process group, not just the `npx` process: npx runs the CLI through `sh -c`, and where `/bin/sh` is dash (Ubuntu, so CI) the shell does not exec the server, which would otherwise outlive the stop and keep port 9400. The runner then waits until the port no longer answers, and fails the run if it still does after 30 seconds. It also gives each run a private Playground cache (`HOME` for the CLI), because the shared `~/.wordpress-playground` cache, which other Playground runs rewrite on every boot, could boot WordPress into maintenance mode (HTTP 503). The test-helpers mu-plugin blocks update checks against `api.wordpress.org` and `api.github.com` for the same reason.
 
 ### Multi-table DELETE in SQLite
 

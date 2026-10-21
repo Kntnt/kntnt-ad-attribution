@@ -381,15 +381,24 @@ start_playground() {
         PLAYGROUND_HOME="$(mktemp -d)"
     fi
 
-    # Playground always runs on the host (needs host ports and mount paths)
+    # The server is not the process started here: npx runs npm exec, which
+    # runs the CLI through "sh -c". Where /bin/sh is dash (Ubuntu, Debian)
+    # the shell does not exec the CLI, so killing the npx PID orphans the
+    # server and it keeps the port. Job control (set -m) starts the job in
+    # a process group of its own, whose ID is the npx PID, and
+    # stop_playground signals that whole group. Job control also stops
+    # redirecting a background job's stdin, hence the explicit </dev/null.
+    # Playground always runs on the host (needs host ports and mount paths).
+    set -m
     HOME="$PLAYGROUND_HOME" $LOCAL_NPX @wp-playground/cli server \
         --port="$PLAYGROUND_PORT" \
         --mount="$SCRIPT_DIR:/wordpress/wp-content/plugins/kntnt-ad-attribution" \
         --mount="$SCRIPT_DIR/tests/Integration/fake-consent-plugin:/wordpress/wp-content/mu-plugins/fake-consent-plugin" \
         --mount="$SCRIPT_DIR/tests/Integration/test-helpers-plugin:/wordpress/wp-content/mu-plugins/test-helpers-plugin" \
         --blueprint="$SCRIPT_DIR/tests/Integration/blueprint.json" \
-        --login &
+        --login </dev/null &
     PLAYGROUND_PID=$!
+    set +m
 
     # Wait until the blueprint has finished (max 60 seconds). The server
     # answers before the blueprint has activated the plugin, so probe for
@@ -404,7 +413,7 @@ start_playground() {
         waited=$((waited + 1))
         if [[ $waited -ge $max_wait ]]; then
             echo "ERROR: Playground did not start within ${max_wait}s" >&2
-            kill "$PLAYGROUND_PID" 2>/dev/null || true
+            stop_playground || true
             exit 1
         fi
     done
@@ -413,27 +422,41 @@ start_playground() {
 
 stop_playground() {
     if [[ -n "$PLAYGROUND_PID" ]]; then
-        kill "$PLAYGROUND_PID" 2>/dev/null || true
+
+        # Signal the job's whole process group, not just npx (see
+        # start_playground), and kill what is left of it after 10 seconds.
+        kill -TERM -- "-$PLAYGROUND_PID" 2>/dev/null || true
+        local waited=0
+        while kill -0 -- "-$PLAYGROUND_PID" 2>/dev/null; do
+            if [[ $waited -ge 10 ]]; then
+                echo "WARNING: Playground ignored SIGTERM; sending SIGKILL." >&2
+                kill -KILL -- "-$PLAYGROUND_PID" 2>/dev/null || true
+                break
+            fi
+            sleep 1
+            waited=$((waited + 1))
+        done
         wait "$PLAYGROUND_PID" 2>/dev/null || true
         PLAYGROUND_PID=""
 
         # Wait for the port to be released, so the next start cannot take
-        # a dying instance for a ready one.
-        local waited=0
-        while curl -s -o /dev/null "http://localhost:$PLAYGROUND_PORT/" 2>/dev/null; do
+        # a dying instance for a ready one. A port that never frees belongs
+        # to a server this run cannot stop, so give up loudly.
+        waited=0
+        while curl -s -o /dev/null --max-time 2 "http://localhost:$PLAYGROUND_PORT/" 2>/dev/null; do
+            if [[ $waited -ge 30 ]]; then
+                echo "ERROR: Port $PLAYGROUND_PORT still answers 30s after stopping Playground." >&2
+                return 1
+            fi
             sleep 1
             waited=$((waited + 1))
-            if [[ $waited -ge 30 ]]; then
-                echo "WARNING: Port $PLAYGROUND_PORT still answers after stopping Playground." >&2
-                break
-            fi
         done
         echo "Playground stopped."
     fi
 }
 
 cleanup() {
-    stop_playground
+    stop_playground || true
     if [[ -n "$PLAYGROUND_HOME" ]]; then
         rm -rf "$PLAYGROUND_HOME"
         PLAYGROUND_HOME=""
@@ -476,7 +499,7 @@ run_integration() {
 
         if [[ $suites_on_playground -ge $suites_per_playground ]]; then
             teardown_integration
-            stop_playground
+            stop_playground || exit 1
             suites_on_playground=0
         fi
         if [[ $suites_on_playground -eq 0 ]]; then
@@ -498,7 +521,7 @@ run_integration() {
 
     if [[ $suites_on_playground -gt 0 ]]; then
         teardown_integration
-        stop_playground
+        stop_playground || exit 1
     fi
 }
 
