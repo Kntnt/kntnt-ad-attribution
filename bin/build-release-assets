@@ -57,7 +57,7 @@ KEEP=(
 	uninstall.php
 )
 
-# Tools the build needs besides git and zip.
+# Tools the build needs besides git, tar and zip.
 EXTRA_TOOLS=(msgfmt)
 
 # Runs in the extracted plugin directory before it is zipped, and must return
@@ -129,8 +129,9 @@ parse_args() {
 # Verify every tool the build needs is on PATH.
 require_tools() {
 
+	# The ${…+…} form keeps an empty EXTRA_TOOLS from tripping set -u in bash 3.2.
 	local missing=() tool
-	for tool in git zip "${EXTRA_TOOLS[@]}"; do
+	for tool in git tar zip ${EXTRA_TOOLS[@]+"${EXTRA_TOOLS[@]}"}; do
 		command -v "$tool" &>/dev/null || missing+=("$tool")
 	done
 
