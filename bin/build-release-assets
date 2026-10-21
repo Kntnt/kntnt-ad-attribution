@@ -1,0 +1,205 @@
+#!/usr/bin/env bash
+#
+# Builds release-assets/kntnt-ad-attribution.zip: the plugin's runtime files,
+# and nothing else, under a single top-level directory named for the plugin slug
+# so WordPress unpacks an update in place over the existing installation.
+#
+# Follows the release-assets convention /release relies on: an executable
+# bin/build-release-assets writes the finished files to release-assets/, and
+# the release attaches every file it finds there. Running it by hand builds the
+# same zip. It never publishes anything.
+#
+#   - The zip is built from the committed state at HEAD. Uncommitted changes are
+#     never included.
+#   - If HEAD carries a version tag (v1.2.3 or 1.2.3), the Version header of the
+#     main plugin file must equal it, or the build fails.
+#   - Only finished files go to release-assets/; intermediates stay in a
+#     temporary directory.
+#
+# Only the block marked "Plugin-specific" differs between plugins. Everything
+# else is the same in every copy, so a fix made here belongs in all of them.
+#
+# The zip name carries no version, because the Updater picks the release's zip
+# asset and WordPress expects the plugin directory to be named for the slug.
+#
+# Exit codes:
+#   0  success
+#   1  usage error: unknown arguments
+#   2  a required tool is not on PATH
+#   3  build failure
+
+set -euo pipefail
+
+readonly EXIT_USAGE=1
+readonly EXIT_MISSING_TOOL=2
+readonly EXIT_FAILURE=3
+
+# ─── Plugin-specific ───
+
+PLUGIN_DIR="kntnt-ad-attribution"
+
+# Runtime files and directories in the zip, as the git pathspec the archive is
+# limited to. Anything else the repository tracks (tests, docs, dev configs,
+# bin/, dotfiles at the root) is left out by not appearing here. A name that
+# matches nothing fails the build.
+KEEP=(
+	autoloader.php
+	classes
+	css
+	install.php
+	js
+	kntnt-ad-attribution.php
+	languages
+	LICENSE
+	migrations
+	README.md
+	uninstall.php
+)
+
+# Tools the build needs besides git and zip.
+EXTRA_TOOLS=(msgfmt)
+
+# Runs in the extracted plugin directory before it is zipped, and must return
+# non-zero if a step fails: set -e does not apply here. The compiled
+# translations are not tracked, so they are built here.
+prepare() {
+
+	local po
+	for po in languages/*.po; do
+		if [[ -f "$po" ]]; then
+			msgfmt -o "${po%.po}.mo" "$po" || return 1
+		fi
+	done
+
+}
+
+# ─── End of plugin-specific ───
+
+ZIP_NAME="${PLUGIN_DIR}.zip"
+MAIN_FILE="${PLUGIN_DIR}.php"
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ASSETS_DIR="$REPO_DIR/release-assets"
+OUTPUT_FILE="$ASSETS_DIR/$ZIP_NAME"
+WORK_DIR=""
+
+# Print usage and exit with the given code (default 0): on stdout when asked
+# for, on stderr after a usage error.
+usage() {
+	local code="${1:-0}"
+	[[ "$code" -eq 0 ]] || exec >&2
+	cat <<HELP
+Usage:
+  bin/build-release-assets
+  bin/build-release-assets --help
+
+Builds release-assets/${ZIP_NAME} from the committed state at HEAD and
+prints its path.
+HELP
+	exit "$code"
+}
+
+# Abort with a message on stderr, using the given exit code (default: build
+# failure).
+die() {
+	echo "Error: $1" >&2
+	exit "${2:-$EXIT_FAILURE}"
+}
+
+# Accept --help and nothing else.
+parse_args() {
+
+	if [[ $# -eq 0 ]]; then
+		return 0
+	fi
+
+	case "$1" in
+		--help | -h)
+			usage 0
+			;;
+		*)
+			echo "Error: Unknown argument: $1" >&2
+			echo >&2
+			usage "$EXIT_USAGE"
+			;;
+	esac
+
+}
+
+# Verify every tool the build needs is on PATH.
+require_tools() {
+
+	local missing=() tool
+	for tool in git zip "${EXTRA_TOOLS[@]}"; do
+		command -v "$tool" &>/dev/null || missing+=("$tool")
+	done
+
+	if [[ ${#missing[@]} -gt 0 ]]; then
+		echo "Missing required tools: ${missing[*]}" >&2
+		exit "$EXIT_MISSING_TOOL"
+	fi
+
+}
+
+# When HEAD carries a version tag, require the plugin header to state the same
+# version, so a release can never ship a zip that WordPress reads as another
+# version than the one it was published as.
+check_version() {
+
+	local tag main_file version=""
+	tag="$(git -C "$REPO_DIR" describe --exact-match --tags --match 'v[0-9]*' --match '[0-9]*' HEAD 2>/dev/null)" || return 0
+
+	main_file="$(git -C "$REPO_DIR" show "HEAD:${MAIN_FILE}")" || die "Cannot read ${MAIN_FILE} at HEAD."
+
+	# The header line, e.g. " * Version:           1.2.3".
+	local pattern=$'(^|\n)[[:space:]]*\\*?[[:space:]]*Version:[[:space:]]*([^[:space:]]+)'
+	if [[ "$main_file" =~ $pattern ]]; then
+		version="${BASH_REMATCH[2]}"
+	fi
+
+	[[ "$version" == "${tag#v}" ]] || die "HEAD is tagged ${tag}, but ${MAIN_FILE} has Version: ${version:-(none)}."
+
+}
+
+# Tell whoever builds by hand that uncommitted changes are not in the zip.
+warn_uncommitted() {
+
+	if [[ -n "$(git -C "$REPO_DIR" status --porcelain --untracked-files=no)" ]]; then
+		echo "Note: uncommitted changes are not included; the zip is built from HEAD." >&2
+	fi
+
+}
+
+# Extract the tracked runtime files at HEAD, run the plugin's own steps on them,
+# and zip the result. git limits the archive to the KEEP pathspec and to
+# committed content, so nothing untracked or ignored can slip in at any depth.
+build() {
+
+	WORK_DIR="$(mktemp -d)"
+	trap 'rm -rf "$WORK_DIR"' EXIT
+
+	git -C "$REPO_DIR" archive --prefix="${PLUGIN_DIR}/" HEAD -- "${KEEP[@]}" | tar -xf - -C "$WORK_DIR" \
+		|| die "git archive failed to build ${ZIP_NAME} from HEAD."
+
+	(cd "$WORK_DIR/$PLUGIN_DIR" && prepare) || die "Preparing the plugin files failed."
+
+	# zip adds to an existing archive, so start from nothing.
+	mkdir -p "$ASSETS_DIR"
+	rm -f "$OUTPUT_FILE"
+	(cd "$WORK_DIR" && zip -qrX "$OUTPUT_FILE" "$PLUGIN_DIR") || die "zip failed to write ${OUTPUT_FILE}."
+
+}
+
+main() {
+
+	parse_args "$@"
+	require_tools
+	check_version
+	warn_uncommitted
+	build
+
+	echo "Created: ${ZIP_NAME} from $(git -C "$REPO_DIR" rev-parse --short HEAD) ($(du -h "$OUTPUT_FILE" | cut -f1))" >&2
+	echo "$OUTPUT_FILE"
+
+}
+
+main "$@"
